@@ -1,0 +1,342 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		1B00000000000000000000B1 /* OfflineListenApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A1 /* OfflineListenApp.swift */; };
+		1B00000000000000000000B2 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A2 /* Models.swift */; };
+		1B00000000000000000000B3 /* LibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A3 /* LibraryStore.swift */; };
+		1B00000000000000000000B4 /* DownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A4 /* DownloadManager.swift */; };
+		1B00000000000000000000B5 /* YouTubeExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A5 /* YouTubeExtractor.swift */; };
+		1B00000000000000000000B6 /* AudioConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A6 /* AudioConverter.swift */; };
+		1B00000000000000000000B7 /* PlaybackManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A7 /* PlaybackManager.swift */; };
+		1B00000000000000000000B8 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A8 /* RootView.swift */; };
+		1B00000000000000000000B9 /* DownloadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A9 /* DownloadView.swift */; };
+		1B00000000000000000000BA /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000AA /* LibraryView.swift */; };
+		1B00000000000000000000BB /* PlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000AB /* PlayerView.swift */; };
+		1B00000000000000000000BC /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000AC /* Assets.xcassets */; };
+		1B00000000000000000000BD /* KSPlayer in Frameworks */ = {isa = PBXBuildFile; productRef = 2300000000000000000000A1 /* KSPlayer */; };
+		1B00000000000000000000BE /* YoutubeDL in Frameworks */ = {isa = PBXBuildFile; productRef = 2300000000000000000000A2 /* YoutubeDL */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		1A00000000000000000000A1 /* OfflineListenApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineListenApp.swift; sourceTree = "<group>"; };
+		1A00000000000000000000A2 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		1A00000000000000000000A3 /* LibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStore.swift; sourceTree = "<group>"; };
+		1A00000000000000000000A4 /* DownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadManager.swift; sourceTree = "<group>"; };
+		1A00000000000000000000A5 /* YouTubeExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubeExtractor.swift; sourceTree = "<group>"; };
+		1A00000000000000000000A6 /* AudioConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioConverter.swift; sourceTree = "<group>"; };
+		1A00000000000000000000A7 /* PlaybackManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackManager.swift; sourceTree = "<group>"; };
+		1A00000000000000000000A8 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		1A00000000000000000000A9 /* DownloadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadView.swift; sourceTree = "<group>"; };
+		1A00000000000000000000AA /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
+		1A00000000000000000000AB /* PlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerView.swift; sourceTree = "<group>"; };
+		1A00000000000000000000AC /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		1A00000000000000000000AD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		1A00000000000000000000AE /* OfflineListen.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OfflineListen.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		1D00000000000000000000D2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1B00000000000000000000BD /* KSPlayer in Frameworks */,
+				1B00000000000000000000BE /* YoutubeDL in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1C00000000000000000000C1 = {
+			isa = PBXGroup;
+			children = (
+				1C00000000000000000000C2 /* OfflineListen */,
+				1C00000000000000000000C3 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		1C00000000000000000000C2 /* OfflineListen */ = {
+			isa = PBXGroup;
+			children = (
+				1A00000000000000000000A1 /* OfflineListenApp.swift */,
+				1A00000000000000000000A2 /* Models.swift */,
+				1A00000000000000000000A3 /* LibraryStore.swift */,
+				1A00000000000000000000A4 /* DownloadManager.swift */,
+				1A00000000000000000000A5 /* YouTubeExtractor.swift */,
+				1A00000000000000000000A6 /* AudioConverter.swift */,
+				1A00000000000000000000A7 /* PlaybackManager.swift */,
+				1A00000000000000000000A8 /* RootView.swift */,
+				1A00000000000000000000A9 /* DownloadView.swift */,
+				1A00000000000000000000AA /* LibraryView.swift */,
+				1A00000000000000000000AB /* PlayerView.swift */,
+				1A00000000000000000000AC /* Assets.xcassets */,
+				1A00000000000000000000AD /* Info.plist */,
+			);
+			path = OfflineListen;
+			sourceTree = "<group>";
+		};
+		1C00000000000000000000C3 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				1A00000000000000000000AE /* OfflineListen.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		2000000000000000000000A0 /* OfflineListen */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1E00000000000000000000E2 /* Build configuration list for PBXNativeTarget "OfflineListen" */;
+			buildPhases = (
+				1D00000000000000000000D1 /* Sources */,
+				1D00000000000000000000D2 /* Frameworks */,
+				1D00000000000000000000D3 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = OfflineListen;
+			packageProductDependencies = (
+				2300000000000000000000A1 /* KSPlayer */,
+				2300000000000000000000A2 /* YoutubeDL */,
+			);
+			productName = OfflineListen;
+			productReference = 1A00000000000000000000AE /* OfflineListen.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		2100000000000000000000A0 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					2000000000000000000000A0 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = 1E00000000000000000000E1 /* Build configuration list for PBXProject "OfflineListen" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 1C00000000000000000000C1;
+			packageReferences = (
+				2200000000000000000000A1 /* XCRemoteSwiftPackageReference "KSPlayer" */,
+				2200000000000000000000A2 /* XCRemoteSwiftPackageReference "YoutubeDL-iOS" */,
+			);
+			productRefGroup = 1C00000000000000000000C3 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				2000000000000000000000A0 /* OfflineListen */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		1D00000000000000000000D3 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1B00000000000000000000BC /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		1D00000000000000000000D1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1B00000000000000000000B1 /* OfflineListenApp.swift in Sources */,
+				1B00000000000000000000B2 /* Models.swift in Sources */,
+				1B00000000000000000000B3 /* LibraryStore.swift in Sources */,
+				1B00000000000000000000B4 /* DownloadManager.swift in Sources */,
+				1B00000000000000000000B5 /* YouTubeExtractor.swift in Sources */,
+				1B00000000000000000000B6 /* AudioConverter.swift in Sources */,
+				1B00000000000000000000B7 /* PlaybackManager.swift in Sources */,
+				1B00000000000000000000B8 /* RootView.swift in Sources */,
+				1B00000000000000000000B9 /* DownloadView.swift in Sources */,
+				1B00000000000000000000BA /* LibraryView.swift in Sources */,
+				1B00000000000000000000BB /* PlayerView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		1F00000000000000000000F1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		1F00000000000000000000F2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		1F00000000000000000000F3 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = OfflineListen/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.offlinelisten.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		1F00000000000000000000F4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = OfflineListen/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.offlinelisten.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1E00000000000000000000E1 /* Build configuration list for PBXProject "OfflineListen" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1F00000000000000000000F1 /* Debug */,
+				1F00000000000000000000F2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1E00000000000000000000E2 /* Build configuration list for PBXNativeTarget "OfflineListen" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1F00000000000000000000F3 /* Debug */,
+				1F00000000000000000000F4 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		2200000000000000000000A1 /* XCRemoteSwiftPackageReference "KSPlayer" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/kingslay/KSPlayer.git";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
+		2200000000000000000000A2 /* XCRemoteSwiftPackageReference "YoutubeDL-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/kewlbear/YoutubeDL-iOS.git";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		2300000000000000000000A1 /* KSPlayer */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2200000000000000000000A1 /* XCRemoteSwiftPackageReference "KSPlayer" */;
+			productName = KSPlayer;
+		};
+		2300000000000000000000A2 /* YoutubeDL */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2200000000000000000000A2 /* XCRemoteSwiftPackageReference "YoutubeDL-iOS" */;
+			productName = YoutubeDL;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 2100000000000000000000A0 /* Project object */;
+}

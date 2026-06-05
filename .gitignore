@@ -1,0 +1,18 @@
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+
+# Swift Package Manager
+.swiftpm/
+.build/
+
+# macOS
+.DS_Store
+
+# Resolved SPM versions are intentionally tracked so builds are reproducible:
+# (uncomment the next line if you'd rather not commit it)
+# OfflineListen.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
