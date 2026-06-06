@@ -19,7 +19,6 @@
 		1B00000000000000000000BA /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000AA /* LibraryView.swift */; };
 		1B00000000000000000000BB /* PlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000AB /* PlayerView.swift */; };
 		1B00000000000000000000BC /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000AC /* Assets.xcassets */; };
-		1B00000000000000000000BD /* KSPlayer in Frameworks */ = {isa = PBXBuildFile; productRef = 2300000000000000000000A1 /* KSPlayer */; };
 		1B00000000000000000000BE /* YoutubeDL in Frameworks */ = {isa = PBXBuildFile; productRef = 2300000000000000000000A2 /* YoutubeDL */; };
 /* End PBXBuildFile section */
 
@@ -45,7 +44,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				1B00000000000000000000BD /* KSPlayer in Frameworks */,
 				1B00000000000000000000BE /* YoutubeDL in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -106,7 +104,6 @@
 			);
 			name = OfflineListen;
 			packageProductDependencies = (
-				2300000000000000000000A1 /* KSPlayer */,
 				2300000000000000000000A2 /* YoutubeDL */,
 			);
 			productName = OfflineListen;
@@ -138,7 +135,6 @@
 			);
 			mainGroup = 1C00000000000000000000C1;
 			packageReferences = (
-				2200000000000000000000A1 /* XCRemoteSwiftPackageReference "KSPlayer" */,
 				2200000000000000000000A2 /* XCRemoteSwiftPackageReference "YoutubeDL-iOS" */,
 			);
 			productRefGroup = 1C00000000000000000000C3 /* Products */;
@@ -307,14 +303,6 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		2200000000000000000000A1 /* XCRemoteSwiftPackageReference "KSPlayer" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/kingslay/KSPlayer.git";
-			requirement = {
-				branch = main;
-				kind = branch;
-			};
-		};
 		2200000000000000000000A2 /* XCRemoteSwiftPackageReference "YoutubeDL-iOS" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/kewlbear/YoutubeDL-iOS.git";
@@ -326,11 +314,6 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		2300000000000000000000A1 /* KSPlayer */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 2200000000000000000000A1 /* XCRemoteSwiftPackageReference "KSPlayer" */;
-			productName = KSPlayer;
-		};
 		2300000000000000000000A2 /* YoutubeDL */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 2200000000000000000000A2 /* XCRemoteSwiftPackageReference "YoutubeDL-iOS" */;

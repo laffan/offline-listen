@@ -22,11 +22,10 @@ enum AudioConverterError: LocalizedError {
 /// * **M4A (default):** yt-dlp already returns an AAC `.m4a` stream, so we simply
 ///   move it into Documents. No transcode, no dependency on FFmpeg encoders —
 ///   this is the reliable path that satisfies "download + play offline".
-/// * **MP3:** real re-encoding. FFmpeg can only emit MP3 when the build includes
-///   an MP3 encoder (libmp3lame / libshine). The FFmpeg that ships transitively
-///   with KSPlayer is decode-oriented and typically lacks one, so this path is
-///   gated behind the `USE_FFMPEG_MP3` compilation condition and off by default.
-///   See the README for how to wire an MP3-capable FFmpeg.
+/// * **MP3:** real re-encoding, which needs an FFmpeg with an MP3 encoder
+///   (libmp3lame / libshine). No FFmpeg is bundled, so this path is gated behind
+///   the `USE_FFMPEG_MP3` compilation condition and off by default. See the
+///   README for how to add an MP3-capable FFmpeg if you want MP3 output.
 enum AudioConverter {
     static func process(input: URL,
                         to format: AudioFormat,

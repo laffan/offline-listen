@@ -20,7 +20,7 @@ Three screens (tabs):
 ### Pipeline
 
 ```
-URL  ──►  YoutubeDL-iOS (yt-dlp on device)  ──►  AudioConverter  ──►  Documents/  ──►  KSPlayer
+URL  ──►  YoutubeDL-iOS (yt-dlp on device)  ──►  AudioConverter  ──►  Documents/  ──►  AVAudioPlayer
          extracts best audio-only stream         M4A passthrough        local file       playback
                                                   (MP3 = opt-in)
 ```
@@ -35,13 +35,12 @@ URL  ──►  YoutubeDL-iOS (yt-dlp on device)  ──►  AudioConverter  ─
 | `DownloadManager.swift` | Serial download queue + `DownloadJob`. |
 | `YouTubeExtractor.swift` | `YouTubeAudioExtractor` protocol + YoutubeDL-iOS impl + a mock. |
 | `AudioConverter.swift` | M4A passthrough; gated MP3 transcode. |
-| `PlaybackManager.swift` | KSPlayer/AVAudioPlayer engine, audio session, lock-screen controls. |
+| `PlaybackManager.swift` | AVFoundation engine, audio session, lock-screen controls. |
 | `*View.swift` | The three SwiftUI screens. |
 
-The three third-party libraries are each isolated behind a thin seam
-(`YouTubeAudioExtractor`, `AudioConverter`, `PlaybackManager`) and guarded with
-`#if canImport(...)`, so the project compiles and the UI runs even before every
-package is resolved, and adapting to a library API change touches one file.
+The YouTube extraction step is isolated behind a `YouTubeAudioExtractor` seam (a
+mock implementation is included), so adapting to a library API change touches
+one file and the UI can be exercised with no native dependency.
 
 ## Setup
 
@@ -49,13 +48,13 @@ Requires **Xcode 15+** and an Apple developer account (free is fine for running
 on your own device).
 
 1. Open `OfflineListen.xcodeproj`.
-2. Xcode resolves the Swift packages on first open (needs a network connection):
-   - **KSPlayer** — `https://github.com/kingslay/KSPlayer.git` (pulls in
-     kingslay's FFmpeg as a transitive dependency).
-   - **YoutubeDL-iOS** — `https://github.com/kewlbear/YoutubeDL-iOS.git`.
+2. Xcode resolves the one Swift package on first open (needs a network connection):
+   - **YoutubeDL-iOS** — `https://github.com/kewlbear/YoutubeDL-iOS.git`,
+     pinned to `main`. To pin a specific version instead, change the rule in
+     *Project ▸ Package Dependencies*.
 
-   Both are pinned to `main` for the latest API. To pin specific versions
-   instead, change each package's rule in *Project ▸ Package Dependencies*.
+   Playback uses Apple's AVFoundation, so there is no media-player package to
+   resolve.
 3. Select the **OfflineListen** scheme and your device (or a Simulator — note
    the on-device yt-dlp download needs network).
 4. Set your **Signing Team** under *Signing & Capabilities* and adjust
@@ -84,39 +83,31 @@ the lock screen.
   audio-only stream directly as an AAC `.m4a`, which the converter just moves
   into the library. This is the path that guarantees "download + play offline."
 - **MP3** requires FFmpeg to *encode*, which needs an MP3 encoder
-  (`libmp3lame`/`libshine`). The FFmpeg that ships transitively with KSPlayer is
-  built for **decoding**/playback and generally has no MP3 encoder, so MP3 is
-  **off by default**. `AudioConverter.transcodeToMP3` is gated behind a
-  `USE_FFMPEG_MP3` build flag with the exact `FFmpegKit.execute(...)` call
-  sketched in comments. To enable it:
-  1. Add an MP3-capable, command-style FFmpeg (e.g. an `ffmpeg-kit` build that
-     includes `libmp3lame` and exposes `FFmpegKit.execute`). Make sure it
-     doesn't duplicate the FFmpeg symbols KSPlayer already links.
+  (`libmp3lame`/`libshine`). No FFmpeg is bundled, so MP3 is **off by default**.
+  `AudioConverter.transcodeToMP3` is gated behind a `USE_FFMPEG_MP3` build flag
+  with the exact `FFmpegKit.execute(...)` call sketched in comments. To enable it:
+  1. Add an MP3-capable, command-style FFmpeg package (e.g. an `ffmpeg-kit`
+     build that includes `libmp3lame` and exposes `FFmpegKit.execute`).
   2. Fill in the `execute` call in `AudioConverter.swift`.
   3. Add `USE_FFMPEG_MP3` to *Build Settings ▸ Swift Compiler – Custom Flags ▸
      Active Compilation Conditions*.
 
-## Verify the third-party seams
+## Verify the YoutubeDL-iOS seam
 
-These integration points use each library's common API shape but could not be
-compiled in the authoring environment, so confirm them against the versions
-Xcode actually resolves:
+This is the one integration point that uses the library's common API shape but
+could not be compiled in the authoring environment, so confirm it against the
+version Xcode resolves:
 
 - **`YoutubeDLExtractor.extractAudio`** — `YoutubeDL` init, the one-time
   `downloadPythonModule()`, and `download(url:options:)`/its progress callback.
-- **`PlaybackManager`** — `KSMEPlayer(url:options:)`, `play/pause`,
-  `currentPlaybackTime`, `duration`, `seek(time:completionHandler:)`, and
-  `KSOptions.canBackgroundPlay`.
 
-If a signature differs, adjust only that one spot; the rest of the app is
-engine-agnostic. (Removing the KSPlayer package makes `PlaybackManager`
-transparently fall back to `AVAudioPlayer`, and swapping `DownloadManager`'s
-extractor for `MockExtractor` lets you click through the whole UI with no native
-deps.)
+If a signature differs, adjust only that one spot. Swapping `DownloadManager`'s
+extractor for `MockExtractor` lets you click through the whole UI — queue,
+library, player, lock-screen controls — with no native dependency at all.
 
 ## Status
 
 Built as a complete, ready-to-open Xcode project. It was authored on Linux
 without an Xcode toolchain, so it has **not been compiled or run** — expect to
-resolve packages and possibly nudge the two third-party API call sites noted
+resolve the YoutubeDL-iOS package and possibly nudge the one API call site noted
 above on first build.

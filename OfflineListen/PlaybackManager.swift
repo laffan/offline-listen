@@ -2,20 +2,17 @@ import Foundation
 import AVFoundation
 import MediaPlayer
 
-#if canImport(KSPlayer)
-import KSPlayer
-#endif
-
 /// Drives playback for the player screen and the lock screen / Control Center.
 ///
 /// The success criterion is *offline background playback with the phone locked*.
-/// That is achieved by three things, independent of the engine:
+/// That is achieved by three things:
 ///   1. `UIBackgroundModes = [audio]` in Info.plist.
 ///   2. An `AVAudioSession` configured with the `.playback` category.
 ///   3. `MPNowPlayingInfoCenter` + `MPRemoteCommandCenter` for lock-screen UI.
 ///
-/// The engine itself is **KSPlayer** when the package is linked, with an
-/// `AVAudioPlayer` fallback so the app still plays audio before KSPlayer is added.
+/// Playback uses `AVAudioPlayer`, which plays the AAC/`.m4a` files produced by
+/// the download pipeline and continues in the background once the audio session
+/// is active.
 @MainActor
 final class PlaybackManager: NSObject, ObservableObject {
     @Published var currentTrack: Track?
@@ -26,20 +23,12 @@ final class PlaybackManager: NSObject, ObservableObject {
     private var queue: [Track] = []
     private var index = 0
     private var ticker: Timer?
-
-    #if canImport(KSPlayer)
-    private var ksPlayer: KSMEPlayer?
-    #else
-    private var avPlayer: AVAudioPlayer?
-    #endif
+    private var player: AVAudioPlayer?
 
     override init() {
         super.init()
         configureAudioSession()
         setupRemoteCommands()
-        #if canImport(KSPlayer)
-        KSOptions.canBackgroundPlay = true
-        #endif
     }
 
     // MARK: - Public control
@@ -74,18 +63,9 @@ final class PlaybackManager: NSObject, ObservableObject {
 
     func seek(to time: Double) {
         let target = max(0, min(time, duration))
-        #if canImport(KSPlayer)
-        ksPlayer?.seek(time: target) { [weak self] _ in
-            Task { @MainActor in
-                self?.currentTime = target
-                self?.updateNowPlaying()
-            }
-        }
-        #else
-        avPlayer?.currentTime = target
+        player?.currentTime = target
         currentTime = target
         updateNowPlaying()
-        #endif
     }
 
     // MARK: - Engine
@@ -98,23 +78,16 @@ final class PlaybackManager: NSObject, ObservableObject {
         duration = track.duration
         stopEngine()
 
-        #if canImport(KSPlayer)
-        let options = KSOptions()
-        let player = KSMEPlayer(url: track.fileURL, options: options)
-        ksPlayer = player
-        if autoPlay { player.play() }
-        #else
         do {
             let player = try AVAudioPlayer(contentsOf: track.fileURL)
             player.delegate = self
             player.prepareToPlay()
-            avPlayer = player
+            self.player = player
             duration = player.duration
             if autoPlay { player.play() }
         } catch {
             print("[PlaybackManager] AVAudioPlayer error: \(error)")
         }
-        #endif
 
         isPlaying = autoPlay
         try? AVAudioSession.sharedInstance().setActive(true)
@@ -123,11 +96,7 @@ final class PlaybackManager: NSObject, ObservableObject {
     }
 
     private func resume() {
-        #if canImport(KSPlayer)
-        ksPlayer?.play()
-        #else
-        avPlayer?.play()
-        #endif
+        player?.play()
         isPlaying = true
         try? AVAudioSession.sharedInstance().setActive(true)
         startTicker()
@@ -135,11 +104,7 @@ final class PlaybackManager: NSObject, ObservableObject {
     }
 
     private func pause() {
-        #if canImport(KSPlayer)
-        ksPlayer?.pause()
-        #else
-        avPlayer?.pause()
-        #endif
+        player?.pause()
         isPlaying = false
         updateNowPlaying()
     }
@@ -147,13 +112,8 @@ final class PlaybackManager: NSObject, ObservableObject {
     private func stopEngine() {
         ticker?.invalidate()
         ticker = nil
-        #if canImport(KSPlayer)
-        ksPlayer?.pause()
-        ksPlayer = nil
-        #else
-        avPlayer?.stop()
-        avPlayer = nil
-        #endif
+        player?.stop()
+        player = nil
     }
 
     // MARK: - Progress polling
@@ -166,18 +126,8 @@ final class PlaybackManager: NSObject, ObservableObject {
     }
 
     private func tick() {
-        #if canImport(KSPlayer)
-        guard let player = ksPlayer else { return }
-        currentTime = player.currentPlaybackTime
-        if player.duration > 0 { duration = player.duration }
-        #else
-        guard let player = avPlayer else { return }
+        guard let player else { return }
         currentTime = player.currentTime
-        #endif
-
-        if isPlaying, duration > 0, currentTime >= duration - 0.4 {
-            handleTrackFinished()
-        }
         updateNowPlaying()
     }
 
@@ -245,10 +195,8 @@ final class PlaybackManager: NSObject, ObservableObject {
     }
 }
 
-#if !canImport(KSPlayer)
 extension PlaybackManager: AVAudioPlayerDelegate {
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         Task { @MainActor in self.handleTrackFinished() }
     }
 }
-#endif
