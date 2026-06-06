@@ -22,10 +22,15 @@ struct OfflineListenApp: App {
                 .environmentObject(downloads)
                 .environmentObject(playback)
                 .environmentObject(LogStore.shared)
+                .task { playback.restoreLastSession(in: library.tracks) }
                 .onAppear { importShared() }
                 .onOpenURL { _ in importShared() }
                 .onChange(of: scenePhase) { phase in
-                    if phase == .active { importShared() }
+                    if phase == .active {
+                        importShared()
+                    } else {
+                        playback.saveState()
+                    }
                 }
         }
     }

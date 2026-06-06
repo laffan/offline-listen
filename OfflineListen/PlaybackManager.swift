@@ -25,6 +25,14 @@ final class PlaybackManager: NSObject, ObservableObject {
     private var ticker: Timer?
     private var player: AVAudioPlayer?
 
+    private var hasRestored = false
+    private var lastPersist = Date.distantPast
+
+    private enum Keys {
+        static let trackID = "lastTrackID"
+        static let position = "lastPosition"
+    }
+
     override init() {
         super.init()
         configureAudioSession()
@@ -66,6 +74,29 @@ final class PlaybackManager: NSObject, ObservableObject {
         player?.currentTime = target
         currentTime = target
         updateNowPlaying()
+        persistState()
+    }
+
+    /// Restores the track and playhead from the last session (paused), unless
+    /// playback is already underway. Call once on launch with the library.
+    func restoreLastSession(in tracks: [Track]) {
+        guard !hasRestored else { return }
+        hasRestored = true
+        guard currentTrack == nil else { return }
+
+        let defaults = UserDefaults.standard
+        guard let idString = defaults.string(forKey: Keys.trackID),
+              let id = UUID(uuidString: idString),
+              let track = tracks.first(where: { $0.id == id }) else { return }
+
+        queue = tracks
+        index = tracks.firstIndex(of: track) ?? 0
+        loadCurrent(autoPlay: false, startAt: defaults.double(forKey: Keys.position))
+    }
+
+    /// Writes the current track + playhead so they survive app relaunch.
+    func saveState() {
+        persistState()
     }
 
     func skipForward(_ seconds: Double = 30) {
@@ -78,7 +109,7 @@ final class PlaybackManager: NSObject, ObservableObject {
 
     // MARK: - Engine
 
-    private func loadCurrent(autoPlay: Bool) {
+    private func loadCurrent(autoPlay: Bool, startAt: Double = 0) {
         guard queue.indices.contains(index) else { return }
         let track = queue[index]
         currentTrack = track
@@ -92,15 +123,23 @@ final class PlaybackManager: NSObject, ObservableObject {
             player.prepareToPlay()
             self.player = player
             duration = player.duration
+            if startAt > 0 {
+                let clamped = min(startAt, player.duration)
+                player.currentTime = clamped
+                currentTime = clamped
+            }
             if autoPlay { player.play() }
         } catch {
             print("[PlaybackManager] AVAudioPlayer error: \(error)")
         }
 
         isPlaying = autoPlay
-        try? AVAudioSession.sharedInstance().setActive(true)
-        startTicker()
+        if autoPlay {
+            try? AVAudioSession.sharedInstance().setActive(true)
+            startTicker()
+        }
         updateNowPlaying()
+        persistState()
     }
 
     private func resume() {
@@ -115,6 +154,15 @@ final class PlaybackManager: NSObject, ObservableObject {
         player?.pause()
         isPlaying = false
         updateNowPlaying()
+        persistState()
+    }
+
+    private func persistState() {
+        guard let track = currentTrack else { return }
+        let defaults = UserDefaults.standard
+        defaults.set(track.id.uuidString, forKey: Keys.trackID)
+        defaults.set(currentTime, forKey: Keys.position)
+        lastPersist = Date()
     }
 
     private func stopEngine() {
@@ -137,6 +185,9 @@ final class PlaybackManager: NSObject, ObservableObject {
         guard let player else { return }
         currentTime = player.currentTime
         updateNowPlaying()
+        if Date().timeIntervalSince(lastPersist) > 5 {
+            persistState()
+        }
     }
 
     private func handleTrackFinished() {
