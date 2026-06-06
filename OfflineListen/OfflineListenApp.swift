@@ -19,6 +19,7 @@ struct OfflineListenApp: App {
                 .environmentObject(library)
                 .environmentObject(downloads)
                 .environmentObject(playback)
+                .environmentObject(LogStore.shared)
         }
     }
 }

@@ -16,6 +16,8 @@ Three screens (tabs):
 2. **Library** — every downloaded track; tap to play, swipe to delete.
 3. **Player** — artwork, scrubber, play/pause, next/previous. Drives the lock
    screen and Control Center.
+4. **Log** — timestamped, copyable stream of every pipeline step (queue,
+   yt-dlp, conversion) with light colour coding, for diagnosing downloads.
 
 ### Pipeline
 
@@ -36,7 +38,8 @@ URL  ──►  YoutubeDL-iOS (yt-dlp on device)  ──►  AudioConverter  ─
 | `YouTubeExtractor.swift` | `YouTubeAudioExtractor` protocol + YoutubeDL-iOS impl + a mock. |
 | `AudioConverter.swift` | M4A passthrough; gated MP3 transcode. |
 | `PlaybackManager.swift` | AVFoundation engine, audio session, lock-screen controls. |
-| `*View.swift` | The three SwiftUI screens. |
+| `Logger.swift` | `LogStore` — thread-safe, app-wide log sink. |
+| `*View.swift` | The four SwiftUI screens (Download, Library, Player, Log). |
 
 The YouTube extraction step is isolated behind a `YouTubeAudioExtractor` seam (a
 mock implementation is included), so adapting to a library API change touches

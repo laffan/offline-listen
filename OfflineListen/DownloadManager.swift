@@ -10,7 +10,6 @@ final class DownloadJob: ObservableObject, Identifiable {
 
     @Published var title: String
     @Published var state: State
-    @Published var progress: Double = 0
 
     init(url: String, format: AudioFormat) {
         self.url = url
@@ -69,9 +68,11 @@ final class DownloadManager: ObservableObject {
         if URL(string: trimmed) == nil || !trimmed.lowercased().hasPrefix("http") {
             job.state = .failed(ExtractorError.invalidURL.localizedDescription)
             jobs.insert(job, at: 0)
+            appLog("Rejected invalid URL: \(trimmed)", level: .error, category: "Queue")
             return
         }
         jobs.insert(job, at: 0)
+        appLog("Queued \(job.format.displayName) download: \(trimmed)", category: "Queue")
         Task { await processNext() }
     }
 
@@ -102,14 +103,10 @@ final class DownloadManager: ObservableObject {
         }
 
         do {
+            appLog("Processing: \(job.url)", category: "Queue")
             job.state = .extracting
-            let extracted = try await extractor.extractAudio(from: url) { fraction in
-                Task { @MainActor in
-                    if job.state == .extracting || job.state == .downloading {
-                        job.state = .downloading
-                        job.progress = fraction
-                    }
-                }
+            let extracted = try await extractor.extractAudio(from: url) {
+                Task { @MainActor in job.state = .downloading }
             }
 
             job.state = .converting
@@ -130,8 +127,11 @@ final class DownloadManager: ObservableObject {
             )
             library.add(track)
             job.state = .finished
+            appLog("Added to library: \"\(track.title)\" (\(track.duration.asPlaybackTime))",
+                   level: .success, category: "Queue")
         } catch {
             job.state = .failed(error.localizedDescription)
+            appLog("Job failed: \(error.localizedDescription)", level: .error, category: "Queue")
         }
     }
 }

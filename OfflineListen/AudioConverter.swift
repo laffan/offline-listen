@@ -36,10 +36,13 @@ enum AudioConverter {
         switch format {
         case .m4a:
             // Passthrough: the downloaded stream is already a playable m4a.
+            appLog("Saving audio (m4a passthrough) → \(destinationName)", category: "Convert")
             try FileManager.default.moveItem(at: input, to: destination)
+            appLog("Saved \(destination.lastPathComponent)", level: .success, category: "Convert")
             return destination
 
         case .mp3:
+            appLog("Transcoding to MP3 → \(destinationName)", category: "Convert")
             let result = try transcodeToMP3(input: input, destination: destination)
             try? FileManager.default.removeItem(at: input)
             return result

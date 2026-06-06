@@ -20,6 +20,8 @@
 		1B00000000000000000000BB /* PlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000AB /* PlayerView.swift */; };
 		1B00000000000000000000BC /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000AC /* Assets.xcassets */; };
 		1B00000000000000000000BE /* YoutubeDL in Frameworks */ = {isa = PBXBuildFile; productRef = 2300000000000000000000A2 /* YoutubeDL */; };
+		1B00000000000000000000BF /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000AF /* Logger.swift */; };
+		1B00000000000000000000C0 /* LogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B0 /* LogView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -34,6 +36,8 @@
 		1A00000000000000000000A9 /* DownloadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadView.swift; sourceTree = "<group>"; };
 		1A00000000000000000000AA /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		1A00000000000000000000AB /* PlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerView.swift; sourceTree = "<group>"; };
+		1A00000000000000000000AF /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
+		1A00000000000000000000B0 /* LogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogView.swift; sourceTree = "<group>"; };
 		1A00000000000000000000AC /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		1A00000000000000000000AD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		1A00000000000000000000AE /* OfflineListen.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OfflineListen.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -73,6 +77,8 @@
 				1A00000000000000000000A9 /* DownloadView.swift */,
 				1A00000000000000000000AA /* LibraryView.swift */,
 				1A00000000000000000000AB /* PlayerView.swift */,
+				1A00000000000000000000AF /* Logger.swift */,
+				1A00000000000000000000B0 /* LogView.swift */,
 				1A00000000000000000000AC /* Assets.xcassets */,
 				1A00000000000000000000AD /* Info.plist */,
 			);
@@ -173,6 +179,8 @@
 				1B00000000000000000000B9 /* DownloadView.swift in Sources */,
 				1B00000000000000000000BA /* LibraryView.swift in Sources */,
 				1B00000000000000000000BB /* PlayerView.swift in Sources */,
+				1B00000000000000000000BF /* Logger.swift in Sources */,
+				1B00000000000000000000C0 /* LogView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

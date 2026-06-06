@@ -36,11 +36,11 @@ enum ExtractorError: LocalizedError {
 /// independent of the concrete library and can be unit-tested with a mock.
 protocol YouTubeAudioExtractor {
     /// Downloads the best audio-only stream for `url`.
-    /// - Parameter progress: 0...1 download fraction. YoutubeDL-iOS does not
-    ///   surface a progress callback here, so the production implementation only
-    ///   reports 0 at the start; the UI shows an indeterminate spinner.
+    /// - Parameter onDownloadStart: invoked once the video info has been
+    ///   extracted and the actual stream download is about to begin, so the UI
+    ///   can move the job from the "preparing" phase to "downloading".
     func extractAudio(from url: URL,
-                      progress: @escaping (Double) -> Void) async throws -> ExtractedAudio
+                      onDownloadStart: @escaping () -> Void) async throws -> ExtractedAudio
 }
 
 /// Production implementation backed by kewlbear/YoutubeDL-iOS (yt-dlp on device).
@@ -58,17 +58,28 @@ final class YoutubeDLExtractor: YouTubeAudioExtractor {
     }
 
     func extractAudio(from url: URL,
-                      progress: @escaping (Double) -> Void) async throws -> ExtractedAudio {
+                      onDownloadStart: @escaping () -> Void) async throws -> ExtractedAudio {
+        let category = "yt-dlp"
         #if canImport(YoutubeDL)
-        progress(0)
         do {
+            appLog("Resolving \(url.absoluteString)", category: category)
+
             // First run: fetch the on-device yt-dlp Python module if missing.
-            if !FileManager.default.fileExists(atPath: YoutubeDL.pythonModuleURL.path) {
+            let modulePath = YoutubeDL.pythonModuleURL.path
+            if FileManager.default.fileExists(atPath: modulePath) {
+                appLog("yt-dlp Python module present.", level: .debug, category: category)
+            } else {
+                appLog("yt-dlp Python module not found — downloading (first run, can take a while)…",
+                       level: .warning, category: category)
                 try await YoutubeDL.downloadPythonModule()
+                appLog("yt-dlp Python module downloaded.", level: .success, category: category)
             }
 
+            appLog("Initializing yt-dlp…", level: .debug, category: category)
             let youtubeDL = YoutubeDL()
             let metadata = Metadata()
+
+            appLog("Extracting video info (running yt-dlp)…", category: category)
 
             // The format selector receives the extracted `Info`; we capture the
             // title/duration there and choose the best audio-only stream,
@@ -76,6 +87,8 @@ final class YoutubeDLExtractor: YouTubeAudioExtractor {
             let fileURL = try await youtubeDL.download(url: url) { info in
                 metadata.title = info.title
                 metadata.duration = info.duration ?? 0
+                appLog("Info: \"\(info.title)\" · \(info.formats.count) formats · \(Int(info.duration ?? 0))s",
+                       level: .success, category: category)
 
                 let audioOnly = info.formats.filter { $0.isAudioOnly }
                 let m4a = audioOnly.filter { $0.ext == "m4a" }
@@ -84,9 +97,18 @@ final class YoutubeDLExtractor: YouTubeAudioExtractor {
                     ?? info.formats.max(by: { ($0.tbr ?? 0) < ($1.tbr ?? 0) })
                     ?? info.formats[0]
 
+                appLog("Selected format \(chosen.format_id) · \(chosen.ext) · \(Int(chosen.abr ?? chosen.tbr ?? 0)) kbps · audioOnly=\(chosen.isAudioOnly)",
+                       category: category)
+                appLog("Starting stream download…", category: category)
+                onDownloadStart()
+
                 // Tuple: (formats, outputURL?, timeRange?, bitRate?, title).
                 return ([chosen], nil, nil, chosen.abr ?? chosen.tbr, info.safeTitle)
             }
+
+            let size = (try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? Int) ?? nil
+            let sizeText = size.map { " (\($0 / 1024) KB)" } ?? ""
+            appLog("Download finished: \(fileURL.lastPathComponent)\(sizeText)", level: .success, category: category)
 
             return ExtractedAudio(
                 fileURL: fileURL,
@@ -94,6 +116,7 @@ final class YoutubeDLExtractor: YouTubeAudioExtractor {
                 duration: metadata.duration
             )
         } catch {
+            appLog("yt-dlp failed: \(error.localizedDescription)", level: .error, category: category)
             throw ExtractorError.downloadFailed(error.localizedDescription)
         }
         #else
@@ -107,11 +130,12 @@ final class YoutubeDLExtractor: YouTubeAudioExtractor {
 /// this in previews or simulator smoke tests.
 final class MockExtractor: YouTubeAudioExtractor {
     func extractAudio(from url: URL,
-                      progress: @escaping (Double) -> Void) async throws -> ExtractedAudio {
-        for step in 1...10 {
-            try await Task.sleep(nanoseconds: 120_000_000)
-            progress(Double(step) / 10)
-        }
+                      onDownloadStart: @escaping () -> Void) async throws -> ExtractedAudio {
+        appLog("Mock: extracting info…", category: "yt-dlp")
+        try await Task.sleep(nanoseconds: 400_000_000)
+        onDownloadStart()
+        appLog("Mock: downloading…", category: "yt-dlp")
+        try await Task.sleep(nanoseconds: 800_000_000)
         let dest = AppPaths.work.appendingPathComponent("\(UUID().uuidString).m4a")
         // A real file isn't produced here; the mock is only for UI flow testing.
         FileManager.default.createFile(atPath: dest.path, contents: Data())
