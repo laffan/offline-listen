@@ -110,7 +110,7 @@ private struct DownloadJobRow: View {
                     .lineLimit(1)
             }
 
-            if job.state == .downloading {
+            if job.state == .downloading, job.progress > 0 {
                 ProgressView(value: job.progress)
             }
         }

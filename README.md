@@ -92,22 +92,27 @@ the lock screen.
   3. Add `USE_FFMPEG_MP3` to *Build Settings ▸ Swift Compiler – Custom Flags ▸
      Active Compilation Conditions*.
 
-## Verify the YoutubeDL-iOS seam
+## The YoutubeDL-iOS seam
 
-This is the one integration point that uses the library's common API shape but
-could not be compiled in the authoring environment, so confirm it against the
-version Xcode resolves:
+All YoutubeDL-iOS usage lives in `YoutubeDLExtractor.extractAudio`, written
+against the resolved package's actual API:
 
-- **`YoutubeDLExtractor.extractAudio`** — `YoutubeDL` init, the one-time
-  `downloadPythonModule()`, and `download(url:options:)`/its progress callback.
+- `YoutubeDL.downloadPythonModule()` fetches the yt-dlp Python module on first
+  run (guarded by a `pythonModuleURL` existence check).
+- `download(url:formatSelector:) async throws -> URL` does the work; the
+  `formatSelector` closure receives the extracted `Info`, captures the
+  title/duration, and returns the best audio-only `Format` (preferring `m4a`).
 
-If a signature differs, adjust only that one spot. Swapping `DownloadManager`'s
-extractor for `MockExtractor` lets you click through the whole UI — queue,
-library, player, lock-screen controls — with no native dependency at all.
+YoutubeDL-iOS exposes no progress callback on `download`, so the queue shows an
+indeterminate spinner during the network phase rather than a percentage bar.
+
+To exercise the rest of the app — queue, library, player, lock-screen controls —
+with no native dependency at all, point `DownloadManager`'s default extractor at
+`MockExtractor`.
 
 ## Status
 
-Built as a complete, ready-to-open Xcode project. It was authored on Linux
-without an Xcode toolchain, so it has **not been compiled or run** — expect to
-resolve the YoutubeDL-iOS package and possibly nudge the one API call site noted
-above on first build.
+Built as a complete, ready-to-open Xcode project, authored on Linux without an
+Xcode toolchain. The YoutubeDL-iOS integration is written against the library's
+verified public API. Playback (offline, background, lock-screen) uses
+AVFoundation only.

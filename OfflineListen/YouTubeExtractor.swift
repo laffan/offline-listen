@@ -36,56 +36,63 @@ enum ExtractorError: LocalizedError {
 /// independent of the concrete library and can be unit-tested with a mock.
 protocol YouTubeAudioExtractor {
     /// Downloads the best audio-only stream for `url`.
-    /// - Parameter progress: 0...1 download fraction, may be called off the main thread.
+    /// - Parameter progress: 0...1 download fraction. YoutubeDL-iOS does not
+    ///   surface a progress callback here, so the production implementation only
+    ///   reports 0 at the start; the UI shows an indeterminate spinner.
     func extractAudio(from url: URL,
                       progress: @escaping (Double) -> Void) async throws -> ExtractedAudio
 }
 
 /// Production implementation backed by kewlbear/YoutubeDL-iOS (yt-dlp on device).
 ///
-/// NOTE ON INTEGRATION
-/// -------------------
-/// YoutubeDL-iOS bridges to the Python `yt_dlp` module, whose Swift surface has
-/// shifted across releases. The call below reflects the common shape of the API
-/// (init → optional one-time Python module download → `download(url:)`). When you
-/// resolve the package in Xcode, confirm the method names against the installed
-/// version's headers and adjust this single method if needed — nothing else in
-/// the app depends on these specifics.
-///
-/// First launch downloads the yt-dlp Python files (~tens of MB) and therefore
+/// First launch downloads the yt-dlp Python module (tens of MB) and therefore
 /// requires a network connection. Subsequent extractions reuse the cached module.
+/// The library remuxes the selected audio-only stream into a playable container
+/// (an `.m4a`) and returns the final file URL.
 final class YoutubeDLExtractor: YouTubeAudioExtractor {
+    /// Reference box so the (escaping) format-selector closure can hand metadata
+    /// back out of the single extraction the download performs.
+    private final class Metadata {
+        var title = ""
+        var duration: Double = 0
+    }
+
     func extractAudio(from url: URL,
                       progress: @escaping (Double) -> Void) async throws -> ExtractedAudio {
         #if canImport(YoutubeDL)
+        progress(0)
         do {
-            // Ensure the on-device yt-dlp Python module is present (first run only).
-            if YoutubeDL.shouldDownloadPythonModule {
+            // First run: fetch the on-device yt-dlp Python module if missing.
+            if !FileManager.default.fileExists(atPath: YoutubeDL.pythonModuleURL.path) {
                 try await YoutubeDL.downloadPythonModule()
             }
 
-            let youtubeDL = try YoutubeDL()
+            let youtubeDL = YoutubeDL()
+            let metadata = Metadata()
 
-            // Request best audio-only stream, preferring an m4a container so the
-            // result is immediately playable with no transcode.
-            let (fileURLs, info) = try await youtubeDL.download(
-                url: url,
-                options: "bestaudio[ext=m4a]/bestaudio/best"
-            ) { fraction in
-                progress(fraction)
-            }
+            // The format selector receives the extracted `Info`; we capture the
+            // title/duration there and choose the best audio-only stream,
+            // preferring an m4a so remuxing stays container-only (no transcode).
+            let fileURL = try await youtubeDL.download(url: url) { info in
+                metadata.title = info.title
+                metadata.duration = info.duration ?? 0
 
-            guard let audioURL = fileURLs.first else {
-                throw ExtractorError.noAudioFormat
+                let audioOnly = info.formats.filter { $0.isAudioOnly }
+                let m4a = audioOnly.filter { $0.ext == "m4a" }
+                let pool = m4a.isEmpty ? audioOnly : m4a
+                let chosen = pool.max(by: { ($0.abr ?? $0.tbr ?? 0) < ($1.abr ?? $1.tbr ?? 0) })
+                    ?? info.formats.max(by: { ($0.tbr ?? 0) < ($1.tbr ?? 0) })
+                    ?? info.formats[0]
+
+                // Tuple: (formats, outputURL?, timeRange?, bitRate?, title).
+                return ([chosen], nil, nil, chosen.abr ?? chosen.tbr, info.safeTitle)
             }
 
             return ExtractedAudio(
-                fileURL: audioURL,
-                title: info.title ?? url.lastPathComponent,
-                duration: info.duration ?? 0
+                fileURL: fileURL,
+                title: metadata.title.isEmpty ? url.absoluteString : metadata.title,
+                duration: metadata.duration
             )
-        } catch let error as ExtractorError {
-            throw error
         } catch {
             throw ExtractorError.downloadFailed(error.localizedDescription)
         }
@@ -95,9 +102,9 @@ final class YoutubeDLExtractor: YouTubeAudioExtractor {
     }
 }
 
-/// Lets you exercise the queue/library/player UI without the heavy native
-/// packages by generating a short silent tone. Swap `DownloadManager`'s default
-/// extractor to this in previews or simulator smoke tests.
+/// Lets you exercise the queue/library/player UI without the native package by
+/// generating a placeholder entry. Swap `DownloadManager`'s default extractor to
+/// this in previews or simulator smoke tests.
 final class MockExtractor: YouTubeAudioExtractor {
     func extractAudio(from url: URL,
                       progress: @escaping (Double) -> Void) async throws -> ExtractedAudio {
