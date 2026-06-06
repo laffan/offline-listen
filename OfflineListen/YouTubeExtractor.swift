@@ -44,29 +44,6 @@ protocol YouTubeAudioExtractor {
                       onProgress: @escaping (Double) -> Void) async throws -> ExtractedAudio
 }
 
-/// Reports download progress for an async `URLSession.download(for:delegate:)`.
-private final class DownloadProgressDelegate: NSObject, URLSessionDownloadDelegate {
-    private let onProgress: (Double) -> Void
-
-    init(onProgress: @escaping (Double) -> Void) {
-        self.onProgress = onProgress
-    }
-
-    func urlSession(_ session: URLSession,
-                    downloadTask: URLSessionDownloadTask,
-                    didWriteData bytesWritten: Int64,
-                    totalBytesWritten: Int64,
-                    totalBytesExpectedToWrite: Int64) {
-        guard totalBytesExpectedToWrite > 0 else { return }
-        onProgress(Double(totalBytesWritten) / Double(totalBytesExpectedToWrite))
-    }
-
-    // Required by the protocol; the async download(for:delegate:) handles the file.
-    func urlSession(_ session: URLSession,
-                    downloadTask: URLSessionDownloadTask,
-                    didFinishDownloadingTo location: URL) {}
-}
-
 /// Production implementation backed by kewlbear/YoutubeDL-iOS (yt-dlp on device).
 ///
 /// We use the library only to *resolve* the video (`extractInfo`), which runs
@@ -99,6 +76,101 @@ final class YoutubeDLExtractor: YouTubeAudioExtractor {
         #else
         appLog("YoutubeDL is not linked.", level: .error, category: category)
         #endif
+    }
+
+    /// Downloads a file in sequential HTTP byte-range chunks, appending to
+    /// `destination`. YouTube drops/throttles single large connections, so this
+    /// mirrors what yt-dlp does: moderate ranged requests, each retried on
+    /// transient network errors. Cancellation-aware between chunks.
+    private static func downloadInChunks(baseRequest: URLRequest,
+                                         expectedSize: Int?,
+                                         to destination: URL,
+                                         category: String,
+                                         onProgress: @escaping (Double) -> Void) async throws {
+        let chunkSize = 5 * 1024 * 1024 // 5 MB
+
+        try? FileManager.default.removeItem(at: destination)
+        FileManager.default.createFile(atPath: destination.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: destination)
+        defer { try? handle.close() }
+
+        var offset = 0
+        var total = expectedSize ?? 0
+        let started = Date()
+        var loggedBucket = 0
+
+        while total == 0 || offset < total {
+            try Task.checkCancellation()
+
+            let upper = total > 0 ? min(offset + chunkSize, total) - 1 : offset + chunkSize - 1
+            let requested = upper - offset + 1
+
+            var req = baseRequest
+            req.timeoutInterval = 120
+            req.setValue("bytes=\(offset)-\(upper)", forHTTPHeaderField: "Range")
+
+            let (data, response) = try await fetchChunk(req, attempts: 4, category: category)
+            guard let http = response as? HTTPURLResponse else {
+                throw ExtractorError.downloadFailed("No HTTP response from stream host")
+            }
+            guard http.statusCode == 200 || http.statusCode == 206 else {
+                throw ExtractorError.downloadFailed("Stream host returned HTTP \(http.statusCode)")
+            }
+
+            // Learn the total size from the first ranged response if we didn't
+            // already have it from yt-dlp's metadata.
+            if total == 0 {
+                if let range = http.value(forHTTPHeaderField: "Content-Range"),
+                   let totalPart = range.split(separator: "/").last,
+                   let parsed = Int(totalPart) {
+                    total = parsed
+                } else if let length = http.value(forHTTPHeaderField: "Content-Length"),
+                          let parsed = Int(length) {
+                    total = parsed
+                }
+            }
+
+            if data.isEmpty { break }
+            try handle.write(contentsOf: data)
+            offset += data.count
+
+            if total > 0 {
+                let fraction = min(Double(offset) / Double(total), 1.0)
+                onProgress(fraction)
+                let bucket = Int(fraction * 5) // log every ~20%
+                if bucket > loggedBucket {
+                    loggedBucket = bucket
+                    let elapsed = Int(Date().timeIntervalSince(started))
+                    appLog("Download \(Int(fraction * 100))% · \(elapsed)s", level: .debug, category: category)
+                }
+            }
+
+            // Server ignored the range and returned the whole file, or we've hit EOF.
+            if http.statusCode == 200 { break }
+            if data.count < requested { break }
+        }
+
+        onProgress(1.0)
+    }
+
+    private static func fetchChunk(_ request: URLRequest,
+                                   attempts: Int,
+                                   category: String) async throws -> (Data, URLResponse) {
+        var lastError: Error?
+        for attempt in 1...attempts {
+            do {
+                return try await URLSession.shared.data(for: request)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                if (error as? URLError)?.code == .cancelled { throw error }
+                lastError = error
+                appLog("Chunk attempt \(attempt)/\(attempts) failed: \(error.localizedDescription) — retrying",
+                       level: .warning, category: category)
+                try await Task.sleep(nanoseconds: UInt64(attempt) * 700_000_000)
+            }
+        }
+        throw lastError ?? ExtractorError.downloadFailed("Chunk download failed")
     }
 
     func extractAudio(from url: URL,
@@ -145,42 +217,27 @@ final class YoutubeDLExtractor: YouTubeAudioExtractor {
             }
 
             // Carry over yt-dlp's request headers (User-Agent, etc.) so the CDN
-            // doesn't reject the request. A generous idle timeout tolerates the
-            // throttled, bursty delivery YouTube applies to single connections.
+            // doesn't reject the request.
             var request = URLRequest(url: mediaURL)
             for (key, value) in chosen.http_headers {
                 request.setValue(value, forHTTPHeaderField: key)
             }
-            request.timeoutInterval = 300
-
-            appLog("Downloading audio stream (foreground)…", category: category)
-            onDownloadStart()
-
-            let started = Date()
-            var loggedBucket = 0
-            let delegate = DownloadProgressDelegate { fraction in
-                onProgress(fraction)
-                let bucket = Int(fraction * 5) // log every ~20%
-                if bucket > loggedBucket {
-                    loggedBucket = bucket
-                    let elapsed = Int(Date().timeIntervalSince(started))
-                    appLog("Download \(Int(fraction * 100))% · \(elapsed)s elapsed", level: .debug, category: category)
-                }
-            }
-
-            let (tempURL, response) = try await URLSession.shared.download(for: request, delegate: delegate)
-            if let http = response as? HTTPURLResponse {
-                let level: LogLevel = (200..<300).contains(http.statusCode) ? .debug : .warning
-                appLog("HTTP \(http.statusCode) from stream host", level: level, category: category)
-                guard (200..<300).contains(http.statusCode) else {
-                    throw ExtractorError.downloadFailed("Stream host returned HTTP \(http.statusCode)")
-                }
-            }
 
             let ext = chosen.ext.isEmpty ? "m4a" : chosen.ext
             let dest = AppPaths.work.appendingPathComponent("\(UUID().uuidString).\(ext)")
-            try? FileManager.default.removeItem(at: dest)
-            try FileManager.default.moveItem(at: tempURL, to: dest)
+
+            let expected = chosen.filesize
+            let sizeHint = expected.map { " (~\($0 / 1024 / 1024) MB)" } ?? ""
+            appLog("Downloading audio stream in chunks\(sizeHint)…", category: category)
+            onDownloadStart()
+
+            try await Self.downloadInChunks(
+                baseRequest: request,
+                expectedSize: expected,
+                to: dest,
+                category: category,
+                onProgress: onProgress
+            )
 
             let size = (try? FileManager.default.attributesOfItem(atPath: dest.path)[.size] as? Int) ?? nil
             let sizeText = size.map { " (\($0 / 1024) KB)" } ?? ""
