@@ -47,6 +47,36 @@ The YouTube extraction step is isolated behind a `YouTubeAudioExtractor` seam (a
 mock implementation is included), so adapting to a library API change touches
 one file and the UI can be exercised with no native dependency.
 
+## Share from other apps
+
+A **Share Extension** lets you send a link straight from Safari, the YouTube
+app, etc. into Offline Listen:
+
+1. In another app, tap Share → **Offline Listen**.
+2. The extension stashes the URL in the shared App Group container and opens the
+   app via the `offlinelisten://` URL scheme.
+3. On launch/foreground the app drains the shared URLs and auto-enqueues them as
+   M4A downloads (see `SharedInbox` + `importShared()` in `OfflineListenApp`).
+
+The extension does no downloading itself (extensions have a tight memory budget);
+it just hands the URL to the app.
+
+### Required Xcode setup for the extension
+
+The project wires up the second target, entitlements, and URL scheme, but
+**signing and the App Group must be configured in Xcode** (they can't be set
+from source alone):
+
+1. Select each target (**OfflineListen** and **ShareExtension**) →
+   *Signing & Capabilities* → set your **Team**.
+2. Confirm both targets have the **App Groups** capability with the same group,
+   `group.com.offlinelisten.app` (the `.entitlements` files declare it; let
+   Xcode register/provision it). If you change the group id, update it in both
+   entitlements files and in `SharedInbox.appGroup`.
+3. Bundle IDs default to `com.offlinelisten.app` and
+   `com.offlinelisten.app.ShareExtension` — change both (keep the extension a
+   child of the app id) if those are taken.
+
 ## Setup
 
 Requires **Xcode 15+** and an Apple developer account (free is fine for running

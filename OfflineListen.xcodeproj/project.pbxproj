@@ -22,7 +22,21 @@
 		1B00000000000000000000BE /* YoutubeDL in Frameworks */ = {isa = PBXBuildFile; productRef = 2300000000000000000000A2 /* YoutubeDL */; };
 		1B00000000000000000000BF /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000AF /* Logger.swift */; };
 		1B00000000000000000000C0 /* LogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B0 /* LogView.swift */; };
+		3B00000000000000000000A3 /* SharedInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A00000000000000000000A5 /* SharedInbox.swift */; };
+		3B00000000000000000000A1 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A00000000000000000000A1 /* ShareViewController.swift */; };
+		3B00000000000000000000A2 /* SharedInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A00000000000000000000A5 /* SharedInbox.swift */; };
+		3B00000000000000000000A4 /* ShareExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 3A00000000000000000000A4 /* ShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		3000000000000000000000A3 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 2100000000000000000000A0 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 3000000000000000000000A1;
+			remoteInfo = ShareExtension;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		1A00000000000000000000A1 /* OfflineListenApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineListenApp.swift; sourceTree = "<group>"; };
@@ -41,6 +55,12 @@
 		1A00000000000000000000AC /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		1A00000000000000000000AD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		1A00000000000000000000AE /* OfflineListen.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OfflineListen.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		3A00000000000000000000A5 /* SharedInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedInbox.swift; sourceTree = "<group>"; };
+		3A00000000000000000000A6 /* OfflineListen.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OfflineListen.entitlements; sourceTree = "<group>"; };
+		3A00000000000000000000A1 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
+		3A00000000000000000000A2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		3A00000000000000000000A3 /* ShareExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ShareExtension.entitlements; sourceTree = "<group>"; };
+		3A00000000000000000000A4 /* ShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -52,6 +72,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		3D00000000000000000000A2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -59,6 +86,7 @@
 			isa = PBXGroup;
 			children = (
 				1C00000000000000000000C2 /* OfflineListen */,
+				3C00000000000000000000A1 /* ShareExtension */,
 				1C00000000000000000000C3 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -79,16 +107,29 @@
 				1A00000000000000000000AB /* PlayerView.swift */,
 				1A00000000000000000000AF /* Logger.swift */,
 				1A00000000000000000000B0 /* LogView.swift */,
+				3A00000000000000000000A5 /* SharedInbox.swift */,
 				1A00000000000000000000AC /* Assets.xcassets */,
 				1A00000000000000000000AD /* Info.plist */,
+				3A00000000000000000000A6 /* OfflineListen.entitlements */,
 			);
 			path = OfflineListen;
+			sourceTree = "<group>";
+		};
+		3C00000000000000000000A1 /* ShareExtension */ = {
+			isa = PBXGroup;
+			children = (
+				3A00000000000000000000A1 /* ShareViewController.swift */,
+				3A00000000000000000000A2 /* Info.plist */,
+				3A00000000000000000000A3 /* ShareExtension.entitlements */,
+			);
+			path = ShareExtension;
 			sourceTree = "<group>";
 		};
 		1C00000000000000000000C3 /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				1A00000000000000000000AE /* OfflineListen.app */,
+				3A00000000000000000000A4 /* ShareExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -103,10 +144,12 @@
 				1D00000000000000000000D1 /* Sources */,
 				1D00000000000000000000D2 /* Frameworks */,
 				1D00000000000000000000D3 /* Resources */,
+				3D00000000000000000000A4 /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				3000000000000000000000A2 /* PBXTargetDependency */,
 			);
 			name = OfflineListen;
 			packageProductDependencies = (
@@ -115,6 +158,23 @@
 			productName = OfflineListen;
 			productReference = 1A00000000000000000000AE /* OfflineListen.app */;
 			productType = "com.apple.product-type.application";
+		};
+		3000000000000000000000A1 /* ShareExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3E00000000000000000000A1 /* Build configuration list for PBXNativeTarget "ShareExtension" */;
+			buildPhases = (
+				3D00000000000000000000A1 /* Sources */,
+				3D00000000000000000000A2 /* Frameworks */,
+				3D00000000000000000000A3 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ShareExtension;
+			productName = ShareExtension;
+			productReference = 3A00000000000000000000A4 /* ShareExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -127,6 +187,9 @@
 				LastUpgradeCheck = 1500;
 				TargetAttributes = {
 					2000000000000000000000A0 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+					3000000000000000000000A1 = {
 						CreatedOnToolsVersion = 15.0;
 					};
 				};
@@ -148,9 +211,24 @@
 			projectRoot = "";
 			targets = (
 				2000000000000000000000A0 /* OfflineListen */,
+				3000000000000000000000A1 /* ShareExtension */,
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		3D00000000000000000000A4 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				3B00000000000000000000A4 /* ShareExtension.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXResourcesBuildPhase section */
 		1D00000000000000000000D3 /* Resources */ = {
@@ -158,6 +236,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				1B00000000000000000000BC /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3D00000000000000000000A3 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -181,10 +266,28 @@
 				1B00000000000000000000BB /* PlayerView.swift in Sources */,
 				1B00000000000000000000BF /* Logger.swift in Sources */,
 				1B00000000000000000000C0 /* LogView.swift in Sources */,
+				3B00000000000000000000A3 /* SharedInbox.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3D00000000000000000000A1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3B00000000000000000000A1 /* ShareViewController.swift in Sources */,
+				3B00000000000000000000A2 /* SharedInbox.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		3000000000000000000000A2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 3000000000000000000000A1 /* ShareExtension */;
+			targetProxy = 3000000000000000000000A3 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		1F00000000000000000000F1 /* Debug */ = {
@@ -242,6 +345,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = OfflineListen/OfflineListen.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
@@ -267,6 +371,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = OfflineListen/OfflineListen.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
@@ -282,6 +387,58 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.offlinelisten.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		3F00000000000000000000A1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ShareExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.offlinelisten.app.ShareExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		3F00000000000000000000A2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ShareExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.offlinelisten.app.ShareExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -304,6 +461,15 @@
 			buildConfigurations = (
 				1F00000000000000000000F3 /* Debug */,
 				1F00000000000000000000F4 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		3E00000000000000000000A1 /* Build configuration list for PBXNativeTarget "ShareExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3F00000000000000000000A1 /* Debug */,
+				3F00000000000000000000A2 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

@@ -6,6 +6,8 @@ struct OfflineListenApp: App {
     @StateObject private var downloads: DownloadManager
     @StateObject private var playback: PlaybackManager
 
+    @Environment(\.scenePhase) private var scenePhase
+
     init() {
         let library = LibraryStore()
         _library = StateObject(wrappedValue: library)
@@ -20,6 +22,19 @@ struct OfflineListenApp: App {
                 .environmentObject(downloads)
                 .environmentObject(playback)
                 .environmentObject(LogStore.shared)
+                .onAppear { importShared() }
+                .onOpenURL { _ in importShared() }
+                .onChange(of: scenePhase) { phase in
+                    if phase == .active { importShared() }
+                }
+        }
+    }
+
+    /// Drains any URLs handed over by the Share Extension and enqueues them.
+    private func importShared() {
+        for urlString in SharedInbox.takeAll() {
+            appLog("Imported shared URL: \(urlString)", category: "Share")
+            downloads.enqueue(urlString: urlString, format: .m4a)
         }
     }
 }
