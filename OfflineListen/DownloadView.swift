@@ -31,6 +31,17 @@ struct DownloadView: View {
             .padding(.top)
             .navigationTitle("Download")
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Menu {
+                        Button {
+                            Task { await YoutubeDLExtractor.refreshEngine() }
+                        } label: {
+                            Label("Refresh yt-dlp engine", systemImage: "arrow.triangle.2.circlepath")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Clear") { downloads.clearFinished() }
                         .disabled(downloads.jobs.isEmpty)
@@ -113,6 +124,16 @@ private struct DownloadJobRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                if job.state == .downloading, job.progress > 0 {
+                    Spacer()
+                    Text("\(Int(job.progress * 100))%")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if job.state == .downloading, job.progress > 0 {
+                ProgressView(value: job.progress)
             }
         }
         .padding(.vertical, 4)

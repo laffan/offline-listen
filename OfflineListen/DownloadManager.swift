@@ -10,6 +10,7 @@ final class DownloadJob: ObservableObject, Identifiable {
 
     @Published var title: String
     @Published var state: State
+    @Published var progress: Double = 0
 
     init(url: String, format: AudioFormat) {
         self.url = url
@@ -150,9 +151,15 @@ final class DownloadManager: ObservableObject {
         do {
             appLog("Processing: \(job.url)", category: "Queue")
             job.state = .extracting
-            let extracted = try await extractor.extractAudio(from: url) {
-                Task { @MainActor in job.state = .downloading }
-            }
+            let extracted = try await extractor.extractAudio(
+                from: url,
+                onDownloadStart: {
+                    Task { @MainActor in job.state = .downloading }
+                },
+                onProgress: { fraction in
+                    Task { @MainActor in job.progress = fraction }
+                }
+            )
 
             job.state = .converting
             job.title = extracted.title

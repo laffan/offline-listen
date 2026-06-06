@@ -106,7 +106,11 @@ All YoutubeDL-iOS usage lives in `YoutubeDLExtractor.extractAudio`:
 - `extractInfo(url:) async throws -> ([Format], Info)` runs yt-dlp to resolve the
   video, returning metadata plus formats with ready-to-use direct stream URLs.
 - We pick the best audio-only `Format` (preferring `m4a` / format 140) and
-  download `Format.url` ourselves with a **foreground `URLSession`**.
+  stream `Format.url` ourselves with a **foreground `URLSession`** (delegate-based
+  progress, a 300s idle timeout to tolerate YouTube's throttled/bursty delivery).
+- The Download tab's "⋯" menu has **Refresh yt-dlp engine**, which clears and
+  re-downloads the Python module when extraction starts failing (YouTube changes
+  often, and a stale engine returns few formats, throttled URLs, or hard errors).
 
 We deliberately do **not** call the library's own `download(...)`: it is
 hardwired to `Downloader.shared`, which uses a *background* `URLSession`.
