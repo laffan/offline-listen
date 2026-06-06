@@ -68,6 +68,14 @@ final class PlaybackManager: NSObject, ObservableObject {
         updateNowPlaying()
     }
 
+    func skipForward(_ seconds: Double = 30) {
+        seek(to: currentTime + seconds)
+    }
+
+    func skipBackward(_ seconds: Double = 15) {
+        seek(to: currentTime - seconds)
+    }
+
     // MARK: - Engine
 
     private func loadCurrent(autoPlay: Bool) {
@@ -170,6 +178,18 @@ final class PlaybackManager: NSObject, ObservableObject {
         }
         center.previousTrackCommand.addTarget { [weak self] _ in
             self?.previous(); return .success
+        }
+        center.skipForwardCommand.preferredIntervals = [30]
+        center.skipForwardCommand.addTarget { [weak self] event in
+            let interval = (event as? MPSkipIntervalCommandEvent)?.interval ?? 30
+            self?.skipForward(interval)
+            return .success
+        }
+        center.skipBackwardCommand.preferredIntervals = [15]
+        center.skipBackwardCommand.addTarget { [weak self] event in
+            let interval = (event as? MPSkipIntervalCommandEvent)?.interval ?? 15
+            self?.skipBackward(interval)
+            return .success
         }
         center.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard let event = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }

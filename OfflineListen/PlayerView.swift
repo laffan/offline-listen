@@ -95,24 +95,36 @@ struct PlayerView: View {
     }
 
     private var controls: some View {
-        HStack(spacing: 44) {
+        HStack(spacing: 24) {
             Button {
                 playback.previous()
             } label: {
-                Image(systemName: "backward.fill").font(.title)
+                Image(systemName: "backward.fill").font(.title2)
+            }
+
+            Button {
+                playback.skipBackward()
+            } label: {
+                Image(systemName: "gobackward.15").font(.title)
             }
 
             Button {
                 playback.togglePlayPause()
             } label: {
                 Image(systemName: playback.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                    .font(.system(size: 72))
+                    .font(.system(size: 64))
+            }
+
+            Button {
+                playback.skipForward()
+            } label: {
+                Image(systemName: "goforward.30").font(.title)
             }
 
             Button {
                 playback.next()
             } label: {
-                Image(systemName: "forward.fill").font(.title)
+                Image(systemName: "forward.fill").font(.title2)
             }
         }
         .foregroundStyle(Color.accentColor)
