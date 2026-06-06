@@ -97,17 +97,21 @@ the lock screen.
 
 ## The YoutubeDL-iOS seam
 
-All YoutubeDL-iOS usage lives in `YoutubeDLExtractor.extractAudio`, written
-against the resolved package's actual API:
+All YoutubeDL-iOS usage lives in `YoutubeDLExtractor.extractAudio`:
 
 - `YoutubeDL.downloadPythonModule()` fetches the yt-dlp Python module on first
   run (guarded by a `pythonModuleURL` existence check).
-- `download(url:formatSelector:) async throws -> URL` does the work; the
-  `formatSelector` closure receives the extracted `Info`, captures the
-  title/duration, and returns the best audio-only `Format` (preferring `m4a`).
+- `extractInfo(url:) async throws -> ([Format], Info)` runs yt-dlp to resolve the
+  video, returning metadata plus formats with ready-to-use direct stream URLs.
+- We pick the best audio-only `Format` (preferring `m4a` / format 140) and
+  download `Format.url` ourselves with a **foreground `URLSession`**.
 
-YoutubeDL-iOS exposes no progress callback on `download`, so the queue shows an
-indeterminate spinner during the network phase rather than a percentage bar.
+We deliberately do **not** call the library's own `download(...)`: it is
+hardwired to `Downloader.shared`, which uses a *background* `URLSession`.
+Background transfers don't complete reliably on the Simulator and need
+app-delegate event forwarding, so that call hangs. A foreground download behaves
+the same on Simulator and device. (The `Downloader` init that would give a
+foreground session is `internal`, so it can't be swapped in.)
 
 To exercise the rest of the app — queue, library, player, lock-screen controls —
 with no native dependency at all, point `DownloadManager`'s default extractor at

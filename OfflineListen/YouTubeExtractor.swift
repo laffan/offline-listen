@@ -45,18 +45,19 @@ protocol YouTubeAudioExtractor {
 
 /// Production implementation backed by kewlbear/YoutubeDL-iOS (yt-dlp on device).
 ///
-/// First launch downloads the yt-dlp Python module (tens of MB) and therefore
-/// requires a network connection. Subsequent extractions reuse the cached module.
-/// The library remuxes the selected audio-only stream into a playable container
-/// (an `.m4a`) and returns the final file URL.
+/// We use the library only to *resolve* the video (`extractInfo`), which runs
+/// yt-dlp and returns ready-to-use direct stream URLs (the throttling parameter
+/// is already decrypted). We then fetch the chosen audio stream ourselves with a
+/// foreground `URLSession`.
+///
+/// Why not the library's own `download(...)`? It is hardwired to
+/// `Downloader.shared`, which uses a *background* `URLSession`. Background
+/// transfers don't complete reliably on the Simulator (and require app-delegate
+/// event forwarding), so `download` hangs waiting on a completion that never
+/// arrives. A plain foreground download behaves identically on Simulator and
+/// device. (The `Downloader` initializer that would yield a foreground session
+/// is `internal`, so it can't be substituted from here.)
 final class YoutubeDLExtractor: YouTubeAudioExtractor {
-    /// Reference box so the (escaping) format-selector closure can hand metadata
-    /// back out of the single extraction the download performs.
-    private final class Metadata {
-        var title = ""
-        var duration: Double = 0
-    }
-
     func extractAudio(from url: URL,
                       onDownloadStart: @escaping () -> Void) async throws -> ExtractedAudio {
         let category = "yt-dlp"
@@ -77,47 +78,64 @@ final class YoutubeDLExtractor: YouTubeAudioExtractor {
 
             appLog("Initializing yt-dlp…", level: .debug, category: category)
             let youtubeDL = YoutubeDL()
-            let metadata = Metadata()
 
             appLog("Extracting video info (running yt-dlp)…", category: category)
+            let (formats, info) = try await youtubeDL.extractInfo(url: url)
+            appLog("Info: \"\(info.title)\" · \(formats.count) formats · \(Int(info.duration ?? 0))s",
+                   level: .success, category: category)
 
-            // The format selector receives the extracted `Info`; we capture the
-            // title/duration there and choose the best audio-only stream,
-            // preferring an m4a so remuxing stays container-only (no transcode).
-            let fileURL = try await youtubeDL.download(url: url) { info in
-                metadata.title = info.title
-                metadata.duration = info.duration ?? 0
-                appLog("Info: \"\(info.title)\" · \(info.formats.count) formats · \(Int(info.duration ?? 0))s",
-                       level: .success, category: category)
+            // Pick the best audio-only stream, preferring m4a (AAC) so the file
+            // is directly playable by AVFoundation with no transcode.
+            let audioOnly = formats.filter { $0.isAudioOnly }
+            let m4a = audioOnly.filter { $0.ext == "m4a" }
+            let pool = m4a.isEmpty ? audioOnly : m4a
+            guard let chosen = pool.max(by: { ($0.abr ?? $0.tbr ?? 0) < ($1.abr ?? $1.tbr ?? 0) })
+                ?? formats.max(by: { ($0.tbr ?? 0) < ($1.tbr ?? 0) }) else {
+                throw ExtractorError.noAudioFormat
+            }
+            appLog("Selected format \(chosen.format_id) · \(chosen.ext) · \(Int(chosen.abr ?? chosen.tbr ?? 0)) kbps",
+                   category: category)
 
-                let audioOnly = info.formats.filter { $0.isAudioOnly }
-                let m4a = audioOnly.filter { $0.ext == "m4a" }
-                let pool = m4a.isEmpty ? audioOnly : m4a
-                let chosen = pool.max(by: { ($0.abr ?? $0.tbr ?? 0) < ($1.abr ?? $1.tbr ?? 0) })
-                    ?? info.formats.max(by: { ($0.tbr ?? 0) < ($1.tbr ?? 0) })
-                    ?? info.formats[0]
-
-                appLog("Selected format \(chosen.format_id) · \(chosen.ext) · \(Int(chosen.abr ?? chosen.tbr ?? 0)) kbps · audioOnly=\(chosen.isAudioOnly)",
-                       category: category)
-                appLog("Starting stream download…", category: category)
-                onDownloadStart()
-
-                // Tuple: (formats, outputURL?, timeRange?, bitRate?, title).
-                return ([chosen], nil, nil, chosen.abr ?? chosen.tbr, info.safeTitle)
+            guard let mediaURL = URL(string: chosen.url) else {
+                throw ExtractorError.noAudioFormat
             }
 
-            let size = (try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? Int) ?? nil
+            // Carry over yt-dlp's request headers (User-Agent, etc.) so the CDN
+            // doesn't reject the request.
+            var request = URLRequest(url: mediaURL)
+            for (key, value) in chosen.http_headers {
+                request.setValue(value, forHTTPHeaderField: key)
+            }
+
+            appLog("Downloading audio stream (foreground)…", category: category)
+            onDownloadStart()
+
+            let (tempURL, response) = try await URLSession.shared.download(for: request)
+            if let http = response as? HTTPURLResponse {
+                let level: LogLevel = (200..<300).contains(http.statusCode) ? .debug : .warning
+                appLog("HTTP \(http.statusCode) from stream host", level: level, category: category)
+                guard (200..<300).contains(http.statusCode) else {
+                    throw ExtractorError.downloadFailed("Stream host returned HTTP \(http.statusCode)")
+                }
+            }
+
+            let ext = chosen.ext.isEmpty ? "m4a" : chosen.ext
+            let dest = AppPaths.work.appendingPathComponent("\(UUID().uuidString).\(ext)")
+            try? FileManager.default.removeItem(at: dest)
+            try FileManager.default.moveItem(at: tempURL, to: dest)
+
+            let size = (try? FileManager.default.attributesOfItem(atPath: dest.path)[.size] as? Int) ?? nil
             let sizeText = size.map { " (\($0 / 1024) KB)" } ?? ""
-            appLog("Download finished: \(fileURL.lastPathComponent)\(sizeText)", level: .success, category: category)
+            appLog("Download finished: \(dest.lastPathComponent)\(sizeText)", level: .success, category: category)
 
             return ExtractedAudio(
-                fileURL: fileURL,
-                title: metadata.title.isEmpty ? url.absoluteString : metadata.title,
-                duration: metadata.duration
+                fileURL: dest,
+                title: info.title.isEmpty ? url.absoluteString : info.title,
+                duration: info.duration ?? 0
             )
         } catch {
             appLog("yt-dlp failed: \(error.localizedDescription)", level: .error, category: category)
-            throw ExtractorError.downloadFailed(error.localizedDescription)
+            throw (error as? ExtractorError) ?? ExtractorError.downloadFailed(error.localizedDescription)
         }
         #else
         throw ExtractorError.packageUnavailable
