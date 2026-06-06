@@ -18,6 +18,19 @@ enum AppPaths {
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
+
+    /// A Documents file name based on `base` that doesn't collide with an
+    /// existing file, disambiguating with " (2)", " (3)", … if needed.
+    static func uniqueDocumentName(base: String, ext: String) -> String {
+        let directory = documents
+        var candidate = "\(base).\(ext)"
+        var counter = 2
+        while FileManager.default.fileExists(atPath: directory.appendingPathComponent(candidate).path) {
+            candidate = "\(base) (\(counter)).\(ext)"
+            counter += 1
+        }
+        return candidate
+    }
 }
 
 /// Output container the user can pick for a download.
@@ -61,6 +74,26 @@ struct Track: Identifiable, Codable, Hashable {
     /// Absolute on-disk location resolved at access time.
     var fileURL: URL {
         AppPaths.documents.appendingPathComponent(fileName)
+    }
+}
+
+extension String {
+    /// A filesystem-safe version of the string suitable for a file name:
+    /// path-illegal and control characters removed, whitespace collapsed, and
+    /// trimmed to `maxLength` characters. Falls back to "audio" if empty.
+    func sanitizedFileName(maxLength: Int = 50) -> String {
+        let illegal = CharacterSet(charactersIn: "/\\:*?\"<>|").union(.controlCharacters)
+        var cleaned = components(separatedBy: illegal).joined(separator: " ")
+        cleaned = cleaned
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        if cleaned.count > maxLength {
+            cleaned = String(cleaned.prefix(maxLength))
+        }
+        // Trailing dots/spaces are problematic in file names.
+        cleaned = cleaned.trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+        return cleaned.isEmpty ? "audio" : cleaned
     }
 }
 

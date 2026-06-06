@@ -157,7 +157,10 @@ final class DownloadManager: ObservableObject {
             job.state = .converting
             job.title = extracted.title
 
-            let destinationName = "\(UUID().uuidString).\(job.format.fileExtension)"
+            let destinationName = AppPaths.uniqueDocumentName(
+                base: extracted.title.sanitizedFileName(),
+                ext: job.format.fileExtension
+            )
             let finalURL = try AudioConverter.process(
                 input: extracted.fileURL,
                 to: job.format,
