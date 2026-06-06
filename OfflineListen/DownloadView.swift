@@ -94,7 +94,12 @@ struct DownloadView: View {
 }
 
 private struct DownloadJobRow: View {
+    @EnvironmentObject private var downloads: DownloadManager
     @ObservedObject var job: DownloadJob
+
+    private var isActiveOrQueued: Bool {
+        job.state.isActive || job.state == .queued
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -109,9 +114,30 @@ private struct DownloadJobRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-
         }
         .padding(.vertical, 4)
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            if isActiveOrQueued {
+                Button(role: .destructive) {
+                    downloads.cancel(job)
+                } label: {
+                    Label("Cancel", systemImage: "stop.circle")
+                }
+            } else {
+                Button(role: .destructive) {
+                    downloads.remove(job)
+                } label: {
+                    Label("Clear", systemImage: "trash")
+                }
+            }
+
+            Button {
+                downloads.restart(job)
+            } label: {
+                Label("Restart", systemImage: "arrow.clockwise")
+            }
+            .tint(.blue)
+        }
     }
 
     @ViewBuilder
@@ -121,6 +147,8 @@ private struct DownloadJobRow: View {
             Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
         case .failed:
             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+        case .cancelled:
+            Image(systemName: "stop.circle").foregroundStyle(.secondary)
         case .queued:
             Image(systemName: "clock").foregroundStyle(.secondary)
         default:

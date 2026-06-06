@@ -24,6 +24,7 @@ final class DownloadJob: ObservableObject, Identifiable {
         case downloading
         case converting
         case finished
+        case cancelled
         case failed(String)
 
         var label: String {
@@ -33,6 +34,7 @@ final class DownloadJob: ObservableObject, Identifiable {
             case .downloading: return "Downloading"
             case .converting: return "Saving"
             case .finished: return "Done"
+            case .cancelled: return "Cancelled"
             case .failed(let message): return "Failed: \(message)"
             }
         }
@@ -40,6 +42,14 @@ final class DownloadJob: ObservableObject, Identifiable {
         var isActive: Bool {
             switch self {
             case .extracting, .downloading, .converting: return true
+            default: return false
+            }
+        }
+
+        /// True once the job has stopped for any reason (won't run again on its own).
+        var isFinishedOrStopped: Bool {
+            switch self {
+            case .finished, .cancelled, .failed: return true
             default: return false
             }
         }
@@ -55,6 +65,11 @@ final class DownloadManager: ObservableObject {
     private let library: LibraryStore
     private let extractor: YouTubeAudioExtractor
     private var isProcessing = false
+
+    /// The job currently being processed and the task running it, so an active
+    /// download can be cancelled.
+    private var activeJob: DownloadJob?
+    private var activeTask: Task<Void, Never>?
 
     init(library: LibraryStore, extractor: YouTubeAudioExtractor = YoutubeDLExtractor()) {
         self.library = library
@@ -77,11 +92,36 @@ final class DownloadManager: ObservableObject {
     }
 
     func clearFinished() {
-        jobs.removeAll { job in
-            if case .finished = job.state { return true }
-            if case .failed = job.state { return true }
-            return false
+        jobs.removeAll { $0.state.isFinishedOrStopped }
+    }
+
+    /// Stops a job. An active download is cancelled mid-flight; a queued job is
+    /// marked cancelled so it's skipped.
+    func cancel(_ job: DownloadJob) {
+        if job.id == activeJob?.id {
+            appLog("Cancelling: \(job.url)", level: .warning, category: "Queue")
+            activeTask?.cancel()
+        } else if job.state == .queued {
+            job.state = .cancelled
+            appLog("Cancelled queued: \(job.url)", level: .warning, category: "Queue")
         }
+    }
+
+    /// Removes a job from the queue list (cancelling it first if it's running).
+    func remove(_ job: DownloadJob) {
+        if job.id == activeJob?.id {
+            activeTask?.cancel()
+        }
+        jobs.removeAll { $0.id == job.id }
+    }
+
+    /// Re-runs a job by removing it and enqueuing a fresh attempt for the same URL.
+    func restart(_ job: DownloadJob) {
+        let url = job.url
+        let format = job.format
+        remove(job)
+        appLog("Restarting: \(url)", category: "Queue")
+        enqueue(urlString: url, format: format)
     }
 
     private func processNext() async {
@@ -90,7 +130,12 @@ final class DownloadManager: ObservableObject {
         guard let job = jobs.last(where: { $0.state == .queued }) else { return }
 
         isProcessing = true
-        await run(job)
+        activeJob = job
+        let task = Task { await run(job) }
+        activeTask = task
+        await task.value
+        activeTask = nil
+        activeJob = nil
         isProcessing = false
 
         await processNext()
@@ -130,8 +175,13 @@ final class DownloadManager: ObservableObject {
             appLog("Added to library: \"\(track.title)\" (\(track.duration.asPlaybackTime))",
                    level: .success, category: "Queue")
         } catch {
-            job.state = .failed(error.localizedDescription)
-            appLog("Job failed: \(error.localizedDescription)", level: .error, category: "Queue")
+            if error is CancellationError || (error as? URLError)?.code == .cancelled || Task.isCancelled {
+                job.state = .cancelled
+                appLog("Cancelled: \(job.url)", level: .warning, category: "Queue")
+            } else {
+                job.state = .failed(error.localizedDescription)
+                appLog("Job failed: \(error.localizedDescription)", level: .error, category: "Queue")
+            }
         }
     }
 }

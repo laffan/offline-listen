@@ -12,7 +12,8 @@ locked.
 
 Three screens (tabs):
 
-1. **Download** — paste a URL, pick a format (M4A/MP3), watch the queue progress.
+1. **Download** — paste a URL, pick a format (M4A/MP3), watch the queue. Swipe a
+   row for **Cancel** (active/queued), **Restart**, or **Clear**.
 2. **Library** — every downloaded track; tap to play, swipe to delete.
 3. **Player** — artwork, scrubber, play/pause, next/previous. Drives the lock
    screen and Control Center.
