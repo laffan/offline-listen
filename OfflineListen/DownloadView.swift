@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct DownloadView: View {
     @EnvironmentObject private var downloads: DownloadManager
@@ -61,13 +62,24 @@ struct DownloadView: View {
                     .submitLabel(.go)
                     .onSubmit(startDownload)
 
-                if !urlText.isEmpty {
+                if urlText.isEmpty {
+                    Button {
+                        if let pasted = UIPasteboard.general.string {
+                            urlText = pasted
+                        }
+                    } label: {
+                        Image(systemName: "doc.on.clipboard")
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityLabel("Paste")
+                } else {
                     Button {
                         urlText = ""
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundStyle(.secondary)
                     }
+                    .accessibilityLabel("Clear")
                 }
             }
             .padding(12)
