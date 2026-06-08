@@ -98,7 +98,7 @@ struct DownloadView: View {
     private func startDownload() {
         let text = urlText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        downloads.enqueue(urlString: text, format: format)
+        downloads.enqueueLinks(from: urlText, format: format)
         urlText = ""
         urlFieldFocused = false
     }

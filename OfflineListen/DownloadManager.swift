@@ -77,6 +77,36 @@ final class DownloadManager: ObservableObject {
         self.extractor = extractor
     }
 
+    /// Enqueues every YouTube link found in `text`, treating whitespace/newlines
+    /// as separators (URLs contain no spaces). Non-YouTube links are skipped.
+    func enqueueLinks(from text: String, format: AudioFormat) {
+        let tokens = text.split(whereSeparator: { $0.isWhitespace })
+        var added = 0
+        var skipped = 0
+        for token in tokens {
+            let link = String(token)
+            if Self.isYouTubeURL(link) {
+                enqueue(urlString: link, format: format)
+                added += 1
+            } else {
+                skipped += 1
+            }
+        }
+        if skipped > 0 {
+            appLog("Skipped \(skipped) non-YouTube link(s).", level: .warning, category: "Queue")
+        }
+        if added == 0 {
+            appLog("No YouTube links found in input.", level: .warning, category: "Queue")
+        }
+    }
+
+    static func isYouTubeURL(_ string: String) -> Bool {
+        guard let url = URL(string: string), let host = url.host?.lowercased() else { return false }
+        return host == "youtu.be"
+            || host.hasSuffix("youtube.com")
+            || host.hasSuffix("youtube-nocookie.com")
+    }
+
     /// Adds a URL to the queue. Newest jobs show at the top; processing is FIFO.
     func enqueue(urlString: String, format: AudioFormat) {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)

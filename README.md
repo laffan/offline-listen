@@ -12,8 +12,10 @@ locked.
 
 Three screens (tabs):
 
-1. **Download** — paste a URL, pick a format (M4A/MP3), watch the queue. Swipe a
-   row for **Cancel** (active/queued), **Restart**, or **Clear**.
+1. **Download** — paste one or more URLs (whitespace/line-break separated; only
+   YouTube links are queued, the rest are skipped), pick a format (M4A/MP3),
+   watch the queue. Swipe a row for **Cancel** (active/queued), **Restart**, or
+   **Clear**.
 2. **Library** — downloaded tracks; tap to play. **Select** enables multi-select
    with a bulk Share/Archive/Delete dropdown; each row swipes for
    Delete/Share/Archive. Archived tracks live in an **Archived** folder
