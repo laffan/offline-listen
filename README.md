@@ -15,7 +15,9 @@ Three screens (tabs):
 1. **Download** — paste a URL, pick a format (M4A/MP3), watch the queue. Swipe a
    row for **Cancel** (active/queued), **Restart**, or **Clear**.
 2. **Library** — downloaded tracks; tap to play. **Select** enables multi-select
-   with a bulk Delete/Share dropdown, and each row swipes for Delete/Share.
+   with a bulk Share/Archive/Delete dropdown; each row swipes for
+   Delete/Share/Archive. Archived tracks live in an **Archived** folder
+   (toolbar) where they can be unarchived.
 3. **Player** — artwork, scrubber, play/pause, next/previous. Drives the lock
    screen and Control Center.
 4. **Log** — timestamped, copyable stream of every pipeline step (queue,

@@ -29,15 +29,18 @@ struct LibraryView: View {
     @State private var editMode: EditMode = .inactive
     @State private var selection = Set<Track.ID>()
     @State private var share: SharePayload?
+    @State private var showArchived = false
 
     var body: some View {
         NavigationStack {
             Group {
-                if library.tracks.isEmpty {
+                if library.activeTracks.isEmpty {
                     ContentUnavailableViewCompat(
-                        title: "Your library is empty",
+                        title: library.tracks.isEmpty ? "Your library is empty" : "No active tracks",
                         systemImage: "music.note.list",
-                        description: "Downloaded tracks appear here, ready to play offline."
+                        description: library.tracks.isEmpty
+                            ? "Downloaded tracks appear here, ready to play offline."
+                            : "Everything is archived — open the Archived folder above."
                     )
                 } else {
                     trackList
@@ -49,12 +52,15 @@ struct LibraryView: View {
             .sheet(item: $share) { payload in
                 ActivityView(items: payload.urls)
             }
+            .navigationDestination(isPresented: $showArchived) {
+                ArchivedTracksView(onPlay: onPlay, share: $share)
+            }
         }
     }
 
     private var trackList: some View {
         List(selection: $selection) {
-            ForEach(library.tracks) { track in
+            ForEach(library.activeTracks) { track in
                 row(for: track)
             }
         }
@@ -77,13 +83,19 @@ struct LibraryView: View {
                     Label("Share", systemImage: "square.and.arrow.up")
                 }
                 .tint(.blue)
+                Button {
+                    library.setArchived(track, true)
+                } label: {
+                    Label("Archive", systemImage: "archivebox")
+                }
+                .tint(.indigo)
             }
 
         if editMode.isEditing {
             base
         } else {
             base.onTapGesture {
-                playback.play(track, in: library.tracks)
+                playback.play(track, in: library.activeTracks)
                 onPlay()
             }
         }
@@ -99,18 +111,28 @@ struct LibraryView: View {
                     } label: {
                         Label("Share", systemImage: "square.and.arrow.up")
                     }
-                    .disabled(selection.isEmpty)
-
+                    Button {
+                        archiveSelected()
+                    } label: {
+                        Label("Archive", systemImage: "archivebox")
+                    }
                     Button(role: .destructive) {
                         deleteSelected()
                     } label: {
                         Label("Delete", systemImage: "trash")
                     }
-                    .disabled(selection.isEmpty)
                 } label: {
                     Label("Actions", systemImage: "ellipsis.circle")
                 }
                 .disabled(selection.isEmpty)
+            }
+        } else if !library.archivedTracks.isEmpty {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button {
+                    showArchived = true
+                } label: {
+                    Label("Archived (\(library.archivedTracks.count))", systemImage: "archivebox")
+                }
             }
         }
 
@@ -125,6 +147,7 @@ struct LibraryView: View {
                     }
                 }
             }
+            .disabled(library.activeTracks.isEmpty && !editMode.isEditing)
         }
     }
 
@@ -138,12 +161,78 @@ struct LibraryView: View {
         share = SharePayload(urls: urls)
     }
 
+    private func archiveSelected() {
+        for track in selectedTracks() {
+            library.setArchived(track, true)
+        }
+        endEditing()
+    }
+
     private func deleteSelected() {
         for track in selectedTracks() {
             library.delete(track)
         }
+        endEditing()
+    }
+
+    private func endEditing() {
         selection.removeAll()
         withAnimation { editMode = .inactive }
+    }
+}
+
+/// The "Archived" folder: a simple list of archived tracks with swipe actions to
+/// unarchive, share, or delete. Tapping plays within the archived set.
+struct ArchivedTracksView: View {
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var playback: PlaybackManager
+
+    let onPlay: () -> Void
+    @Binding var share: SharePayload?
+
+    var body: some View {
+        Group {
+            if library.archivedTracks.isEmpty {
+                ContentUnavailableViewCompat(
+                    title: "No archived tracks",
+                    systemImage: "archivebox",
+                    description: "Swipe a track in your library and tap Archive to move it here."
+                )
+            } else {
+                List {
+                    ForEach(library.archivedTracks) { track in
+                        TrackRow(track: track, isCurrent: playback.currentTrack?.id == track.id)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                playback.play(track, in: library.archivedTracks)
+                                onPlay()
+                            }
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                Button(role: .destructive) {
+                                    library.delete(track)
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                                Button {
+                                    share = SharePayload(urls: [track.fileURL])
+                                } label: {
+                                    Label("Share", systemImage: "square.and.arrow.up")
+                                }
+                                .tint(.blue)
+                                Button {
+                                    library.setArchived(track, false)
+                                } label: {
+                                    Label("Unarchive", systemImage: "tray.and.arrow.up")
+                                }
+                                .tint(.indigo)
+                            }
+                    }
+                }
+                .listStyle(.plain)
+            }
+        }
+        .navigationTitle("Archived")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

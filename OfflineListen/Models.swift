@@ -54,6 +54,7 @@ struct Track: Identifiable, Codable, Hashable {
     var sourceURL: String
     var duration: Double
     var dateAdded: Date
+    var isArchived: Bool
 
     init(id: UUID = UUID(),
          title: String,
@@ -61,7 +62,8 @@ struct Track: Identifiable, Codable, Hashable {
          fileName: String,
          sourceURL: String,
          duration: Double = 0,
-         dateAdded: Date = Date()) {
+         dateAdded: Date = Date(),
+         isArchived: Bool = false) {
         self.id = id
         self.title = title
         self.artist = artist
@@ -69,6 +71,24 @@ struct Track: Identifiable, Codable, Hashable {
         self.sourceURL = sourceURL
         self.duration = duration
         self.dateAdded = dateAdded
+        self.isArchived = isArchived
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, artist, fileName, sourceURL, duration, dateAdded, isArchived
+    }
+
+    // Custom decode so libraries saved before `isArchived` existed still load.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        artist = try c.decode(String.self, forKey: .artist)
+        fileName = try c.decode(String.self, forKey: .fileName)
+        sourceURL = try c.decode(String.self, forKey: .sourceURL)
+        duration = try c.decode(Double.self, forKey: .duration)
+        dateAdded = try c.decode(Date.self, forKey: .dateAdded)
+        isArchived = try c.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
     }
 
     /// Absolute on-disk location resolved at access time.

@@ -6,6 +6,9 @@ import Foundation
 final class LibraryStore: ObservableObject {
     @Published private(set) var tracks: [Track] = []
 
+    var activeTracks: [Track] { tracks.filter { !$0.isArchived } }
+    var archivedTracks: [Track] { tracks.filter { $0.isArchived } }
+
     init() {
         load()
     }
@@ -35,6 +38,13 @@ final class LibraryStore: ObservableObject {
     /// Adds a freshly downloaded track to the top of the library.
     func add(_ track: Track) {
         tracks.insert(track, at: 0)
+        save()
+    }
+
+    /// Archives or unarchives a track.
+    func setArchived(_ track: Track, _ archived: Bool) {
+        guard let index = tracks.firstIndex(where: { $0.id == track.id }) else { return }
+        tracks[index].isArchived = archived
         save()
     }
 
