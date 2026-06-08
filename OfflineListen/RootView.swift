@@ -12,7 +12,7 @@ struct RootView: View {
 
     var body: some View {
         TabView(selection: $selection) {
-            DownloadView()
+            DownloadView(onPlay: { selection = .player })
                 .tabItem { Label("Download", systemImage: "arrow.down.circle") }
                 .tag(Tab.download)
 

@@ -11,6 +11,8 @@ final class DownloadJob: ObservableObject, Identifiable {
     @Published var title: String
     @Published var state: State
     @Published var progress: Double = 0
+    /// The library track produced by this job, once finished (for tap-to-play).
+    @Published var trackID: UUID?
 
     init(url: String, format: AudioFormat) {
         self.url = url
@@ -214,6 +216,7 @@ final class DownloadManager: ObservableObject {
                 duration: extracted.duration
             )
             library.add(track)
+            job.trackID = track.id
             job.state = .finished
             appLog("Added to library: \"\(track.title)\" (\(track.duration.asPlaybackTime))",
                    level: .success, category: "Queue")

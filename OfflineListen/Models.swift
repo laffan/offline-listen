@@ -43,6 +43,13 @@ enum AudioFormat: String, Codable, CaseIterable, Identifiable {
     var displayName: String { rawValue.uppercased() }
 }
 
+/// How a track behaves on playback. Songs always start from the beginning;
+/// podcasts resume from their saved playhead.
+enum TrackKind: String, Codable {
+    case song
+    case podcast
+}
+
 /// A single downloaded track stored in the library.
 struct Track: Identifiable, Codable, Hashable {
     let id: UUID
@@ -55,6 +62,9 @@ struct Track: Identifiable, Codable, Hashable {
     var duration: Double
     var dateAdded: Date
     var isArchived: Bool
+    var kind: TrackKind
+    /// Saved playhead in seconds; used to resume podcasts between sessions.
+    var lastPosition: Double
 
     init(id: UUID = UUID(),
          title: String,
@@ -63,7 +73,9 @@ struct Track: Identifiable, Codable, Hashable {
          sourceURL: String,
          duration: Double = 0,
          dateAdded: Date = Date(),
-         isArchived: Bool = false) {
+         isArchived: Bool = false,
+         kind: TrackKind = .song,
+         lastPosition: Double = 0) {
         self.id = id
         self.title = title
         self.artist = artist
@@ -72,13 +84,15 @@ struct Track: Identifiable, Codable, Hashable {
         self.duration = duration
         self.dateAdded = dateAdded
         self.isArchived = isArchived
+        self.kind = kind
+        self.lastPosition = lastPosition
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, artist, fileName, sourceURL, duration, dateAdded, isArchived
+        case id, title, artist, fileName, sourceURL, duration, dateAdded, isArchived, kind, lastPosition
     }
 
-    // Custom decode so libraries saved before `isArchived` existed still load.
+    // Custom decode so libraries saved before these fields existed still load.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -89,6 +103,8 @@ struct Track: Identifiable, Codable, Hashable {
         duration = try c.decode(Double.self, forKey: .duration)
         dateAdded = try c.decode(Date.self, forKey: .dateAdded)
         isArchived = try c.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
+        kind = try c.decodeIfPresent(TrackKind.self, forKey: .kind) ?? .song
+        lastPosition = try c.decodeIfPresent(Double.self, forKey: .lastPosition) ?? 0
     }
 
     /// Absolute on-disk location resolved at access time.

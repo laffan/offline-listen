@@ -3,6 +3,11 @@ import UIKit
 
 struct DownloadView: View {
     @EnvironmentObject private var downloads: DownloadManager
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var playback: PlaybackManager
+
+    /// Switches to the player tab after starting playback.
+    let onPlay: () -> Void
 
     @State private var urlText = ""
     @State private var format: AudioFormat = .m4a
@@ -24,6 +29,8 @@ struct DownloadView: View {
                     List {
                         ForEach(downloads.jobs) { job in
                             DownloadJobRow(job: job)
+                                .contentShape(Rectangle())
+                                .onTapGesture { playFinished(job) }
                         }
                     }
                     .listStyle(.plain)
@@ -113,6 +120,15 @@ struct DownloadView: View {
         downloads.enqueueLinks(from: urlText, format: format)
         urlText = ""
         urlFieldFocused = false
+    }
+
+    /// Tapping a finished download plays it and switches to the player.
+    private func playFinished(_ job: DownloadJob) {
+        guard job.state == .finished,
+              let id = job.trackID,
+              let track = library.tracks.first(where: { $0.id == id }) else { return }
+        playback.play(track, in: library.activeTracks)
+        onPlay()
     }
 }
 

@@ -90,6 +90,20 @@ struct LibraryView: View {
                 }
                 .tint(.indigo)
             }
+            .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                Button {
+                    library.setKind(track, .song)
+                } label: {
+                    Label("Song", systemImage: "music.note")
+                }
+                .tint(.gray)
+                Button {
+                    library.setKind(track, .podcast)
+                } label: {
+                    Label("Podcast", systemImage: "mic.fill")
+                }
+                .tint(.purple)
+            }
 
         if editMode.isEditing {
             base
@@ -240,25 +254,45 @@ private struct TrackRow: View {
     let track: Track
     let isCurrent: Bool
 
+    private var hasArtist: Bool {
+        !track.artist.isEmpty && track.artist.lowercased() != "unknown"
+    }
+
+    private var progress: Double {
+        track.duration > 0 ? min(track.lastPosition / track.duration, 1) : 0
+    }
+
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: isCurrent ? "speaker.wave.2.fill" : "music.note")
+            Image(systemName: track.kind == .podcast ? "mic.fill" : "music.note")
                 .foregroundStyle(isCurrent ? Color.accentColor : .secondary)
                 .frame(width: 24)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(track.title)
                     .font(.body)
                     .lineLimit(1)
-                Text(track.artist)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+
+                if track.kind == .podcast {
+                    ProgressView(value: progress)
+                        .tint(.accentColor)
+                    if track.duration > 0 {
+                        Text("\(track.lastPosition.asPlaybackTime) / \(track.duration.asPlaybackTime)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                } else if hasArtist {
+                    Text(track.artist)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
 
             Spacer()
 
-            if track.duration > 0 {
+            if track.kind != .podcast, track.duration > 0 {
                 Text(track.duration.asPlaybackTime)
                     .font(.caption)
                     .foregroundStyle(.secondary)

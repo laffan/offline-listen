@@ -28,12 +28,14 @@ final class PlaybackManager: NSObject, ObservableObject {
     private var hasRestored = false
     private var lastPersist = Date.distantPast
 
+    private let library: LibraryStore
+
     private enum Keys {
         static let trackID = "lastTrackID"
-        static let position = "lastPosition"
     }
 
-    override init() {
+    init(library: LibraryStore) {
+        self.library = library
         super.init()
         configureAudioSession()
         setupRemoteCommands()
@@ -43,8 +45,8 @@ final class PlaybackManager: NSObject, ObservableObject {
 
     func play(_ track: Track, in tracks: [Track]) {
         queue = tracks.isEmpty ? [track] : tracks
-        index = queue.firstIndex(of: track) ?? 0
-        loadCurrent(autoPlay: true)
+        index = queue.firstIndex(where: { $0.id == track.id }) ?? 0
+        loadCurrent(autoPlay: true, startAt: startPosition(for: track))
     }
 
     func togglePlayPause() {
@@ -55,7 +57,7 @@ final class PlaybackManager: NSObject, ObservableObject {
     func next() {
         guard !queue.isEmpty else { return }
         index = (index + 1) % queue.count
-        loadCurrent(autoPlay: true)
+        loadCurrent(autoPlay: true, startAt: startPosition(for: queue[index]))
     }
 
     func previous() {
@@ -66,7 +68,14 @@ final class PlaybackManager: NSObject, ObservableObject {
             return
         }
         index = (index - 1 + queue.count) % queue.count
-        loadCurrent(autoPlay: true)
+        loadCurrent(autoPlay: true, startAt: startPosition(for: queue[index]))
+    }
+
+    /// Where a track should begin: podcasts resume from their freshest saved
+    /// playhead; songs always start at 0.
+    private func startPosition(for track: Track) -> Double {
+        guard track.kind == .podcast else { return 0 }
+        return library.tracks.first(where: { $0.id == track.id })?.lastPosition ?? track.lastPosition
     }
 
     func seek(to time: Double) {
@@ -77,21 +86,21 @@ final class PlaybackManager: NSObject, ObservableObject {
         persistState()
     }
 
-    /// Restores the track and playhead from the last session (paused), unless
-    /// playback is already underway. Call once on launch with the library.
-    func restoreLastSession(in tracks: [Track]) {
+    /// Restores the last-played track (paused), unless playback is already
+    /// underway. Podcasts restore at their saved playhead; songs at 0.
+    func restoreLastSession() {
         guard !hasRestored else { return }
         hasRestored = true
         guard currentTrack == nil else { return }
 
-        let defaults = UserDefaults.standard
-        guard let idString = defaults.string(forKey: Keys.trackID),
+        guard let idString = UserDefaults.standard.string(forKey: Keys.trackID),
               let id = UUID(uuidString: idString),
-              let track = tracks.first(where: { $0.id == id }) else { return }
+              let track = library.tracks.first(where: { $0.id == id }) else { return }
 
-        queue = tracks
-        index = tracks.firstIndex(of: track) ?? 0
-        loadCurrent(autoPlay: false, startAt: defaults.double(forKey: Keys.position))
+        let pool = track.isArchived ? library.archivedTracks : library.activeTracks
+        queue = pool.contains(where: { $0.id == id }) ? pool : [track]
+        index = queue.firstIndex(where: { $0.id == id }) ?? 0
+        loadCurrent(autoPlay: false, startAt: startPosition(for: track))
     }
 
     /// Writes the current track + playhead so they survive app relaunch.
@@ -159,9 +168,11 @@ final class PlaybackManager: NSObject, ObservableObject {
 
     private func persistState() {
         guard let track = currentTrack else { return }
-        let defaults = UserDefaults.standard
-        defaults.set(track.id.uuidString, forKey: Keys.trackID)
-        defaults.set(currentTime, forKey: Keys.position)
+        UserDefaults.standard.set(track.id.uuidString, forKey: Keys.trackID)
+        // Only podcasts remember their playhead.
+        if track.kind == .podcast {
+            library.updatePosition(for: track.id, to: currentTime)
+        }
         lastPersist = Date()
     }
 
@@ -191,6 +202,10 @@ final class PlaybackManager: NSObject, ObservableObject {
     }
 
     private func handleTrackFinished() {
+        // A finished podcast resets so a later tap starts it fresh.
+        if let track = currentTrack, track.kind == .podcast {
+            library.updatePosition(for: track.id, to: 0)
+        }
         if queue.count > 1 {
             next()
         } else {

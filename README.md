@@ -15,11 +15,12 @@ Three screens (tabs):
 1. **Download** — paste one or more URLs (whitespace/line-break separated; only
    YouTube links are queued, the rest are skipped), pick a format (M4A/MP3),
    watch the queue. Swipe a row for **Cancel** (active/queued), **Restart**, or
-   **Clear**.
-2. **Library** — downloaded tracks; tap to play. **Select** enables multi-select
-   with a bulk Share/Archive/Delete dropdown; each row swipes for
-   Delete/Share/Archive. Archived tracks live in an **Archived** folder
-   (toolbar) where they can be unarchived.
+   **Clear**; tap a finished row to play it.
+2. **Library** — downloaded tracks; tap to play. Swipe **left** for
+   Delete/Share/Archive (and bulk versions via **Select**); swipe **right** to
+   classify a track as **Song** or **Podcast**. Songs always start from the
+   beginning; podcasts (mic icon) resume from where you left off and show a
+   progress bar. Archived tracks live in an **Archived** folder (toolbar).
 3. **Player** — artwork, scrubber, play/pause, next/previous. Drives the lock
    screen and Control Center.
 4. **Log** — timestamped, copyable stream of every pipeline step (queue,

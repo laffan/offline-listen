@@ -48,6 +48,23 @@ final class LibraryStore: ObservableObject {
         save()
     }
 
+    /// Classifies a track as a song or podcast. Switching to song clears any
+    /// saved playhead (songs always start from the beginning).
+    func setKind(_ track: Track, _ kind: TrackKind) {
+        guard let index = tracks.firstIndex(where: { $0.id == track.id }) else { return }
+        tracks[index].kind = kind
+        if kind == .song { tracks[index].lastPosition = 0 }
+        save()
+    }
+
+    /// Records a podcast's playhead. No-ops for tiny changes to limit churn.
+    func updatePosition(for id: UUID, to position: Double) {
+        guard let index = tracks.firstIndex(where: { $0.id == id }) else { return }
+        guard abs(tracks[index].lastPosition - position) >= 1 else { return }
+        tracks[index].lastPosition = position
+        save()
+    }
+
     /// Removes a track from the library and deletes its audio file from disk.
     func delete(_ track: Track) {
         try? FileManager.default.removeItem(at: track.fileURL)

@@ -12,7 +12,7 @@ struct OfflineListenApp: App {
         let library = LibraryStore()
         _library = StateObject(wrappedValue: library)
         _downloads = StateObject(wrappedValue: DownloadManager(library: library))
-        _playback = StateObject(wrappedValue: PlaybackManager())
+        _playback = StateObject(wrappedValue: PlaybackManager(library: library))
     }
 
     var body: some Scene {
@@ -22,7 +22,7 @@ struct OfflineListenApp: App {
                 .environmentObject(downloads)
                 .environmentObject(playback)
                 .environmentObject(LogStore.shared)
-                .task { playback.restoreLastSession(in: library.tracks) }
+                .task { playback.restoreLastSession() }
                 .onAppear { importShared() }
                 .onOpenURL { _ in importShared() }
                 .onChange(of: scenePhase) { phase in
