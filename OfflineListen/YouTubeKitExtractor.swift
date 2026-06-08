@@ -22,7 +22,7 @@ final class YouTubeKitExtractor: YouTubeAudioExtractor {
         let model = YouTubeModel()
         let response = try await VideoInfosWithDownloadFormatsResponse.sendThrowingRequest(
             youtubeModel: model,
-            data: [.videoId: videoID],
+            data: [.query: videoID],
             useCookies: nil
         )
 
