@@ -72,7 +72,10 @@ final class DownloadManager: ObservableObject {
     private var activeJob: DownloadJob?
     private var activeTask: Task<Void, Never>?
 
-    init(library: LibraryStore, extractor: YouTubeAudioExtractor = YoutubeDLExtractor()) {
+    init(library: LibraryStore,
+         extractor: YouTubeAudioExtractor = CompositeExtractor(
+            primary: YouTubeKitExtractor(), named: "YouTubeKit",
+            fallback: YoutubeDLExtractor(), named: "yt-dlp")) {
         self.library = library
         self.extractor = extractor
     }

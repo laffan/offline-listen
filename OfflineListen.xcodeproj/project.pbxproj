@@ -22,6 +22,10 @@
 		1B00000000000000000000BE /* YoutubeDL in Frameworks */ = {isa = PBXBuildFile; productRef = 2300000000000000000000A2 /* YoutubeDL */; };
 		1B00000000000000000000BF /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000AF /* Logger.swift */; };
 		1B00000000000000000000C0 /* LogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B0 /* LogView.swift */; };
+		1B00000000000000000000C2 /* AudioStreamDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B1 /* AudioStreamDownloader.swift */; };
+		1B00000000000000000000C3 /* CompositeExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B2 /* CompositeExtractor.swift */; };
+		1B00000000000000000000C4 /* YouTubeKitExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B3 /* YouTubeKitExtractor.swift */; };
+		1B00000000000000000000C5 /* YouTubeKit in Frameworks */ = {isa = PBXBuildFile; productRef = 2300000000000000000000A3 /* YouTubeKit */; };
 		3B00000000000000000000A3 /* SharedInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A00000000000000000000A5 /* SharedInbox.swift */; };
 		3B00000000000000000000A1 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A00000000000000000000A1 /* ShareViewController.swift */; };
 		3B00000000000000000000A2 /* SharedInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A00000000000000000000A5 /* SharedInbox.swift */; };
@@ -52,6 +56,9 @@
 		1A00000000000000000000AB /* PlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerView.swift; sourceTree = "<group>"; };
 		1A00000000000000000000AF /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B0 /* LogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogView.swift; sourceTree = "<group>"; };
+		1A00000000000000000000B1 /* AudioStreamDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioStreamDownloader.swift; sourceTree = "<group>"; };
+		1A00000000000000000000B2 /* CompositeExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositeExtractor.swift; sourceTree = "<group>"; };
+		1A00000000000000000000B3 /* YouTubeKitExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubeKitExtractor.swift; sourceTree = "<group>"; };
 		1A00000000000000000000AC /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		1A00000000000000000000AD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		1A00000000000000000000AE /* OfflineListen.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OfflineListen.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -69,6 +76,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				1B00000000000000000000BE /* YoutubeDL in Frameworks */,
+				1B00000000000000000000C5 /* YouTubeKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -107,6 +115,9 @@
 				1A00000000000000000000AB /* PlayerView.swift */,
 				1A00000000000000000000AF /* Logger.swift */,
 				1A00000000000000000000B0 /* LogView.swift */,
+				1A00000000000000000000B1 /* AudioStreamDownloader.swift */,
+				1A00000000000000000000B2 /* CompositeExtractor.swift */,
+				1A00000000000000000000B3 /* YouTubeKitExtractor.swift */,
 				3A00000000000000000000A5 /* SharedInbox.swift */,
 				1A00000000000000000000AC /* Assets.xcassets */,
 				1A00000000000000000000AD /* Info.plist */,
@@ -154,6 +165,7 @@
 			name = OfflineListen;
 			packageProductDependencies = (
 				2300000000000000000000A2 /* YoutubeDL */,
+				2300000000000000000000A3 /* YouTubeKit */,
 			);
 			productName = OfflineListen;
 			productReference = 1A00000000000000000000AE /* OfflineListen.app */;
@@ -205,6 +217,7 @@
 			mainGroup = 1C00000000000000000000C1;
 			packageReferences = (
 				2200000000000000000000A2 /* XCRemoteSwiftPackageReference "YoutubeDL-iOS" */,
+				2200000000000000000000A3 /* XCRemoteSwiftPackageReference "YouTubeKit" */,
 			);
 			productRefGroup = 1C00000000000000000000C3 /* Products */;
 			projectDirPath = "";
@@ -266,6 +279,9 @@
 				1B00000000000000000000BB /* PlayerView.swift in Sources */,
 				1B00000000000000000000BF /* Logger.swift in Sources */,
 				1B00000000000000000000C0 /* LogView.swift in Sources */,
+				1B00000000000000000000C2 /* AudioStreamDownloader.swift in Sources */,
+				1B00000000000000000000C3 /* CompositeExtractor.swift in Sources */,
+				1B00000000000000000000C4 /* YouTubeKitExtractor.swift in Sources */,
 				3B00000000000000000000A3 /* SharedInbox.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -485,6 +501,14 @@
 				kind = branch;
 			};
 		};
+		2200000000000000000000A3 /* XCRemoteSwiftPackageReference "YouTubeKit" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/b5i/YouTubeKit.git";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -492,6 +516,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 2200000000000000000000A2 /* XCRemoteSwiftPackageReference "YoutubeDL-iOS" */;
 			productName = YoutubeDL;
+		};
+		2300000000000000000000A3 /* YouTubeKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2200000000000000000000A3 /* XCRemoteSwiftPackageReference "YouTubeKit" */;
+			productName = YouTubeKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

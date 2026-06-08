@@ -42,6 +42,9 @@ URL  ──►  YoutubeDL-iOS (yt-dlp on device)  ──►  AudioConverter  ─
 | `LibraryStore.swift` | Persists the library to `Documents/library.json`. |
 | `DownloadManager.swift` | Serial download queue + `DownloadJob`. |
 | `YouTubeExtractor.swift` | `YouTubeAudioExtractor` protocol + YoutubeDL-iOS impl + a mock. |
+| `YouTubeKitExtractor.swift` | Native-Swift (b5i/YouTubeKit) primary extractor. |
+| `CompositeExtractor.swift` | Tries the native extractor, falls back to yt-dlp. |
+| `AudioStreamDownloader.swift` | Shared chunked byte-range stream downloader. |
 | `AudioConverter.swift` | M4A passthrough; gated MP3 transcode. |
 | `PlaybackManager.swift` | AVFoundation engine, audio session, lock-screen controls. |
 | `Logger.swift` | `LogStore` — thread-safe, app-wide log sink. |
@@ -87,13 +90,14 @@ Requires **Xcode 15+** and an Apple developer account (free is fine for running
 on your own device).
 
 1. Open `OfflineListen.xcodeproj`.
-2. Xcode resolves the one Swift package on first open (needs a network connection):
-   - **YoutubeDL-iOS** — `https://github.com/kewlbear/YoutubeDL-iOS.git`,
-     pinned to `main`. To pin a specific version instead, change the rule in
-     *Project ▸ Package Dependencies*.
+2. Xcode resolves two Swift packages on first open (needs a network connection):
+   - **YouTubeKit** — `https://github.com/b5i/YouTubeKit.git` — the native-Swift
+     primary extractor.
+   - **YoutubeDL-iOS** — `https://github.com/kewlbear/YoutubeDL-iOS.git` — the
+     yt-dlp fallback extractor.
 
-   Playback uses Apple's AVFoundation, so there is no media-player package to
-   resolve.
+   Both are pinned to `main`; change the rule in *Project ▸ Package Dependencies*
+   to pin versions. Playback uses Apple's AVFoundation — no media-player package.
 3. Select the **OfflineListen** scheme and your device (or a Simulator — note
    the on-device yt-dlp download needs network).
 4. Set your **Signing Team** under *Signing & Capabilities* and adjust
@@ -131,32 +135,30 @@ the lock screen.
   3. Add `USE_FFMPEG_MP3` to *Build Settings ▸ Swift Compiler – Custom Flags ▸
      Active Compilation Conditions*.
 
-## The YoutubeDL-iOS seam
+## Extraction: native primary + yt-dlp fallback
 
-All YoutubeDL-iOS usage lives in `YoutubeDLExtractor.extractAudio`:
+Extraction sits behind the `YouTubeAudioExtractor` protocol, and
+`CompositeExtractor` tries a primary then a fallback (cancellation is never
+treated as a failure, so Cancel doesn't trigger the fallback):
 
-- `YoutubeDL.downloadPythonModule()` fetches the yt-dlp Python module on first
-  run (guarded by a `pythonModuleURL` existence check).
-- `extractInfo(url:) async throws -> ([Format], Info)` runs yt-dlp to resolve the
-  video, returning metadata plus formats with ready-to-use direct stream URLs.
-- We pick the best audio-only `Format` (preferring `m4a` / format 140) and
-  stream `Format.url` ourselves in **5 MB HTTP byte-range chunks** (each retried
-  on transient errors). YouTube throttles/drops single large connections, so —
-  like yt-dlp — ranged requests are what make big files download reliably.
-- The Download tab's "⋯" menu has **Refresh yt-dlp engine**, which clears and
-  re-downloads the Python module when extraction starts failing (YouTube changes
-  often, and a stale engine returns few formats, throttled URLs, or hard errors).
+1. **`YouTubeKitExtractor` (primary)** — b5i/YouTubeKit resolves the audio-only
+   stream URL natively in Swift (no Python, no engine download, fast). Pure
+   `VideoInfosWithDownloadFormatsResponse.sendThrowingRequest` → best
+   `AudioOnlyFormat`.
+2. **`YoutubeDLExtractor` (fallback)** — the yt-dlp path, used when the native
+   extractor fails. `extractInfo(url:)` resolves the video; the Download tab's
+   "⋯" menu has **Refresh yt-dlp engine** to re-pull a stale module.
 
-We deliberately do **not** call the library's own `download(...)`: it is
-hardwired to `Downloader.shared`, which uses a *background* `URLSession`.
-Background transfers don't complete reliably on the Simulator and need
-app-delegate event forwarding, so that call hangs. A foreground download behaves
-the same on Simulator and device. (The `Downloader` init that would give a
-foreground session is `internal`, so it can't be swapped in.)
+Both resolve a direct stream URL and then hand it to the shared
+`AudioStreamDownloader`, which fetches it in **5 MB HTTP byte-range chunks**
+(each retried on transient errors). YouTube throttles/drops single large
+connections, so — like yt-dlp — ranged requests are what make big files download
+reliably. We deliberately avoid YoutubeDL-iOS's own `download(...)`: it's
+hardwired to a *background* `URLSession` that doesn't complete on the Simulator.
 
-To exercise the rest of the app — queue, library, player, lock-screen controls —
-with no native dependency at all, point `DownloadManager`'s default extractor at
-`MockExtractor`.
+If the YouTubeKit package isn't linked yet, its extractor throws and the composite
+falls back to yt-dlp automatically. To exercise the UI with no native dependency
+at all, point `DownloadManager`'s default extractor at `MockExtractor`.
 
 ## Status
 
