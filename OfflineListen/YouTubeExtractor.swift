@@ -173,6 +173,42 @@ final class YoutubeDLExtractor: YouTubeAudioExtractor {
         throw lastError ?? ExtractorError.downloadFailed("Chunk download failed")
     }
 
+#if canImport(YoutubeDL)
+    /// Runs yt-dlp's (opaque) info extraction with a heartbeat log every 10s and
+    /// an overall timeout, so a stall becomes visible and recoverable instead of
+    /// an indefinite hang.
+    private func resolveInfo(_ youtubeDL: YoutubeDL,
+                             url: URL,
+                             category: String,
+                             timeout: TimeInterval = 120) async throws -> ([Format], Info) {
+        let started = Date()
+        let heartbeat = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+                if Task.isCancelled { return }
+                appLog("Still extracting… \(Int(Date().timeIntervalSince(started)))s elapsed",
+                       category: category)
+            }
+        }
+        defer { heartbeat.cancel() }
+
+        return try await withThrowingTaskGroup(of: ([Format], Info).self) { group in
+            group.addTask {
+                try await youtubeDL.extractInfo(url: url)
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                throw ExtractorError.downloadFailed("Timed out after \(Int(timeout))s extracting info. YouTube may have changed — try the ⋯ menu → Refresh yt-dlp engine, or a different video.")
+            }
+            guard let result = try await group.next() else {
+                throw ExtractorError.downloadFailed("Extraction produced no result.")
+            }
+            group.cancelAll()
+            return result
+        }
+    }
+#endif
+
     func extractAudio(from url: URL,
                       onDownloadStart: @escaping () -> Void,
                       onProgress: @escaping (Double) -> Void) async throws -> ExtractedAudio {
@@ -196,7 +232,7 @@ final class YoutubeDLExtractor: YouTubeAudioExtractor {
             let youtubeDL = YoutubeDL()
 
             appLog("Extracting video info (running yt-dlp)…", category: category)
-            let (formats, info) = try await youtubeDL.extractInfo(url: url)
+            let (formats, info) = try await resolveInfo(youtubeDL, url: url, category: category)
             appLog("Info: \"\(info.title)\" · \(formats.count) formats · \(Int(info.duration ?? 0))s",
                    level: .success, category: category)
 
