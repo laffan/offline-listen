@@ -82,12 +82,18 @@ final class YoutubeDLExtractor: YouTubeAudioExtractor {
     /// Runs yt-dlp's (opaque) info extraction with a heartbeat log every 10s and
     /// an overall timeout, so a stall becomes visible and recoverable instead of
     /// an indefinite hang.
+    ///
+    /// The timeout fires from a **GCD timer**, not a Swift-concurrency task: the
+    /// underlying yt-dlp call blocks its thread synchronously and can starve the
+    /// cooperative pool, which would prevent a `Task.sleep`-based timeout from
+    /// ever running. If it times out we abandon the extraction (the orphaned
+    /// Python work keeps running until it returns, but the queue moves on).
     private func resolveInfo(_ youtubeDL: YoutubeDL,
                              url: URL,
                              category: String,
-                             timeout: TimeInterval = 120) async throws -> ([Format], Info) {
+                             timeout: TimeInterval = 90) async throws -> ([Format], Info) {
         let started = Date()
-        let heartbeat = Task {
+        let heartbeat = Task.detached {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 10_000_000_000)
                 if Task.isCancelled { return }
@@ -97,19 +103,38 @@ final class YoutubeDLExtractor: YouTubeAudioExtractor {
         }
         defer { heartbeat.cancel() }
 
-        return try await withThrowingTaskGroup(of: ([Format], Info).self) { group in
-            group.addTask {
-                try await youtubeDL.extractInfo(url: url)
+        let extraction = Task { try await youtubeDL.extractInfo(url: url) }
+
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<([Format], Info), Error>) in
+            let lock = NSLock()
+            var finished = false
+            func finish(_ work: () -> Void) {
+                lock.lock(); defer { lock.unlock() }
+                guard !finished else { return }
+                finished = true
+                work()
             }
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                throw ExtractorError.downloadFailed("Timed out after \(Int(timeout))s extracting info. YouTube may have changed — try the ⋯ menu → Refresh yt-dlp engine, or a different video.")
+
+            let timer = DispatchSource.makeTimerSource(queue: .global(qos: .userInitiated))
+            timer.schedule(deadline: .now() + timeout)
+            timer.setEventHandler {
+                finish {
+                    extraction.cancel()
+                    continuation.resume(throwing: ExtractorError.downloadFailed(
+                        "Timed out after \(Int(timeout))s extracting info. YouTube may have changed — try the ⋯ menu → Refresh yt-dlp engine, or a different video."))
+                }
+                timer.cancel()
             }
-            guard let result = try await group.next() else {
-                throw ExtractorError.downloadFailed("Extraction produced no result.")
+            timer.resume()
+
+            Task {
+                do {
+                    let value = try await extraction.value
+                    finish { timer.cancel(); continuation.resume(returning: value) }
+                } catch {
+                    finish { timer.cancel(); continuation.resume(throwing: error) }
+                }
             }
-            group.cancelAll()
-            return result
         }
     }
 #endif
