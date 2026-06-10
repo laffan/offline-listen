@@ -1,21 +1,24 @@
 import Foundation
+import AVFoundation
 
 #if canImport(YoutubeDL)
 import YoutubeDL
 #endif
 
-/// Result of extracting + downloading the audio stream for a URL.
-struct ExtractedAudio {
-    /// On-disk location of the downloaded audio (typically `.m4a`).
+/// Result of extracting + downloading media for a URL.
+struct ExtractedMedia {
+    /// On-disk location of the downloaded file (`.m4a` for audio, `.mp4` for video).
     let fileURL: URL
     let title: String
     let duration: Double
+    let isVideo: Bool
 }
 
 enum ExtractorError: LocalizedError {
     case packageUnavailable
     case invalidURL
     case noAudioFormat
+    case noVideoFormat
     case downloadFailed(String)
 
     var errorDescription: String? {
@@ -26,22 +29,33 @@ enum ExtractorError: LocalizedError {
             return "That doesn't look like a valid URL."
         case .noAudioFormat:
             return "No downloadable audio track was found for this video."
+        case .noVideoFormat:
+            return "No downloadable video (with audio) was found for this video."
         case .downloadFailed(let message):
             return message
         }
     }
 }
 
-/// Abstraction over the YouTube audio extraction step so the rest of the app is
-/// independent of the concrete library and can be unit-tested with a mock.
-protocol YouTubeAudioExtractor {
-    /// Downloads the best audio-only stream for `url`.
-    /// - Parameter onDownloadStart: invoked once the video info has been
-    ///   extracted and the actual stream download is about to begin.
+/// Reads the duration of a local media file (audio or video).
+func mediaDuration(of url: URL) async -> Double {
+    guard let seconds = try? await AVURLAsset(url: url).load(.duration).seconds,
+          seconds.isFinite else { return 0 }
+    return seconds
+}
+
+/// Abstraction over the extraction step so the rest of the app is independent of
+/// the concrete library and can be unit-tested with a mock.
+protocol MediaExtractor {
+    /// Downloads the best audio-only stream (`.audio`) or the best muxed
+    /// video+audio MP4 (`.video`) for `url`.
+    /// - Parameter onDownloadStart: invoked once the info has been resolved and
+    ///   the actual download is about to begin.
     /// - Parameter onProgress: 0...1 download fraction (when the size is known).
-    func extractAudio(from url: URL,
+    func extractMedia(from url: URL,
+                      mode: DownloadMode,
                       onDownloadStart: @escaping () -> Void,
-                      onProgress: @escaping (Double) -> Void) async throws -> ExtractedAudio
+                      onProgress: @escaping (Double) -> Void) async throws -> ExtractedMedia
 }
 
 /// Production implementation backed by kewlbear/YoutubeDL-iOS (yt-dlp on device).
@@ -58,7 +72,7 @@ protocol YouTubeAudioExtractor {
 /// arrives. A plain foreground download behaves identically on Simulator and
 /// device. (The `Downloader` initializer that would yield a foreground session
 /// is `internal`, so it can't be substituted from here.)
-final class YoutubeDLExtractor: YouTubeAudioExtractor {
+final class YoutubeDLExtractor: MediaExtractor {
     /// Deletes the cached yt-dlp Python module and re-downloads it. Useful when
     /// extraction starts failing because the engine is stale relative to
     /// YouTube's frequent changes.
@@ -139,9 +153,10 @@ final class YoutubeDLExtractor: YouTubeAudioExtractor {
     }
 #endif
 
-    func extractAudio(from url: URL,
+    func extractMedia(from url: URL,
+                      mode: DownloadMode,
                       onDownloadStart: @escaping () -> Void,
-                      onProgress: @escaping (Double) -> Void) async throws -> ExtractedAudio {
+                      onProgress: @escaping (Double) -> Void) async throws -> ExtractedMedia {
         let category = "yt-dlp"
         #if canImport(YoutubeDL)
         do {
@@ -166,35 +181,44 @@ final class YoutubeDLExtractor: YouTubeAudioExtractor {
             appLog("Info: \"\(info.title)\" · \(formats.count) formats · \(Int(info.duration ?? 0))s",
                    level: .success, category: category)
 
-            // Pick the best audio-only stream, preferring m4a (AAC) so the file
-            // is directly playable by AVFoundation with no transcode. If there is
-            // no dedicated audio stream at all, fall back to the smallest muxed
-            // (video+audio) MP4 and extract its audio track after download.
-            let audioOnly = formats.filter { $0.isAudioOnly }
-            let m4a = audioOnly.filter { $0.ext == "m4a" }
-            let pool = m4a.isEmpty ? audioOnly : m4a
+            // Muxed = has both audio and video. AVFoundation can't read WebM, so
+            // only MP4 muxed formats qualify for video / audio-extraction.
+            let muxedMP4 = formats.filter { !$0.isAudioOnly && !$0.isVideoOnly && $0.ext == "mp4" }
 
             let chosen: Format
-            var extractAfterDownload = false
-            if let audio = pool.max(by: { ($0.abr ?? $0.tbr ?? 0) < ($1.abr ?? $1.tbr ?? 0) }) {
-                chosen = audio
-                appLog("Selected format \(chosen.format_id) · \(chosen.ext) · \(Int(chosen.abr ?? chosen.tbr ?? 0)) kbps",
-                       category: category)
-            } else {
-                // Muxed = has both audio and video. AVFoundation can't read WebM,
-                // so only MP4 qualifies; lowest resolution wins (we only want audio).
-                let muxed = formats.filter { !$0.isAudioOnly && !$0.isVideoOnly && $0.ext == "mp4" }
-                guard let video = muxed.min(by: { ($0.height ?? .max) < ($1.height ?? .max) }) else {
-                    throw ExtractorError.noAudioFormat
+            var extractAudioAfterDownload = false
+
+            if mode == .video {
+                // Highest-resolution muxed MP4 (these top out ~720p; higher needs
+                // merging separate video+audio, which we can't do here).
+                guard let video = muxedMP4.max(by: { ($0.height ?? 0) < ($1.height ?? 0) }) else {
+                    throw ExtractorError.noVideoFormat
                 }
                 chosen = video
-                extractAfterDownload = true
-                appLog("No audio-only stream — falling back to muxed video \(chosen.format_id) (\(chosen.height.map { "\($0)p" } ?? "?")) + audio extraction",
-                       level: .warning, category: category)
+                appLog("Selected video \(chosen.format_id) (\(chosen.height.map { "\($0)p" } ?? "?"))", category: category)
+            } else {
+                // Best audio-only, preferring m4a (AAC). If none, fall back to the
+                // smallest muxed MP4 and extract its audio after download.
+                let audioOnly = formats.filter { $0.isAudioOnly }
+                let m4a = audioOnly.filter { $0.ext == "m4a" }
+                let pool = m4a.isEmpty ? audioOnly : m4a
+                if let audio = pool.max(by: { ($0.abr ?? $0.tbr ?? 0) < ($1.abr ?? $1.tbr ?? 0) }) {
+                    chosen = audio
+                    appLog("Selected format \(chosen.format_id) · \(chosen.ext) · \(Int(chosen.abr ?? chosen.tbr ?? 0)) kbps",
+                           category: category)
+                } else {
+                    guard let video = muxedMP4.min(by: { ($0.height ?? .max) < ($1.height ?? .max) }) else {
+                        throw ExtractorError.noAudioFormat
+                    }
+                    chosen = video
+                    extractAudioAfterDownload = true
+                    appLog("No audio-only stream — falling back to muxed video \(chosen.format_id) + audio extraction",
+                           level: .warning, category: category)
+                }
             }
 
             guard let mediaURL = URL(string: chosen.url) else {
-                throw ExtractorError.noAudioFormat
+                throw mode == .video ? ExtractorError.noVideoFormat : ExtractorError.noAudioFormat
             }
 
             // Carry over yt-dlp's request headers (User-Agent, etc.) so the CDN
@@ -209,7 +233,7 @@ final class YoutubeDLExtractor: YouTubeAudioExtractor {
 
             let expected = chosen.filesize
             let sizeHint = expected.map { " (~\($0 / 1024 / 1024) MB)" } ?? ""
-            appLog("Downloading \(extractAfterDownload ? "video" : "audio") stream in chunks\(sizeHint)…", category: category)
+            appLog("Downloading \(mode == .video ? "video" : (extractAudioAfterDownload ? "video" : "audio")) stream in chunks\(sizeHint)…", category: category)
             onDownloadStart()
 
             try await AudioStreamDownloader.download(
@@ -220,7 +244,7 @@ final class YoutubeDLExtractor: YouTubeAudioExtractor {
                 onProgress: onProgress
             )
 
-            if extractAfterDownload {
+            if extractAudioAfterDownload {
                 dest = try await VideoAudioExtractor.extractAudio(fromVideo: dest, category: category)
             }
 
@@ -228,10 +252,11 @@ final class YoutubeDLExtractor: YouTubeAudioExtractor {
             let sizeText = size.map { " (\($0 / 1024) KB)" } ?? ""
             appLog("Download finished: \(dest.lastPathComponent)\(sizeText)", level: .success, category: category)
 
-            return ExtractedAudio(
+            return ExtractedMedia(
                 fileURL: dest,
                 title: info.title.isEmpty ? url.absoluteString : info.title,
-                duration: info.duration ?? 0
+                duration: info.duration ?? 0,
+                isVideo: mode == .video
             )
         } catch {
             appLog("yt-dlp failed: \(error.localizedDescription)", level: .error, category: category)
@@ -250,10 +275,11 @@ final class YoutubeDLExtractor: YouTubeAudioExtractor {
 /// Lets you exercise the queue/library/player UI without the native package by
 /// generating a placeholder entry. Swap `DownloadManager`'s default extractor to
 /// this in previews or simulator smoke tests.
-final class MockExtractor: YouTubeAudioExtractor {
-    func extractAudio(from url: URL,
+final class MockExtractor: MediaExtractor {
+    func extractMedia(from url: URL,
+                      mode: DownloadMode,
                       onDownloadStart: @escaping () -> Void,
-                      onProgress: @escaping (Double) -> Void) async throws -> ExtractedAudio {
+                      onProgress: @escaping (Double) -> Void) async throws -> ExtractedMedia {
         appLog("Mock: extracting info…", category: "yt-dlp")
         try await Task.sleep(nanoseconds: 400_000_000)
         onDownloadStart()
@@ -262,9 +288,10 @@ final class MockExtractor: YouTubeAudioExtractor {
             try await Task.sleep(nanoseconds: 160_000_000)
             onProgress(Double(step) / 5)
         }
-        let dest = AppPaths.work.appendingPathComponent("\(UUID().uuidString).m4a")
+        let ext = mode == .video ? "mp4" : "m4a"
+        let dest = AppPaths.work.appendingPathComponent("\(UUID().uuidString).\(ext)")
         // A real file isn't produced here; the mock is only for UI flow testing.
         FileManager.default.createFile(atPath: dest.path, contents: Data())
-        return ExtractedAudio(fileURL: dest, title: "Mock Track \(Int.random(in: 1...999))", duration: 180)
+        return ExtractedMedia(fileURL: dest, title: "Mock Track \(Int.random(in: 1...999))", duration: 180, isVideo: mode == .video)
     }
 }

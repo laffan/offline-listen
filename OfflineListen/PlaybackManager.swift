@@ -4,15 +4,14 @@ import MediaPlayer
 
 /// Drives playback for the player screen and the lock screen / Control Center.
 ///
-/// The success criterion is *offline background playback with the phone locked*.
-/// That is achieved by three things:
+/// Offline background playback (phone locked) is achieved by:
 ///   1. `UIBackgroundModes = [audio]` in Info.plist.
 ///   2. An `AVAudioSession` configured with the `.playback` category.
 ///   3. `MPNowPlayingInfoCenter` + `MPRemoteCommandCenter` for lock-screen UI.
 ///
-/// Playback uses `AVAudioPlayer`, which plays the AAC/`.m4a` files produced by
-/// the download pipeline and continues in the background once the audio session
-/// is active.
+/// Uses `AVPlayer` so it can play both audio (`.m4a`) and video (`.mp4`); for
+/// video, the player screen attaches a layer to show the picture, while audio
+/// keeps playing in the background.
 @MainActor
 final class PlaybackManager: NSObject, ObservableObject {
     @Published var currentTrack: Track?
@@ -20,14 +19,16 @@ final class PlaybackManager: NSObject, ObservableObject {
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
 
+    /// Exposed so the player screen can render video for video tracks.
+    let player = AVPlayer()
+
     private var queue: [Track] = []
     private var index = 0
     private var ticker: Timer?
-    private var player: AVAudioPlayer?
+    private var endObserver: NSObjectProtocol?
 
     private var hasRestored = false
     private var lastPersist = Date.distantPast
-
     private let library: LibraryStore
 
     private enum Keys {
@@ -37,6 +38,8 @@ final class PlaybackManager: NSObject, ObservableObject {
     init(library: LibraryStore) {
         self.library = library
         super.init()
+        // Keep a video's audio playing when the app is backgrounded / locked.
+        player.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible
         configureAudioSession()
         setupRemoteCommands()
     }
@@ -72,22 +75,23 @@ final class PlaybackManager: NSObject, ObservableObject {
     }
 
     /// Where a track should begin: podcasts resume from their freshest saved
-    /// playhead; songs always start at 0.
+    /// playhead; songs and videos always start at 0.
     private func startPosition(for track: Track) -> Double {
-        guard track.kind == .podcast else { return 0 }
+        guard track.kind == .podcast, !track.isVideo else { return 0 }
         return library.tracks.first(where: { $0.id == track.id })?.lastPosition ?? track.lastPosition
     }
 
     func seek(to time: Double) {
-        let target = max(0, min(time, duration))
-        player?.currentTime = target
+        let upperBound = duration > 0 ? duration : time
+        let target = max(0, min(time, upperBound))
+        player.seek(to: CMTime(seconds: target, preferredTimescale: 600))
         currentTime = target
         updateNowPlaying()
         persistState()
     }
 
     /// Restores the last-played track (paused), unless playback is already
-    /// underway. Podcasts restore at their saved playhead; songs at 0.
+    /// underway. Podcasts restore at their saved playhead; songs/videos at 0.
     func restoreLastSession() {
         guard !hasRestored else { return }
         hasRestored = true
@@ -126,61 +130,63 @@ final class PlaybackManager: NSObject, ObservableObject {
         duration = track.duration
         stopEngine()
 
-        do {
-            let player = try AVAudioPlayer(contentsOf: track.fileURL)
-            player.delegate = self
-            player.prepareToPlay()
-            self.player = player
-            duration = player.duration
-            if startAt > 0 {
-                let clamped = min(startAt, player.duration)
-                player.currentTime = clamped
-                currentTime = clamped
-            }
-            if autoPlay { player.play() }
-        } catch {
-            print("[PlaybackManager] AVAudioPlayer error: \(error)")
+        let item = AVPlayerItem(url: track.fileURL)
+        player.replaceCurrentItem(with: item)
+        endObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.handleTrackFinished() }
+        }
+
+        if startAt > 0 {
+            player.seek(to: CMTime(seconds: startAt, preferredTimescale: 600))
+            currentTime = startAt
         }
 
         isPlaying = autoPlay
         if autoPlay {
             try? AVAudioSession.sharedInstance().setActive(true)
-            startTicker()
+            player.play()
         }
+        startTicker()
         updateNowPlaying()
         persistState()
     }
 
     private func resume() {
-        player?.play()
-        isPlaying = true
         try? AVAudioSession.sharedInstance().setActive(true)
+        player.play()
+        isPlaying = true
         startTicker()
         updateNowPlaying()
     }
 
     private func pause() {
-        player?.pause()
+        player.pause()
         isPlaying = false
         updateNowPlaying()
         persistState()
+    }
+
+    private func stopEngine() {
+        ticker?.invalidate()
+        ticker = nil
+        if let endObserver {
+            NotificationCenter.default.removeObserver(endObserver)
+            self.endObserver = nil
+        }
+        player.pause()
+        player.replaceCurrentItem(with: nil)
     }
 
     private func persistState() {
         guard let track = currentTrack else { return }
         UserDefaults.standard.set(track.id.uuidString, forKey: Keys.trackID)
         // Only podcasts remember their playhead.
-        if track.kind == .podcast {
+        if track.kind == .podcast, !track.isVideo {
             library.updatePosition(for: track.id, to: currentTime)
         }
         lastPersist = Date()
-    }
-
-    private func stopEngine() {
-        ticker?.invalidate()
-        ticker = nil
-        player?.stop()
-        player = nil
     }
 
     // MARK: - Progress polling
@@ -193,8 +199,12 @@ final class PlaybackManager: NSObject, ObservableObject {
     }
 
     private func tick() {
-        guard let player else { return }
-        currentTime = player.currentTime
+        let now = player.currentTime().seconds
+        if now.isFinite { currentTime = now }
+        if let itemDuration = player.currentItem?.duration.seconds,
+           itemDuration.isFinite, itemDuration > 0 {
+            duration = itemDuration
+        }
         updateNowPlaying()
         if Date().timeIntervalSince(lastPersist) > 5 {
             persistState()
@@ -203,7 +213,7 @@ final class PlaybackManager: NSObject, ObservableObject {
 
     private func handleTrackFinished() {
         // A finished podcast resets so a later tap starts it fresh.
-        if let track = currentTrack, track.kind == .podcast {
+        if let track = currentTrack, track.kind == .podcast, !track.isVideo {
             library.updatePosition(for: track.id, to: 0)
         }
         if queue.count > 1 {
@@ -278,11 +288,5 @@ final class PlaybackManager: NSObject, ObservableObject {
         ]
         info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = 1.0
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-    }
-}
-
-extension PlaybackManager: AVAudioPlayerDelegate {
-    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        Task { @MainActor in self.handleTrackFinished() }
     }
 }

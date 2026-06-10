@@ -1,4 +1,6 @@
 import SwiftUI
+import AVFoundation
+import UIKit
 
 struct PlayerView: View {
     @EnvironmentObject private var playback: PlaybackManager
@@ -28,16 +30,28 @@ struct PlayerView: View {
         VStack(spacing: 28) {
             Spacer()
 
-            artwork
+            if track.isVideo {
+                VideoSurface(player: playback.player)
+                    .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                    .frame(maxWidth: .infinity)
+                    .background(Color.black)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .padding(.horizontal)
+                    .shadow(radius: 12, y: 6)
+            } else {
+                artwork
+            }
 
             VStack(spacing: 6) {
                 Text(track.title)
                     .font(.title3.weight(.semibold))
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
-                Text(track.artist)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                if hasArtist(track) {
+                    Text(track.artist)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
             }
             .padding(.horizontal)
 
@@ -48,6 +62,10 @@ struct PlayerView: View {
             Spacer()
         }
         .padding()
+    }
+
+    private func hasArtist(_ track: Track) -> Bool {
+        !track.artist.isEmpty && track.artist.lowercased() != "unknown"
     }
 
     private var artwork: some View {
@@ -128,5 +146,26 @@ struct PlayerView: View {
             }
         }
         .foregroundStyle(Color.accentColor)
+    }
+}
+
+/// A plain `AVPlayerLayer`-backed view (no built-in controls — we use our own).
+private struct VideoSurface: UIViewRepresentable {
+    let player: AVPlayer
+
+    func makeUIView(context: Context) -> PlayerLayerView {
+        let view = PlayerLayerView()
+        view.playerLayer.player = player
+        view.playerLayer.videoGravity = .resizeAspect
+        return view
+    }
+
+    func updateUIView(_ view: PlayerLayerView, context: Context) {
+        view.playerLayer.player = player
+    }
+
+    final class PlayerLayerView: UIView {
+        override class var layerClass: AnyClass { AVPlayerLayer.self }
+        var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
     }
 }

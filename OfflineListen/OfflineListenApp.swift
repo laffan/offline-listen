@@ -39,7 +39,7 @@ struct OfflineListenApp: App {
     private func importShared() {
         for urlString in SharedInbox.takeAll() {
             appLog("Imported shared URL: \(urlString)", category: "Share")
-            downloads.enqueue(urlString: urlString, format: .m4a)
+            downloads.enqueue(urlString: urlString, mode: .audio)
         }
     }
 }

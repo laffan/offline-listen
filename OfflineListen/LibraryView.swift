@@ -30,10 +30,26 @@ struct LibraryView: View {
     @State private var selection = Set<Track.ID>()
     @State private var share: SharePayload?
     @State private var showArchived = false
+    @State private var filter: LibraryFilter = .all
+
+    private var filteredTracks: [Track] {
+        library.activeTracks.filter { filter.matches($0) }
+    }
 
     var body: some View {
         NavigationStack {
-            Group {
+            VStack(spacing: 0) {
+                if !library.activeTracks.isEmpty {
+                    Picker("Filter", selection: $filter) {
+                        ForEach(LibraryFilter.allCases) { f in
+                            Text(f.displayName).tag(f)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal)
+                    .padding(.bottom, 4)
+                }
+
                 if library.activeTracks.isEmpty {
                     ContentUnavailableViewCompat(
                         title: library.tracks.isEmpty ? "Your library is empty" : "No active tracks",
@@ -42,6 +58,14 @@ struct LibraryView: View {
                             ? "Downloaded tracks appear here, ready to play offline."
                             : "Everything is archived — open the Archived folder above."
                     )
+                    .frame(maxHeight: .infinity)
+                } else if filteredTracks.isEmpty {
+                    ContentUnavailableViewCompat(
+                        title: "Nothing in \(filter.displayName)",
+                        systemImage: "line.3.horizontal.decrease.circle",
+                        description: "No tracks match this filter."
+                    )
+                    .frame(maxHeight: .infinity)
                 } else {
                     trackList
                 }
@@ -60,7 +84,7 @@ struct LibraryView: View {
 
     private var trackList: some View {
         List(selection: $selection) {
-            ForEach(library.activeTracks) { track in
+            ForEach(filteredTracks) { track in
                 row(for: track)
             }
         }
@@ -91,25 +115,28 @@ struct LibraryView: View {
                 .tint(.indigo)
             }
             .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                Button {
-                    library.setKind(track, .song)
-                } label: {
-                    Label("Song", systemImage: "music.note")
+                // Song/podcast classification only applies to audio tracks.
+                if !track.isVideo {
+                    Button {
+                        library.setKind(track, .song)
+                    } label: {
+                        Label("Song", systemImage: "music.note")
+                    }
+                    .tint(.gray)
+                    Button {
+                        library.setKind(track, .podcast)
+                    } label: {
+                        Label("Podcast", systemImage: "mic.fill")
+                    }
+                    .tint(.purple)
                 }
-                .tint(.gray)
-                Button {
-                    library.setKind(track, .podcast)
-                } label: {
-                    Label("Podcast", systemImage: "mic.fill")
-                }
-                .tint(.purple)
             }
 
         if editMode.isEditing {
             base
         } else {
             base.onTapGesture {
-                playback.play(track, in: library.activeTracks)
+                playback.play(track, in: filteredTracks)
                 onPlay()
             }
         }
@@ -262,9 +289,19 @@ private struct TrackRow: View {
         track.duration > 0 ? min(track.lastPosition / track.duration, 1) : 0
     }
 
+    private var iconName: String {
+        if track.isVideo { return "film" }
+        return track.kind == .podcast ? "mic.fill" : "music.note"
+    }
+
+    /// Podcasts (audio only) show a resume progress bar.
+    private var showsProgress: Bool {
+        track.kind == .podcast && !track.isVideo
+    }
+
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: track.kind == .podcast ? "mic.fill" : "music.note")
+            Image(systemName: iconName)
                 .foregroundStyle(isCurrent ? Color.accentColor : .secondary)
                 .frame(width: 24)
 
@@ -273,7 +310,7 @@ private struct TrackRow: View {
                     .font(.body)
                     .lineLimit(1)
 
-                if track.kind == .podcast {
+                if showsProgress {
                     ProgressView(value: progress)
                         .tint(.accentColor)
                     if track.duration > 0 {
@@ -292,7 +329,7 @@ private struct TrackRow: View {
 
             Spacer()
 
-            if track.kind != .podcast, track.duration > 0 {
+            if !showsProgress, track.duration > 0 {
                 Text(track.duration.asPlaybackTime)
                     .font(.caption)
                     .foregroundStyle(.secondary)

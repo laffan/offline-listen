@@ -13,14 +13,16 @@ locked.
 Three screens (tabs):
 
 1. **Download** — paste one or more URLs (whitespace/line-break separated; only
-   YouTube links are queued, the rest are skipped), pick a format (M4A/MP3),
-   watch the queue. Swipe a row for **Cancel** (active/queued), **Restart**, or
-   **Clear**; tap a finished row to play it.
-2. **Library** — downloaded tracks; tap to play. Swipe **left** for
-   Delete/Share/Archive (and bulk versions via **Select**); swipe **right** to
-   classify a track as **Song** or **Podcast**. Songs always start from the
-   beginning; podcasts (mic icon) resume from where you left off and show a
-   progress bar. Archived tracks live in an **Archived** folder (toolbar).
+   YouTube links are queued, the rest are skipped), choose **Audio** or **Video**
+   (default Audio), watch the queue. Swipe a row for **Cancel** (active/queued),
+   **Restart**, or **Clear**; tap a finished row to play it.
+2. **Library** — downloaded tracks; tap to play. A **filter** (All / Music /
+   Podcasts / Video) is at the top. Swipe **left** for Delete/Share/Archive (and
+   bulk versions via **Select**); swipe **right** on an audio track to classify
+   it **Song** or **Podcast**. Songs/videos start from the beginning; podcasts
+   (mic icon) resume where you left off and show a progress bar. Video tracks
+   (film icon) play with picture on the Player screen. Archived tracks live in an
+   **Archived** folder (toolbar).
 3. **Player** — artwork, scrubber, play/pause, next/previous. Drives the lock
    screen and Control Center.
 4. **Log** — timestamped, copyable stream of every pipeline step (queue,
@@ -29,9 +31,9 @@ Three screens (tabs):
 ### Pipeline
 
 ```
-URL  ──►  YoutubeDL-iOS (yt-dlp on device)  ──►  AudioConverter  ──►  Documents/  ──►  AVAudioPlayer
-         extracts best audio-only stream         M4A passthrough        local file       playback
-                                                  (MP3 = opt-in)
+URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──►  Documents/  ──►  AVPlayer
+         best audio-only or muxed mp4       (+ audio extract       local file       audio/video
+                                             for audio mode)                         playback
 ```
 
 ### Source layout (`OfflineListen/`)
@@ -39,21 +41,21 @@ URL  ──►  YoutubeDL-iOS (yt-dlp on device)  ──►  AudioConverter  ─
 | File | Role |
 |------|------|
 | `OfflineListenApp.swift` | App entry; wires up the shared stores. |
-| `Models.swift` | `Track`, `AudioFormat`, paths, helpers. |
+| `Models.swift` | `Track`, `DownloadMode`, `LibraryFilter`, paths, helpers. |
 | `LibraryStore.swift` | Persists the library to `Documents/library.json`. |
 | `DownloadManager.swift` | Serial download queue + `DownloadJob`. |
-| `YouTubeExtractor.swift` | `YouTubeAudioExtractor` protocol + YoutubeDL-iOS impl + a mock. |
+| `YouTubeExtractor.swift` | `MediaExtractor` protocol + YoutubeDL-iOS impl + a mock. |
 | `YouTubeKitExtractor.swift` | Native-Swift (b5i/YouTubeKit) primary extractor. |
 | `CompositeExtractor.swift` | Tries the native extractor, falls back to yt-dlp. |
 | `AudioStreamDownloader.swift` | Shared chunked byte-range stream downloader. |
-| `AudioConverter.swift` | M4A passthrough; gated MP3 transcode. |
-| `PlaybackManager.swift` | AVFoundation engine, audio session, lock-screen controls. |
+| `VideoAudioExtractor.swift` | Extracts audio from a muxed video via AVFoundation. |
+| `PlaybackManager.swift` | `AVPlayer` engine (audio + video), audio session, lock screen. |
 | `Logger.swift` | `LogStore` — thread-safe, app-wide log sink. |
 | `*View.swift` | The four SwiftUI screens (Download, Library, Player, Log). |
 
-The YouTube extraction step is isolated behind a `YouTubeAudioExtractor` seam (a
-mock implementation is included), so adapting to a library API change touches
-one file and the UI can be exercised with no native dependency.
+The extraction step is isolated behind a `MediaExtractor` seam (a mock
+implementation is included), so adapting to a library API change touches one
+file and the UI can be exercised with no native dependency.
 
 ## Share from other apps
 
@@ -121,26 +123,20 @@ Three pieces make this work, already configured:
 Start a track, lock the phone — audio keeps playing and the controls appear on
 the lock screen.
 
-## Format notes — why M4A is the default
+## Audio vs. Video
 
-- **M4A** is reliable and needs **no transcoding**: yt-dlp downloads the best
-  audio-only stream directly as an AAC `.m4a`, which the converter just moves
-  into the library. This is the path that guarantees "download + play offline."
-- **MP3** requires FFmpeg to *encode*, which needs an MP3 encoder
-  (`libmp3lame`/`libshine`). No FFmpeg is bundled, so MP3 is **off by default**.
-  `AudioConverter.transcodeToMP3` is gated behind a `USE_FFMPEG_MP3` build flag
-  with the exact `FFmpegKit.execute(...)` call sketched in comments. To enable it:
-  1. Add an MP3-capable, command-style FFmpeg package (e.g. an `ffmpeg-kit`
-     build that includes `libmp3lame` and exposes `FFmpegKit.execute`).
-  2. Fill in the `execute` call in `AudioConverter.swift`.
-  3. Add `USE_FFMPEG_MP3` to *Build Settings ▸ Swift Compiler – Custom Flags ▸
-     Active Compilation Conditions*.
+- **Audio** (default) saves an AAC `.m4a` — the best audio-only stream, or, if a
+  video has none, the audio extracted from a muxed MP4. No transcoding.
+- **Video** saves the best muxed (video+audio) `.mp4`. YouTube's muxed formats
+  top out around 720p (higher resolutions are video-only streams that would need
+  merging with FFmpeg, which isn't bundled). Video plays with picture on the
+  Player screen and keeps its audio playing in the background.
 
 ## Extraction: native primary + yt-dlp fallback
 
-Extraction sits behind the `YouTubeAudioExtractor` protocol, and
-`CompositeExtractor` tries a primary then a fallback (cancellation is never
-treated as a failure, so Cancel doesn't trigger the fallback):
+Extraction sits behind the `MediaExtractor` protocol, and `CompositeExtractor`
+tries a primary then a fallback (cancellation is never treated as a failure, so
+Cancel doesn't trigger the fallback):
 
 1. **`YouTubeKitExtractor` (primary)** — b5i/YouTubeKit resolves the audio-only
    stream URL natively in Swift (no Python, no engine download, fast). Pure

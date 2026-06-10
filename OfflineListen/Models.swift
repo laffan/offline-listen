@@ -33,14 +33,45 @@ enum AppPaths {
     }
 }
 
-/// Output container the user can pick for a download.
-enum AudioFormat: String, Codable, CaseIterable, Identifiable {
-    case m4a
-    case mp3
+/// What the user wants from a download: just the audio, or the full video.
+enum DownloadMode: String, Codable, CaseIterable, Identifiable {
+    case audio
+    case video
 
     var id: String { rawValue }
-    var fileExtension: String { rawValue }
-    var displayName: String { rawValue.uppercased() }
+    var displayName: String {
+        switch self {
+        case .audio: return "Audio"
+        case .video: return "Video"
+        }
+    }
+}
+
+/// Library list filter.
+enum LibraryFilter: String, CaseIterable, Identifiable {
+    case all
+    case music
+    case podcasts
+    case video
+
+    var id: String { rawValue }
+    var displayName: String {
+        switch self {
+        case .all: return "All"
+        case .music: return "Music"
+        case .podcasts: return "Podcasts"
+        case .video: return "Video"
+        }
+    }
+
+    func matches(_ track: Track) -> Bool {
+        switch self {
+        case .all: return true
+        case .music: return !track.isVideo && track.kind == .song
+        case .podcasts: return !track.isVideo && track.kind == .podcast
+        case .video: return track.isVideo
+        }
+    }
 }
 
 /// How a track behaves on playback. Songs always start from the beginning;
@@ -65,6 +96,8 @@ struct Track: Identifiable, Codable, Hashable {
     var kind: TrackKind
     /// Saved playhead in seconds; used to resume podcasts between sessions.
     var lastPosition: Double
+    /// True if this is a video file (plays with picture); false for audio-only.
+    var isVideo: Bool
 
     init(id: UUID = UUID(),
          title: String,
@@ -75,7 +108,8 @@ struct Track: Identifiable, Codable, Hashable {
          dateAdded: Date = Date(),
          isArchived: Bool = false,
          kind: TrackKind = .song,
-         lastPosition: Double = 0) {
+         lastPosition: Double = 0,
+         isVideo: Bool = false) {
         self.id = id
         self.title = title
         self.artist = artist
@@ -86,10 +120,11 @@ struct Track: Identifiable, Codable, Hashable {
         self.isArchived = isArchived
         self.kind = kind
         self.lastPosition = lastPosition
+        self.isVideo = isVideo
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, artist, fileName, sourceURL, duration, dateAdded, isArchived, kind, lastPosition
+        case id, title, artist, fileName, sourceURL, duration, dateAdded, isArchived, kind, lastPosition, isVideo
     }
 
     // Custom decode so libraries saved before these fields existed still load.
@@ -105,6 +140,7 @@ struct Track: Identifiable, Codable, Hashable {
         isArchived = try c.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
         kind = try c.decodeIfPresent(TrackKind.self, forKey: .kind) ?? .song
         lastPosition = try c.decodeIfPresent(Double.self, forKey: .lastPosition) ?? 0
+        isVideo = try c.decodeIfPresent(Bool.self, forKey: .isVideo) ?? false
     }
 
     /// Absolute on-disk location resolved at access time.

@@ -12,7 +12,6 @@
 		1B00000000000000000000B3 /* LibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A3 /* LibraryStore.swift */; };
 		1B00000000000000000000B4 /* DownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A4 /* DownloadManager.swift */; };
 		1B00000000000000000000B5 /* YouTubeExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A5 /* YouTubeExtractor.swift */; };
-		1B00000000000000000000B6 /* AudioConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A6 /* AudioConverter.swift */; };
 		1B00000000000000000000B7 /* PlaybackManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A7 /* PlaybackManager.swift */; };
 		1B00000000000000000000B8 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A8 /* RootView.swift */; };
 		1B00000000000000000000B9 /* DownloadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A9 /* DownloadView.swift */; };
@@ -49,7 +48,6 @@
 		1A00000000000000000000A3 /* LibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStore.swift; sourceTree = "<group>"; };
 		1A00000000000000000000A4 /* DownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadManager.swift; sourceTree = "<group>"; };
 		1A00000000000000000000A5 /* YouTubeExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubeExtractor.swift; sourceTree = "<group>"; };
-		1A00000000000000000000A6 /* AudioConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioConverter.swift; sourceTree = "<group>"; };
 		1A00000000000000000000A7 /* PlaybackManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackManager.swift; sourceTree = "<group>"; };
 		1A00000000000000000000A8 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		1A00000000000000000000A9 /* DownloadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadView.swift; sourceTree = "<group>"; };
@@ -109,7 +107,6 @@
 				1A00000000000000000000A3 /* LibraryStore.swift */,
 				1A00000000000000000000A4 /* DownloadManager.swift */,
 				1A00000000000000000000A5 /* YouTubeExtractor.swift */,
-				1A00000000000000000000A6 /* AudioConverter.swift */,
 				1A00000000000000000000A7 /* PlaybackManager.swift */,
 				1A00000000000000000000A8 /* RootView.swift */,
 				1A00000000000000000000A9 /* DownloadView.swift */,
@@ -274,7 +271,6 @@
 				1B00000000000000000000B3 /* LibraryStore.swift in Sources */,
 				1B00000000000000000000B4 /* DownloadManager.swift in Sources */,
 				1B00000000000000000000B5 /* YouTubeExtractor.swift in Sources */,
-				1B00000000000000000000B6 /* AudioConverter.swift in Sources */,
 				1B00000000000000000000B7 /* PlaybackManager.swift in Sources */,
 				1B00000000000000000000B8 /* RootView.swift in Sources */,
 				1B00000000000000000000B9 /* DownloadView.swift in Sources */,

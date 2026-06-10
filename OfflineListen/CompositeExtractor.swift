@@ -3,26 +3,27 @@ import Foundation
 /// Tries a primary extractor and, if it fails, falls back to a secondary one.
 /// Cancellation is never treated as a failure — it propagates immediately so the
 /// Cancel button doesn't accidentally trigger the fallback.
-final class CompositeExtractor: YouTubeAudioExtractor {
-    private let primary: YouTubeAudioExtractor
+final class CompositeExtractor: MediaExtractor {
+    private let primary: MediaExtractor
     private let primaryName: String
-    private let fallback: YouTubeAudioExtractor
+    private let fallback: MediaExtractor
     private let fallbackName: String
 
-    init(primary: YouTubeAudioExtractor, named primaryName: String,
-         fallback: YouTubeAudioExtractor, named fallbackName: String) {
+    init(primary: MediaExtractor, named primaryName: String,
+         fallback: MediaExtractor, named fallbackName: String) {
         self.primary = primary
         self.primaryName = primaryName
         self.fallback = fallback
         self.fallbackName = fallbackName
     }
 
-    func extractAudio(from url: URL,
+    func extractMedia(from url: URL,
+                      mode: DownloadMode,
                       onDownloadStart: @escaping () -> Void,
-                      onProgress: @escaping (Double) -> Void) async throws -> ExtractedAudio {
+                      onProgress: @escaping (Double) -> Void) async throws -> ExtractedMedia {
         do {
             appLog("Trying \(primaryName)…", category: "Extract")
-            return try await primary.extractAudio(from: url,
+            return try await primary.extractMedia(from: url, mode: mode,
                                                   onDownloadStart: onDownloadStart,
                                                   onProgress: onProgress)
         } catch {
@@ -31,7 +32,7 @@ final class CompositeExtractor: YouTubeAudioExtractor {
             }
             appLog("\(primaryName) failed: \(error.localizedDescription) — falling back to \(fallbackName)",
                    level: .warning, category: "Extract")
-            return try await fallback.extractAudio(from: url,
+            return try await fallback.extractMedia(from: url, mode: mode,
                                                    onDownloadStart: onDownloadStart,
                                                    onProgress: onProgress)
         }

@@ -10,7 +10,7 @@ struct DownloadView: View {
     let onPlay: () -> Void
 
     @State private var urlText = ""
-    @State private var format: AudioFormat = .m4a
+    @State private var mode: DownloadMode = .audio
     @FocusState private var urlFieldFocused: Bool
 
     var body: some View {
@@ -93,9 +93,9 @@ struct DownloadView: View {
             .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
 
             HStack {
-                Picker("Format", selection: $format) {
-                    ForEach(AudioFormat.allCases) { fmt in
-                        Text(fmt.displayName).tag(fmt)
+                Picker("Mode", selection: $mode) {
+                    ForEach(DownloadMode.allCases) { m in
+                        Text(m.displayName).tag(m)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -117,7 +117,7 @@ struct DownloadView: View {
     private func startDownload() {
         let text = urlText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        downloads.enqueueLinks(from: urlText, format: format)
+        downloads.enqueueLinks(from: urlText, mode: mode)
         urlText = ""
         urlFieldFocused = false
     }
