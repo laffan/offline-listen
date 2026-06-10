@@ -12,12 +12,26 @@ import MediaPlayer
 /// Uses `AVPlayer` so it can play both audio (`.m4a`) and video (`.mp4`); for
 /// video, the player screen attaches a layer to show the picture, while audio
 /// keeps playing in the background.
+/// Fast-changing playback state, isolated from `PlaybackManager` so only the
+/// views that render it (the scrubber) re-render on the 2 Hz ticker — anything
+/// observing `PlaybackManager` itself (library lists, toolbar menus) would
+/// otherwise refresh constantly, visibly pulsing and dismissing open menus.
+@MainActor
+final class PlaybackProgress: ObservableObject {
+    @Published var currentTime: Double = 0
+    @Published var duration: Double = 0
+}
+
 @MainActor
 final class PlaybackManager: NSObject, ObservableObject {
     @Published var currentTrack: Track?
     @Published var isPlaying = false
-    @Published var currentTime: Double = 0
-    @Published var duration: Double = 0
+    /// Playhead + duration; deliberately not `@Published` properties here (see
+    /// `PlaybackProgress`).
+    let progress = PlaybackProgress()
+
+    var currentTime: Double { progress.currentTime }
+    var duration: Double { progress.duration }
 
     /// Exposed so the player screen can render video for video tracks.
     let player = AVPlayer()
@@ -85,7 +99,7 @@ final class PlaybackManager: NSObject, ObservableObject {
         let upperBound = duration > 0 ? duration : time
         let target = max(0, min(time, upperBound))
         player.seek(to: CMTime(seconds: target, preferredTimescale: 600))
-        currentTime = target
+        progress.currentTime = target
         updateNowPlaying()
         persistState()
     }
@@ -126,8 +140,8 @@ final class PlaybackManager: NSObject, ObservableObject {
         guard queue.indices.contains(index) else { return }
         let track = queue[index]
         currentTrack = track
-        currentTime = 0
-        duration = track.duration
+        progress.currentTime = 0
+        progress.duration = track.duration
         stopEngine()
 
         let item = AVPlayerItem(url: track.fileURL)
@@ -140,7 +154,7 @@ final class PlaybackManager: NSObject, ObservableObject {
 
         if startAt > 0 {
             player.seek(to: CMTime(seconds: startAt, preferredTimescale: 600))
-            currentTime = startAt
+            progress.currentTime = startAt
         }
 
         isPlaying = autoPlay
@@ -201,11 +215,15 @@ final class PlaybackManager: NSObject, ObservableObject {
     }
 
     private func tick() {
+        // Only publish real changes — the ticker also runs while paused, and
+        // no-op sets would still fire objectWillChange on every tick.
         let now = player.currentTime().seconds
-        if now.isFinite { currentTime = now }
+        if now.isFinite, abs(progress.currentTime - now) > 0.01 {
+            progress.currentTime = now
+        }
         if let itemDuration = player.currentItem?.duration.seconds,
-           itemDuration.isFinite, itemDuration > 0 {
-            duration = itemDuration
+           itemDuration.isFinite, itemDuration > 0, itemDuration != progress.duration {
+            progress.duration = itemDuration
         }
         updateNowPlaying()
         if Date().timeIntervalSince(lastPersist) > 5 {

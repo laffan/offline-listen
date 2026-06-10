@@ -5,15 +5,25 @@ import UIKit
 
 struct PlayerView: View {
     @EnvironmentObject private var playback: PlaybackManager
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
-    @State private var isScrubbing = false
-    @State private var scrubTime: Double = 0
+    /// Whether the control overlay is visible in fullscreen (landscape) video.
+    @State private var showVideoControls = true
+
+    /// Landscape (compact height) with a video track → fullscreen video.
+    private var isFullscreenVideo: Bool {
+        playback.currentTrack?.isVideo == true && verticalSizeClass == .compact
+    }
 
     var body: some View {
         NavigationStack {
             Group {
                 if let track = playback.currentTrack {
-                    playerBody(track)
+                    if track.isVideo, verticalSizeClass == .compact {
+                        fullscreenVideo
+                    } else {
+                        playerBody(track)
+                    }
                 } else {
                     ContentUnavailableViewCompat(
                         title: "Nothing playing",
@@ -25,6 +35,7 @@ struct PlayerView: View {
             .navigationTitle("Now Playing")
             .navigationBarTitleDisplayMode(.inline)
         }
+        .statusBarHidden(isFullscreenVideo)
     }
 
     private func playerBody(_ track: Track) -> some View {
@@ -32,15 +43,12 @@ struct PlayerView: View {
             Spacer()
 
             if track.isVideo {
-                // Native player: transport controls, fullscreen button, PiP, and
-                // rotation to fullscreen are all handled by AVPlayerViewController.
+                // Edge-to-edge video surface; transport is our own control suite
+                // below, identical to audio's.
                 NativeVideoPlayer(player: playback.player)
                     .aspectRatio(16.0 / 9.0, contentMode: .fit)
                     .frame(maxWidth: .infinity)
                     .background(Color.black)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                    .padding(.horizontal)
-                    .shadow(radius: 12, y: 6)
             } else {
                 artwork
             }
@@ -58,30 +66,46 @@ struct PlayerView: View {
             }
             .padding(.horizontal)
 
-            if track.isVideo {
-                // The native player owns scrub/play/skip; we just add queue nav.
-                queueControls
-            } else {
-                scrubber
-                controls
-            }
+            scrubber
+            controls
 
             Spacer()
         }
-        .padding()
+        .padding(.vertical)
     }
 
-    private var queueControls: some View {
-        HStack(spacing: 60) {
-            Button { playback.previous() } label: {
-                Image(systemName: "backward.fill").font(.title)
-            }
-            Button { playback.next() } label: {
-                Image(systemName: "forward.fill").font(.title)
+    /// Landscape video: the picture fills the screen (nav/tab bars hidden) and a
+    /// tap anywhere toggles the floating control suite.
+    private var fullscreenVideo: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            NativeVideoPlayer(player: playback.player)
+                .ignoresSafeArea()
+
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    withAnimation { showVideoControls.toggle() }
+                }
+
+            if showVideoControls {
+                VStack {
+                    Spacer()
+                    VStack(spacing: 14) {
+                        scrubber
+                        controls
+                    }
+                    .padding(.vertical, 12)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+                }
             }
         }
-        .foregroundStyle(Color.accentColor)
-        .padding(.top, 4)
+        .toolbar(.hidden, for: .navigationBar)
+        .toolbar(.hidden, for: .tabBar)
+        .onAppear { showVideoControls = true }
     }
 
     private func hasArtist(_ track: Track) -> Bool {
@@ -105,31 +129,9 @@ struct PlayerView: View {
     }
 
     private var scrubber: some View {
-        VStack(spacing: 4) {
-            Slider(
-                value: Binding(
-                    get: { isScrubbing ? scrubTime : playback.currentTime },
-                    set: { scrubTime = $0 }
-                ),
-                in: 0...max(playback.duration, 1),
-                onEditingChanged: { editing in
-                    isScrubbing = editing
-                    if !editing {
-                        playback.seek(to: scrubTime)
-                    }
-                }
-            )
-
-            HStack {
-                Text((isScrubbing ? scrubTime : playback.currentTime).asPlaybackTime)
-                Spacer()
-                Text(playback.duration.asPlaybackTime)
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .monospacedDigit()
+        PlayerScrubber(progress: playback.progress) { time in
+            playback.seek(to: time)
         }
-        .padding(.horizontal)
     }
 
     private var controls: some View {
@@ -169,15 +171,54 @@ struct PlayerView: View {
     }
 }
 
-/// Native video surface backed by `AVPlayerViewController` — provides the system
-/// transport controls, a fullscreen button (which rotates to landscape), and PiP.
+/// The slider + time labels. The only view observing `PlaybackProgress`, so the
+/// 2 Hz playhead ticker re-renders just this and not whole screens.
+private struct PlayerScrubber: View {
+    @ObservedObject var progress: PlaybackProgress
+    let onSeek: (Double) -> Void
+
+    @State private var isScrubbing = false
+    @State private var scrubTime: Double = 0
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Slider(
+                value: Binding(
+                    get: { isScrubbing ? scrubTime : progress.currentTime },
+                    set: { scrubTime = $0 }
+                ),
+                in: 0...max(progress.duration, 1),
+                onEditingChanged: { editing in
+                    isScrubbing = editing
+                    if !editing {
+                        onSeek(scrubTime)
+                    }
+                }
+            )
+
+            HStack {
+                Text((isScrubbing ? scrubTime : progress.currentTime).asPlaybackTime)
+                Spacer()
+                Text(progress.duration.asPlaybackTime)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .monospacedDigit()
+        }
+        .padding(.horizontal)
+    }
+}
+
+/// Native video surface backed by `AVPlayerViewController`, used purely for the
+/// picture and PiP — its system controls are disabled so the app's own control
+/// suite (the same one audio gets) drives playback.
 private struct NativeVideoPlayer: UIViewControllerRepresentable {
     let player: AVPlayer
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let controller = AVPlayerViewController()
         controller.player = player
-        controller.showsPlaybackControls = true
+        controller.showsPlaybackControls = false
         controller.allowsPictureInPicturePlayback = true
         controller.canStartPictureInPictureAutomaticallyFromInline = true
         controller.videoGravity = .resizeAspect

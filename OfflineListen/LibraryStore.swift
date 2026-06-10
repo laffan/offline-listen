@@ -119,6 +119,15 @@ final class LibraryStore: ObservableObject {
         save()
     }
 
+    /// "Moves" a track to the Inbox: back to not-yet-listened and out of any
+    /// folder (the Inbox is its own location in the UI).
+    func moveToInbox(_ track: Track) {
+        guard let index = tracks.firstIndex(where: { $0.id == track.id }) else { return }
+        tracks[index].folderID = nil
+        tracks[index].hasBeenPlayed = false
+        save()
+    }
+
     // MARK: - Played state (Inbox)
 
     /// Marks a track as listened-to (or not), moving it out of (or into) the Inbox.

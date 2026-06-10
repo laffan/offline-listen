@@ -29,12 +29,16 @@ Three screens (tabs):
    **Mark Played** swipe — clears it from the Inbox), and user folders sit
    below it, above the unfiled tracks. Create folders with the toolbar's
    folder button; move tracks in via touch-and-hold → **Move to Folder** (or
-   the bulk Select menu). Swipe a folder row for its slide menu: **Delete**
+   the bulk Select menu). The Inbox is itself a move target — moving a track
+   there returns it to unlistened. Swipe a folder row for its slide menu: **Delete**
    (the folder only — its tracks return to the library), **Rename**, and
    **Reorder** (drag-reorder the tracks inside it). Folders persist to
    `Documents/folders.json`.
-3. **Player** — artwork, scrubber, play/pause, next/previous. Drives the lock
-   screen and Control Center.
+3. **Player** — artwork, scrubber, play/pause, skip, next/previous — the same
+   control suite for audio and video. Video is edge-to-edge in portrait and
+   goes fullscreen automatically when the phone rotates to landscape (tap the
+   picture to toggle the floating controls). Drives the lock screen and
+   Control Center.
 4. **Log** — timestamped, copyable stream of every pipeline step (queue,
    yt-dlp, conversion) with light colour coding, for diagnosing downloads.
 
@@ -143,8 +147,9 @@ the lock screen.
   video-only and audio-only (DASH) streams, so we download the best video plus
   the best audio and **mux them natively** with `AVMutableComposition`
   (`VideoMerger`, no FFmpeg) — auto-detecting whether the video already has audio
-  so it's never doubled. Video plays via `AVPlayerViewController` (native
-  controls, fullscreen, PiP, rotation) and keeps its audio in the background.
+  so it's never doubled. Video renders through `AVPlayerViewController` (for
+  the picture and PiP) but is driven by the app's own transport controls — the
+  same suite audio gets — and keeps its audio in the background.
 
 ## Extraction: native primary + yt-dlp fallback
 

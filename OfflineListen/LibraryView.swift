@@ -253,18 +253,21 @@ struct LibraryView: View {
                 }
             }
             .contextMenu {
-                if !library.folders.isEmpty {
-                    Menu {
-                        ForEach(library.folders) { folder in
-                            Button {
-                                library.setFolder(track, folder.id)
-                            } label: {
-                                Label(folder.name, systemImage: "folder")
-                            }
-                        }
+                Menu {
+                    Button {
+                        library.moveToInbox(track)
                     } label: {
-                        Label("Move to Folder", systemImage: "folder")
+                        Label("Inbox", systemImage: "tray")
                     }
+                    ForEach(library.folders) { folder in
+                        Button {
+                            library.setFolder(track, folder.id)
+                        } label: {
+                            Label(folder.name, systemImage: "folder")
+                        }
+                    }
+                } label: {
+                    Label("Move to Folder", systemImage: "folder")
                 }
             }
 
@@ -293,16 +296,19 @@ struct LibraryView: View {
                     } label: {
                         Label("Archive", systemImage: "archivebox")
                     }
-                    if !library.folders.isEmpty {
-                        Menu {
-                            ForEach(library.folders) { folder in
-                                Button(folder.name) {
-                                    moveSelected(to: folder.id)
-                                }
-                            }
+                    Menu {
+                        Button {
+                            moveSelectedToInbox()
                         } label: {
-                            Label("Move to Folder", systemImage: "folder")
+                            Label("Inbox", systemImage: "tray")
                         }
+                        ForEach(library.folders) { folder in
+                            Button(folder.name) {
+                                moveSelected(to: folder.id)
+                            }
+                        }
+                    } label: {
+                        Label("Move to Folder", systemImage: "folder")
                     }
                     Button(role: .destructive) {
                         deleteSelected()
@@ -367,6 +373,13 @@ struct LibraryView: View {
     private func moveSelected(to folderID: UUID) {
         for track in selectedTracks() {
             library.setFolder(track, folderID)
+        }
+        endEditing()
+    }
+
+    private func moveSelectedToInbox() {
+        for track in selectedTracks() {
+            library.moveToInbox(track)
         }
         endEditing()
     }

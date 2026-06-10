@@ -104,6 +104,11 @@ struct FolderDetailView: View {
             }
             .contextMenu {
                 Menu {
+                    Button {
+                        library.moveToInbox(track)
+                    } label: {
+                        Label("Inbox", systemImage: "tray")
+                    }
                     ForEach(library.folders.filter { $0.id != folderID }) { other in
                         Button {
                             library.setFolder(track, other.id)
@@ -180,6 +185,26 @@ struct InboxView: View {
                                     Label("Mark Played", systemImage: "checkmark.circle")
                                 }
                                 .tint(.green)
+                            }
+                            .contextMenu {
+                                if !library.folders.isEmpty {
+                                    Menu {
+                                        ForEach(library.folders) { folder in
+                                            Button {
+                                                // Leaving the Inbox for a folder also
+                                                // clears the unlistened flag — the track
+                                                // has been filed, so it shouldn't show
+                                                // in both places.
+                                                library.setFolder(track, folder.id)
+                                                library.markPlayed(track.id)
+                                            } label: {
+                                                Label(folder.name, systemImage: "folder")
+                                            }
+                                        }
+                                    } label: {
+                                        Label("Move to Folder", systemImage: "folder")
+                                    }
+                                }
                             }
                     }
                 }
