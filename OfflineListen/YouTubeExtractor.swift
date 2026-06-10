@@ -181,51 +181,61 @@ final class YoutubeDLExtractor: MediaExtractor {
             appLog("Info: \"\(info.title)\" · \(formats.count) formats · \(Int(info.duration ?? 0))s",
                    level: .success, category: category)
 
-            // Muxed = has both audio and video. AVFoundation can't read WebM, so
-            // only MP4 muxed formats qualify for video / audio-extraction.
-            let muxedMP4 = formats.filter { !$0.isAudioOnly && !$0.isVideoOnly && $0.ext == "mp4" }
+            // Log every discovered format so we can see exactly what's available.
+            appLog("\(formats.count) formats discovered:", level: .debug, category: category)
+            for f in formats.prefix(30) {
+                let type = f.isAudioOnly ? "audio-only" : (f.isVideoOnly ? "video-only" : "muxed")
+                appLog("· \(f.format_id) \(f.ext) \(f.height.map { "\($0)p" } ?? "—") [\(type)] v=\(f.vcodec ?? "?") a=\(f.acodec ?? "?")",
+                       level: .debug, category: category)
+            }
+
+            func makeRequest(for format: Format) -> URLRequest? {
+                guard let u = URL(string: format.url) else { return nil }
+                var r = URLRequest(url: u)
+                for (key, value) in format.http_headers { r.setValue(value, forHTTPHeaderField: key) }
+                return r
+            }
+
+            // Best audio-only (m4a preferred) — used directly for audio mode and
+            // as the track to merge for video-only video downloads.
+            let audioOnly = formats.filter { $0.isAudioOnly }
+            let m4aAudio = audioOnly.filter { $0.ext == "m4a" }
+            let bestAudio = (m4aAudio.isEmpty ? audioOnly : m4aAudio)
+                .max(by: { ($0.abr ?? $0.tbr ?? 0) < ($1.abr ?? $1.tbr ?? 0) })
 
             let chosen: Format
+            var mergeAudioRequest: URLRequest?
             var extractAudioAfterDownload = false
 
             if mode == .video {
-                // Highest-resolution muxed MP4 (these top out ~720p; higher needs
-                // merging separate video+audio, which we can't do here).
-                guard let video = muxedMP4.max(by: { ($0.height ?? 0) < ($1.height ?? 0) }) else {
+                // Best MP4 carrying video (muxed or video-only); AVFoundation needs
+                // MP4/avc1. If it's video-only we merge the best audio afterwards.
+                let videoMP4 = formats.filter { !$0.isAudioOnly && $0.ext == "mp4" }
+                guard let video = videoMP4.max(by: { ($0.height ?? 0) < ($1.height ?? 0) }) else {
                     throw ExtractorError.noVideoFormat
                 }
                 chosen = video
-                appLog("Selected video \(chosen.format_id) (\(chosen.height.map { "\($0)p" } ?? "?"))", category: category)
+                mergeAudioRequest = bestAudio.flatMap(makeRequest)
+                appLog("Selected video \(chosen.format_id) (\(chosen.height.map { "\($0)p" } ?? "?")) \(chosen.isVideoOnly ? "video-only — will merge audio" : "muxed")",
+                       category: category)
+            } else if let audio = bestAudio {
+                chosen = audio
+                appLog("Selected format \(chosen.format_id) · \(chosen.ext) · \(Int(chosen.abr ?? chosen.tbr ?? 0)) kbps",
+                       category: category)
             } else {
-                // Best audio-only, preferring m4a (AAC). If none, fall back to the
-                // smallest muxed MP4 and extract its audio after download.
-                let audioOnly = formats.filter { $0.isAudioOnly }
-                let m4a = audioOnly.filter { $0.ext == "m4a" }
-                let pool = m4a.isEmpty ? audioOnly : m4a
-                if let audio = pool.max(by: { ($0.abr ?? $0.tbr ?? 0) < ($1.abr ?? $1.tbr ?? 0) }) {
-                    chosen = audio
-                    appLog("Selected format \(chosen.format_id) · \(chosen.ext) · \(Int(chosen.abr ?? chosen.tbr ?? 0)) kbps",
-                           category: category)
-                } else {
-                    guard let video = muxedMP4.min(by: { ($0.height ?? .max) < ($1.height ?? .max) }) else {
-                        throw ExtractorError.noAudioFormat
-                    }
-                    chosen = video
-                    extractAudioAfterDownload = true
-                    appLog("No audio-only stream — falling back to muxed video \(chosen.format_id) + audio extraction",
-                           level: .warning, category: category)
+                // No audio-only stream: take the smallest muxed MP4 and extract its audio.
+                let muxedMP4 = formats.filter { !$0.isAudioOnly && !$0.isVideoOnly && $0.ext == "mp4" }
+                guard let video = muxedMP4.min(by: { ($0.height ?? .max) < ($1.height ?? .max) }) else {
+                    throw ExtractorError.noAudioFormat
                 }
+                chosen = video
+                extractAudioAfterDownload = true
+                appLog("No audio-only stream — falling back to muxed video \(chosen.format_id) + audio extraction",
+                       level: .warning, category: category)
             }
 
-            guard let mediaURL = URL(string: chosen.url) else {
+            guard let request = makeRequest(for: chosen) else {
                 throw mode == .video ? ExtractorError.noVideoFormat : ExtractorError.noAudioFormat
-            }
-
-            // Carry over yt-dlp's request headers (User-Agent, etc.) so the CDN
-            // doesn't reject the request.
-            var request = URLRequest(url: mediaURL)
-            for (key, value) in chosen.http_headers {
-                request.setValue(value, forHTTPHeaderField: key)
             }
 
             let ext = chosen.ext.isEmpty ? "m4a" : chosen.ext
@@ -244,7 +254,9 @@ final class YoutubeDLExtractor: MediaExtractor {
                 onProgress: onProgress
             )
 
-            if extractAudioAfterDownload {
+            if mode == .video {
+                dest = try await VideoMerger.ensureAudio(videoFile: dest, audioRequest: mergeAudioRequest, category: category)
+            } else if extractAudioAfterDownload {
                 dest = try await VideoAudioExtractor.extractAudio(fromVideo: dest, category: category)
             }
 

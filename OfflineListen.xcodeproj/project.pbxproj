@@ -26,6 +26,7 @@
 		1B00000000000000000000C4 /* YouTubeKitExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B3 /* YouTubeKitExtractor.swift */; };
 		1B00000000000000000000C5 /* YouTubeKit in Frameworks */ = {isa = PBXBuildFile; productRef = 2300000000000000000000A3 /* YouTubeKit */; };
 		1B00000000000000000000C6 /* VideoAudioExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B4 /* VideoAudioExtractor.swift */; };
+		1B00000000000000000000C7 /* VideoMerger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B5 /* VideoMerger.swift */; };
 		3B00000000000000000000A3 /* SharedInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A00000000000000000000A5 /* SharedInbox.swift */; };
 		3B00000000000000000000A1 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A00000000000000000000A1 /* ShareViewController.swift */; };
 		3B00000000000000000000A2 /* SharedInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A00000000000000000000A5 /* SharedInbox.swift */; };
@@ -59,6 +60,7 @@
 		1A00000000000000000000B2 /* CompositeExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositeExtractor.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B3 /* YouTubeKitExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubeKitExtractor.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B4 /* VideoAudioExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoAudioExtractor.swift; sourceTree = "<group>"; };
+		1A00000000000000000000B5 /* VideoMerger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoMerger.swift; sourceTree = "<group>"; };
 		1A00000000000000000000AC /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		1A00000000000000000000AD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		1A00000000000000000000AE /* OfflineListen.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OfflineListen.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -118,6 +120,7 @@
 				1A00000000000000000000B2 /* CompositeExtractor.swift */,
 				1A00000000000000000000B3 /* YouTubeKitExtractor.swift */,
 				1A00000000000000000000B4 /* VideoAudioExtractor.swift */,
+				1A00000000000000000000B5 /* VideoMerger.swift */,
 				3A00000000000000000000A5 /* SharedInbox.swift */,
 				1A00000000000000000000AC /* Assets.xcassets */,
 				1A00000000000000000000AD /* Info.plist */,
@@ -282,6 +285,7 @@
 				1B00000000000000000000C3 /* CompositeExtractor.swift in Sources */,
 				1B00000000000000000000C4 /* YouTubeKitExtractor.swift in Sources */,
 				1B00000000000000000000C6 /* VideoAudioExtractor.swift in Sources */,
+				1B00000000000000000000C7 /* VideoMerger.swift in Sources */,
 				3B00000000000000000000A3 /* SharedInbox.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

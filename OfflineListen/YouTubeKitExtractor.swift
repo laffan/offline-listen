@@ -29,58 +29,73 @@ final class YouTubeKitExtractor: MediaExtractor {
 
         let title = response.videoInfos.title ?? url.absoluteString
 
-        // Muxed (video+audio) MP4 candidates — AVFoundation can't read WebM.
-        let muxed = (response.downloadFormats + response.defaultFormats)
+        let videoFormats = (response.downloadFormats + response.defaultFormats)
             .compactMap { $0 as? VideoDownloadFormat }
-            .filter { $0.url != nil && ($0.mimeType ?? "").contains("mp4") }
+        let audioFormats = response.downloadFormats.compactMap { $0 as? AudioOnlyFormat }
+
+        // Log every discovered format so we can see what's available.
+        appLog("Info: \"\(title)\" · \(videoFormats.count) video, \(audioFormats.count) audio", level: .success, category: category)
+        for v in videoFormats.prefix(20) {
+            appLog("· video \(v.quality ?? "?") \(v.mimeType ?? "?") url=\(v.url != nil)", level: .debug, category: category)
+        }
+        for a in audioFormats.prefix(20) {
+            appLog("· audio \(a.mimeType ?? "?") \(Int(a.averageBitrate ?? 0) / 1000)kbps url=\(a.url != nil)", level: .debug, category: category)
+        }
+
+        func userAgentRequest(_ u: URL) -> URLRequest {
+            var r = URLRequest(url: u)
+            r.setValue(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                forHTTPHeaderField: "User-Agent"
+            )
+            return r
+        }
+
+        // Best audio-only (m4a preferred) — used for audio mode and as the merge
+        // track when a video stream turns out to be video-only.
+        let usableAudio = audioFormats.filter { $0.url != nil }
+        let m4aAudio = usableAudio.filter { ($0.mimeType ?? "").contains("mp4") }
+        let bestAudio = (m4aAudio.isEmpty ? usableAudio : m4aAudio)
+            .max(by: { ($0.averageBitrate ?? 0) < ($1.averageBitrate ?? 0) })
 
         let mediaURL: URL
         let ext: String
         let expectedSize: Int?
+        var mergeAudioRequest: URLRequest?
         var extractAudioAfterDownload = false
 
         if mode == .video {
-            // Highest-resolution muxed MP4 (muxed tops out ~720p).
-            guard let video = muxed.max(by: { ($0.height ?? 0) < ($1.height ?? 0) }), let videoURL = video.url else {
+            // Best MP4 with video (could be muxed or video-only). If video-only,
+            // VideoMerger pulls in the audio afterwards.
+            let mp4Video = videoFormats.filter { $0.url != nil && ($0.mimeType ?? "").contains("mp4") }
+            guard let video = mp4Video.max(by: { ($0.height ?? 0) < ($1.height ?? 0) }), let videoURL = video.url else {
                 throw ExtractorError.noVideoFormat
             }
             mediaURL = videoURL
             ext = "mp4"
             expectedSize = video.contentLength
+            mergeAudioRequest = bestAudio?.url.map(userAgentRequest)
             appLog("Selected video (\(video.quality ?? "?"))", category: category)
+        } else if let chosen = bestAudio, let chosenURL = chosen.url {
+            mediaURL = chosenURL
+            ext = (chosen.mimeType ?? "").contains("webm") ? "webm" : "m4a"
+            expectedSize = chosen.contentLength
+            appLog("Selected audio · \(ext) · \(Int(chosen.averageBitrate ?? 0) / 1000) kbps", category: category)
         } else {
-            let audioFormats = response.downloadFormats.compactMap { $0 as? AudioOnlyFormat }
-            appLog("Info: \"\(title)\" · \(audioFormats.count) audio formats", level: .success, category: category)
-            let usable = audioFormats.filter { $0.url != nil }
-            let mp4 = usable.filter { ($0.mimeType ?? "").contains("mp4") }
-            let pool = mp4.isEmpty ? usable : mp4
-
-            if let chosen = pool.max(by: { ($0.averageBitrate ?? 0) < ($1.averageBitrate ?? 0) }),
-               let chosenURL = chosen.url {
-                mediaURL = chosenURL
-                ext = (chosen.mimeType ?? "").contains("webm") ? "webm" : "m4a"
-                expectedSize = chosen.contentLength
-                appLog("Selected audio · \(ext) · \(Int(chosen.averageBitrate ?? 0) / 1000) kbps", category: category)
-            } else {
-                // No dedicated audio stream: grab the smallest muxed MP4 and
-                // extract its audio after download.
-                guard let video = muxed.min(by: { ($0.height ?? .max) < ($1.height ?? .max) }), let videoURL = video.url else {
-                    throw ExtractorError.noAudioFormat
-                }
-                mediaURL = videoURL
-                ext = "mp4"
-                expectedSize = video.contentLength
-                extractAudioAfterDownload = true
-                appLog("No audio-only stream — falling back to muxed video (\(video.quality ?? "?")) + audio extraction",
-                       level: .warning, category: category)
+            // No dedicated audio stream: grab the smallest muxed MP4 and extract audio.
+            let mp4Video = videoFormats.filter { $0.url != nil && ($0.mimeType ?? "").contains("mp4") }
+            guard let video = mp4Video.min(by: { ($0.height ?? .max) < ($1.height ?? .max) }), let videoURL = video.url else {
+                throw ExtractorError.noAudioFormat
             }
+            mediaURL = videoURL
+            ext = "mp4"
+            expectedSize = video.contentLength
+            extractAudioAfterDownload = true
+            appLog("No audio-only stream — falling back to muxed video (\(video.quality ?? "?")) + audio extraction",
+                   level: .warning, category: category)
         }
 
-        var request = URLRequest(url: mediaURL)
-        request.setValue(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            forHTTPHeaderField: "User-Agent"
-        )
+        let request = userAgentRequest(mediaURL)
 
         var dest = AppPaths.work.appendingPathComponent("\(UUID().uuidString).\(ext)")
         appLog("Downloading \(mode == .video ? "video" : (extractAudioAfterDownload ? "video" : "audio")) stream in chunks…", category: category)
@@ -94,7 +109,9 @@ final class YouTubeKitExtractor: MediaExtractor {
             onProgress: onProgress
         )
 
-        if extractAudioAfterDownload {
+        if mode == .video {
+            dest = try await VideoMerger.ensureAudio(videoFile: dest, audioRequest: mergeAudioRequest, category: category)
+        } else if extractAudioAfterDownload {
             dest = try await VideoAudioExtractor.extractAudio(fromVideo: dest, category: category)
         }
 

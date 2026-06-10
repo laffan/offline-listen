@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import AVKit
 import UIKit
 
 struct PlayerView: View {
@@ -31,7 +32,9 @@ struct PlayerView: View {
             Spacer()
 
             if track.isVideo {
-                VideoSurface(player: playback.player)
+                // Native player: transport controls, fullscreen button, PiP, and
+                // rotation to fullscreen are all handled by AVPlayerViewController.
+                NativeVideoPlayer(player: playback.player)
                     .aspectRatio(16.0 / 9.0, contentMode: .fit)
                     .frame(maxWidth: .infinity)
                     .background(Color.black)
@@ -55,13 +58,30 @@ struct PlayerView: View {
             }
             .padding(.horizontal)
 
-            scrubber
-
-            controls
+            if track.isVideo {
+                // The native player owns scrub/play/skip; we just add queue nav.
+                queueControls
+            } else {
+                scrubber
+                controls
+            }
 
             Spacer()
         }
         .padding()
+    }
+
+    private var queueControls: some View {
+        HStack(spacing: 60) {
+            Button { playback.previous() } label: {
+                Image(systemName: "backward.fill").font(.title)
+            }
+            Button { playback.next() } label: {
+                Image(systemName: "forward.fill").font(.title)
+            }
+        }
+        .foregroundStyle(Color.accentColor)
+        .padding(.top, 4)
     }
 
     private func hasArtist(_ track: Track) -> Bool {
@@ -149,23 +169,24 @@ struct PlayerView: View {
     }
 }
 
-/// A plain `AVPlayerLayer`-backed view (no built-in controls — we use our own).
-private struct VideoSurface: UIViewRepresentable {
+/// Native video surface backed by `AVPlayerViewController` — provides the system
+/// transport controls, a fullscreen button (which rotates to landscape), and PiP.
+private struct NativeVideoPlayer: UIViewControllerRepresentable {
     let player: AVPlayer
 
-    func makeUIView(context: Context) -> PlayerLayerView {
-        let view = PlayerLayerView()
-        view.playerLayer.player = player
-        view.playerLayer.videoGravity = .resizeAspect
-        return view
+    func makeUIViewController(context: Context) -> AVPlayerViewController {
+        let controller = AVPlayerViewController()
+        controller.player = player
+        controller.showsPlaybackControls = true
+        controller.allowsPictureInPicturePlayback = true
+        controller.canStartPictureInPictureAutomaticallyFromInline = true
+        controller.videoGravity = .resizeAspect
+        return controller
     }
 
-    func updateUIView(_ view: PlayerLayerView, context: Context) {
-        view.playerLayer.player = player
-    }
-
-    final class PlayerLayerView: UIView {
-        override class var layerClass: AnyClass { AVPlayerLayer.self }
-        var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+    func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
+        if controller.player !== player {
+            controller.player = player
+        }
     }
 }

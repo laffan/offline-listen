@@ -49,6 +49,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `CompositeExtractor.swift` | Tries the native extractor, falls back to yt-dlp. |
 | `AudioStreamDownloader.swift` | Shared chunked byte-range stream downloader. |
 | `VideoAudioExtractor.swift` | Extracts audio from a muxed video via AVFoundation. |
+| `VideoMerger.swift` | Muxes a video-only + audio-only stream into one MP4. |
 | `PlaybackManager.swift` | `AVPlayer` engine (audio + video), audio session, lock screen. |
 | `Logger.swift` | `LogStore` — thread-safe, app-wide log sink. |
 | `*View.swift` | The four SwiftUI screens (Download, Library, Player, Log). |
@@ -127,10 +128,12 @@ the lock screen.
 
 - **Audio** (default) saves an AAC `.m4a` — the best audio-only stream, or, if a
   video has none, the audio extracted from a muxed MP4. No transcoding.
-- **Video** saves the best muxed (video+audio) `.mp4`. YouTube's muxed formats
-  top out around 720p (higher resolutions are video-only streams that would need
-  merging with FFmpeg, which isn't bundled). Video plays with picture on the
-  Player screen and keeps its audio playing in the background.
+- **Video** saves an `.mp4`. Modern YouTube usually serves **separate**
+  video-only and audio-only (DASH) streams, so we download the best video plus
+  the best audio and **mux them natively** with `AVMutableComposition`
+  (`VideoMerger`, no FFmpeg) — auto-detecting whether the video already has audio
+  so it's never doubled. Video plays via `AVPlayerViewController` (native
+  controls, fullscreen, PiP, rotation) and keeps its audio in the background.
 
 ## Extraction: native primary + yt-dlp fallback
 
