@@ -147,6 +147,8 @@ final class PlaybackManager: NSObject, ObservableObject {
         if autoPlay {
             try? AVAudioSession.sharedInstance().setActive(true)
             player.play()
+            // Starting playback counts as listened — the track leaves the Inbox.
+            library.markPlayed(track.id)
         }
         startTicker()
         updateNowPlaying()

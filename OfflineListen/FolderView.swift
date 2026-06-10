@@ -1,0 +1,201 @@
+import SwiftUI
+
+/// A user folder: its tracks with tap-to-play and swipe actions, plus
+/// drag-to-reorder via the Reorder toolbar toggle (entered automatically when
+/// opened from the folder's "Reorder" swipe action in the library list).
+struct FolderDetailView: View {
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var playback: PlaybackManager
+
+    let folderID: UUID
+    let startReordering: Bool
+    let onPlay: () -> Void
+    @Binding var share: SharePayload?
+
+    @State private var editMode: EditMode = .inactive
+
+    private var folder: Folder? {
+        library.folders.first { $0.id == folderID }
+    }
+
+    private var tracks: [Track] {
+        library.tracks(in: folderID)
+    }
+
+    var body: some View {
+        Group {
+            if tracks.isEmpty {
+                ContentUnavailableViewCompat(
+                    title: "Empty folder",
+                    systemImage: "folder",
+                    description: "Touch and hold a track in your library and choose Move to Folder to add it here."
+                )
+            } else {
+                List {
+                    ForEach(tracks) { track in
+                        row(for: track)
+                    }
+                    .onMove { source, destination in
+                        library.moveTracks(in: folderID, fromOffsets: source, toOffset: destination)
+                    }
+                }
+                .listStyle(.plain)
+            }
+        }
+        .navigationTitle(folder?.name ?? "Folder")
+        .navigationBarTitleDisplayMode(.inline)
+        .environment(\.editMode, $editMode)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(editMode.isEditing ? "Done" : "Reorder") {
+                    withAnimation {
+                        editMode = editMode.isEditing ? .inactive : .active
+                    }
+                }
+                .disabled(tracks.count < 2 && !editMode.isEditing)
+            }
+        }
+        .onAppear {
+            if startReordering && tracks.count > 1 {
+                editMode = .active
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func row(for track: Track) -> some View {
+        let base = TrackRow(track: track, isCurrent: playback.currentTrack?.id == track.id)
+            .contentShape(Rectangle())
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(role: .destructive) {
+                    library.delete(track)
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+                Button {
+                    share = SharePayload(urls: [track.fileURL])
+                } label: {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+                .tint(.blue)
+                Button {
+                    library.setFolder(track, nil)
+                } label: {
+                    Label("Remove", systemImage: "folder.badge.minus")
+                }
+                .tint(.indigo)
+            }
+            .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                // Song/podcast classification only applies to audio tracks.
+                if !track.isVideo {
+                    Button {
+                        library.setKind(track, .song)
+                    } label: {
+                        Label("Song", systemImage: "music.note")
+                    }
+                    .tint(.gray)
+                    Button {
+                        library.setKind(track, .podcast)
+                    } label: {
+                        Label("Podcast", systemImage: "mic.fill")
+                    }
+                    .tint(.purple)
+                }
+            }
+            .contextMenu {
+                Menu {
+                    ForEach(library.folders.filter { $0.id != folderID }) { other in
+                        Button {
+                            library.setFolder(track, other.id)
+                        } label: {
+                            Label(other.name, systemImage: "folder")
+                        }
+                    }
+                    Button(role: .destructive) {
+                        library.setFolder(track, nil)
+                    } label: {
+                        Label("Remove from Folder", systemImage: "folder.badge.minus")
+                    }
+                } label: {
+                    Label("Move to Folder", systemImage: "folder")
+                }
+            }
+
+        if editMode.isEditing {
+            base
+        } else {
+            base.onTapGesture {
+                playback.play(track, in: tracks)
+                onPlay()
+            }
+        }
+    }
+}
+
+/// The pinned Inbox: every active track that hasn't been listened to yet.
+/// Tracks leave automatically once playback starts, or via Mark Played.
+struct InboxView: View {
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var playback: PlaybackManager
+
+    let onPlay: () -> Void
+    @Binding var share: SharePayload?
+
+    private var tracks: [Track] {
+        library.inboxTracks
+    }
+
+    var body: some View {
+        Group {
+            if tracks.isEmpty {
+                ContentUnavailableViewCompat(
+                    title: "Inbox zero",
+                    systemImage: "tray",
+                    description: "New downloads land here until you listen to them."
+                )
+            } else {
+                List {
+                    ForEach(tracks) { track in
+                        TrackRow(track: track, isCurrent: playback.currentTrack?.id == track.id)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                playback.play(track, in: tracks)
+                                onPlay()
+                            }
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                Button(role: .destructive) {
+                                    library.delete(track)
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                                Button {
+                                    share = SharePayload(urls: [track.fileURL])
+                                } label: {
+                                    Label("Share", systemImage: "square.and.arrow.up")
+                                }
+                                .tint(.blue)
+                                Button {
+                                    library.markPlayed(track.id)
+                                } label: {
+                                    Label("Mark Played", systemImage: "checkmark.circle")
+                                }
+                                .tint(.green)
+                            }
+                    }
+                }
+                .listStyle(.plain)
+            }
+        }
+        .navigationTitle("Inbox")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if !tracks.isEmpty {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Mark All Played") {
+                        library.markAllPlayed()
+                    }
+                }
+            }
+        }
+    }
+}

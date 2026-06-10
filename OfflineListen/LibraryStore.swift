@@ -5,9 +5,20 @@ import Foundation
 @MainActor
 final class LibraryStore: ObservableObject {
     @Published private(set) var tracks: [Track] = []
+    @Published private(set) var folders: [Folder] = []
 
     var activeTracks: [Track] { tracks.filter { !$0.isArchived } }
     var archivedTracks: [Track] { tracks.filter { $0.isArchived } }
+    /// Active tracks not assigned to any folder — the main library list.
+    var unfiledActiveTracks: [Track] { activeTracks.filter { $0.folderID == nil } }
+    /// Active tracks that haven't been listened to yet — the Inbox.
+    var inboxTracks: [Track] { activeTracks.filter { !$0.hasBeenPlayed } }
+
+    /// Active tracks in a folder, in library order (which doubles as the
+    /// folder's user-set order; see `moveTracks(in:fromOffsets:toOffset:)`).
+    func tracks(in folderID: UUID) -> [Track] {
+        tracks.filter { $0.folderID == folderID && !$0.isArchived }
+    }
 
     init() {
         load()
@@ -16,6 +27,7 @@ final class LibraryStore: ObservableObject {
     func load() {
         guard let data = try? Data(contentsOf: AppPaths.libraryIndex) else {
             tracks = []
+            loadFolders()
             return
         }
         do {
@@ -23,6 +35,20 @@ final class LibraryStore: ObservableObject {
         } catch {
             print("[LibraryStore] failed to decode index: \(error)")
             tracks = []
+        }
+        loadFolders()
+    }
+
+    private func loadFolders() {
+        guard let data = try? Data(contentsOf: AppPaths.foldersIndex) else {
+            folders = []
+            return
+        }
+        do {
+            folders = try JSONDecoder().decode([Folder].self, from: data)
+        } catch {
+            print("[LibraryStore] failed to decode folders: \(error)")
+            folders = []
         }
     }
 
@@ -33,6 +59,84 @@ final class LibraryStore: ObservableObject {
         } catch {
             print("[LibraryStore] failed to save index: \(error)")
         }
+    }
+
+    private func saveFolders() {
+        do {
+            let data = try JSONEncoder().encode(folders)
+            try data.write(to: AppPaths.foldersIndex, options: .atomic)
+        } catch {
+            print("[LibraryStore] failed to save folders: \(error)")
+        }
+    }
+
+    // MARK: - Folders
+
+    func createFolder(named name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        folders.append(Folder(name: trimmed))
+        saveFolders()
+    }
+
+    func renameFolder(_ folder: Folder, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let index = folders.firstIndex(where: { $0.id == folder.id }) else { return }
+        folders[index].name = trimmed
+        saveFolders()
+    }
+
+    /// Removes the folder only; its tracks keep their files and return to the
+    /// main library list.
+    func deleteFolder(_ folder: Folder) {
+        folders.removeAll { $0.id == folder.id }
+        saveFolders()
+        var changed = false
+        for index in tracks.indices where tracks[index].folderID == folder.id {
+            tracks[index].folderID = nil
+            changed = true
+        }
+        if changed { save() }
+    }
+
+    /// Moves a track into a folder (or out of all folders with nil).
+    func setFolder(_ track: Track, _ folderID: UUID?) {
+        guard let index = tracks.firstIndex(where: { $0.id == track.id }) else { return }
+        tracks[index].folderID = folderID
+        save()
+    }
+
+    /// Reorders a folder's tracks. The folder's members are permuted among the
+    /// array slots they already occupy, so every other track keeps its position.
+    func moveTracks(in folderID: UUID, fromOffsets source: IndexSet, toOffset destination: Int) {
+        let slots = tracks.indices.filter { tracks[$0].folderID == folderID && !tracks[$0].isArchived }
+        var folderTracks = slots.map { tracks[$0] }
+        folderTracks.move(fromOffsets: source, toOffset: destination)
+        for (slot, track) in zip(slots, folderTracks) {
+            tracks[slot] = track
+        }
+        save()
+    }
+
+    // MARK: - Played state (Inbox)
+
+    /// Marks a track as listened-to (or not), moving it out of (or into) the Inbox.
+    func markPlayed(_ id: UUID, _ played: Bool = true) {
+        guard let index = tracks.firstIndex(where: { $0.id == id }),
+              tracks[index].hasBeenPlayed != played else { return }
+        tracks[index].hasBeenPlayed = played
+        save()
+    }
+
+    /// Empties the Inbox in one go.
+    func markAllPlayed() {
+        var changed = false
+        for index in tracks.indices where !tracks[index].hasBeenPlayed {
+            tracks[index].hasBeenPlayed = true
+            changed = true
+        }
+        if changed { save() }
     }
 
     /// Adds a freshly downloaded track to the top of the library.

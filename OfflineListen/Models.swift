@@ -12,6 +12,10 @@ enum AppPaths {
         documents.appendingPathComponent("library.json")
     }
 
+    static var foldersIndex: URL {
+        documents.appendingPathComponent("folders.json")
+    }
+
     /// Scratch directory used while a download/convert is in flight.
     static var work: URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("downloads", isDirectory: true)
@@ -81,6 +85,20 @@ enum TrackKind: String, Codable {
     case podcast
 }
 
+/// A user-created folder that groups library tracks. Deleting a folder never
+/// deletes its tracks — they just return to the main library list.
+struct Folder: Identifiable, Codable, Hashable {
+    let id: UUID
+    var name: String
+    var dateCreated: Date
+
+    init(id: UUID = UUID(), name: String, dateCreated: Date = Date()) {
+        self.id = id
+        self.name = name
+        self.dateCreated = dateCreated
+    }
+}
+
 /// A single downloaded track stored in the library.
 struct Track: Identifiable, Codable, Hashable {
     let id: UUID
@@ -98,6 +116,11 @@ struct Track: Identifiable, Codable, Hashable {
     var lastPosition: Double
     /// True if this is a video file (plays with picture); false for audio-only.
     var isVideo: Bool
+    /// The folder this track lives in, or nil for the main library list.
+    var folderID: UUID?
+    /// True once playback of the track has been started at least once; tracks
+    /// where this is false make up the Inbox.
+    var hasBeenPlayed: Bool
 
     init(id: UUID = UUID(),
          title: String,
@@ -109,7 +132,9 @@ struct Track: Identifiable, Codable, Hashable {
          isArchived: Bool = false,
          kind: TrackKind = .song,
          lastPosition: Double = 0,
-         isVideo: Bool = false) {
+         isVideo: Bool = false,
+         folderID: UUID? = nil,
+         hasBeenPlayed: Bool = false) {
         self.id = id
         self.title = title
         self.artist = artist
@@ -121,10 +146,12 @@ struct Track: Identifiable, Codable, Hashable {
         self.kind = kind
         self.lastPosition = lastPosition
         self.isVideo = isVideo
+        self.folderID = folderID
+        self.hasBeenPlayed = hasBeenPlayed
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, artist, fileName, sourceURL, duration, dateAdded, isArchived, kind, lastPosition, isVideo
+        case id, title, artist, fileName, sourceURL, duration, dateAdded, isArchived, kind, lastPosition, isVideo, folderID, hasBeenPlayed
     }
 
     // Custom decode so libraries saved before these fields existed still load.
@@ -141,6 +168,8 @@ struct Track: Identifiable, Codable, Hashable {
         kind = try c.decodeIfPresent(TrackKind.self, forKey: .kind) ?? .song
         lastPosition = try c.decodeIfPresent(Double.self, forKey: .lastPosition) ?? 0
         isVideo = try c.decodeIfPresent(Bool.self, forKey: .isVideo) ?? false
+        folderID = try c.decodeIfPresent(UUID.self, forKey: .folderID)
+        hasBeenPlayed = try c.decodeIfPresent(Bool.self, forKey: .hasBeenPlayed) ?? false
     }
 
     /// Absolute on-disk location resolved at access time.

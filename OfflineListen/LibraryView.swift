@@ -19,6 +19,14 @@ struct ActivityView: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
+/// Navigation targets reachable from the library list.
+enum LibraryRoute: Hashable {
+    case inbox
+    case folder(UUID)
+    /// Same destination as `.folder`, but lands with reordering already active.
+    case folderReorder(UUID)
+}
+
 struct LibraryView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var playback: PlaybackManager
@@ -31,13 +39,19 @@ struct LibraryView: View {
     @State private var share: SharePayload?
     @State private var showArchived = false
     @State private var filter: LibraryFilter = .all
+    @State private var path: [LibraryRoute] = []
+
+    @State private var showNewFolder = false
+    @State private var newFolderName = ""
+    @State private var renamingFolder: Folder?
+    @State private var renameText = ""
 
     private var filteredTracks: [Track] {
-        library.activeTracks.filter { filter.matches($0) }
+        library.unfiledActiveTracks.filter { filter.matches($0) }
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             VStack(spacing: 0) {
                 if !library.activeTracks.isEmpty {
                     Picker("Filter", selection: $filter) {
@@ -50,7 +64,7 @@ struct LibraryView: View {
                     .padding(.bottom, 4)
                 }
 
-                if library.activeTracks.isEmpty {
+                if library.activeTracks.isEmpty && library.folders.isEmpty {
                     ContentUnavailableViewCompat(
                         title: library.tracks.isEmpty ? "Your library is empty" : "No active tracks",
                         systemImage: "music.note.list",
@@ -59,15 +73,8 @@ struct LibraryView: View {
                             : "Everything is archived — open the Archived folder above."
                     )
                     .frame(maxHeight: .infinity)
-                } else if filteredTracks.isEmpty {
-                    ContentUnavailableViewCompat(
-                        title: "Nothing in \(filter.displayName)",
-                        systemImage: "line.3.horizontal.decrease.circle",
-                        description: "No tracks match this filter."
-                    )
-                    .frame(maxHeight: .infinity)
                 } else {
-                    trackList
+                    libraryList
                 }
             }
             .navigationTitle("Library")
@@ -79,17 +86,131 @@ struct LibraryView: View {
             .navigationDestination(isPresented: $showArchived) {
                 ArchivedTracksView(onPlay: onPlay, share: $share)
             }
+            .navigationDestination(for: LibraryRoute.self) { route in
+                switch route {
+                case .inbox:
+                    InboxView(onPlay: onPlay, share: $share)
+                case .folder(let id):
+                    FolderDetailView(folderID: id, startReordering: false, onPlay: onPlay, share: $share)
+                case .folderReorder(let id):
+                    FolderDetailView(folderID: id, startReordering: true, onPlay: onPlay, share: $share)
+                }
+            }
+            .alert("New Folder", isPresented: $showNewFolder) {
+                TextField("Folder name", text: $newFolderName)
+                Button("Create") {
+                    library.createFolder(named: newFolderName)
+                    newFolderName = ""
+                }
+                Button("Cancel", role: .cancel) { newFolderName = "" }
+            }
+            .alert("Rename Folder", isPresented: renameAlertPresented, presenting: renamingFolder) { folder in
+                TextField("Folder name", text: $renameText)
+                Button("Rename") { library.renameFolder(folder, to: renameText) }
+                Button("Cancel", role: .cancel) {}
+            }
         }
     }
 
-    private var trackList: some View {
+    private var renameAlertPresented: Binding<Bool> {
+        Binding(
+            get: { renamingFolder != nil },
+            set: { if !$0 { renamingFolder = nil } }
+        )
+    }
+
+    private var libraryList: some View {
         List(selection: $selection) {
-            ForEach(filteredTracks) { track in
-                row(for: track)
+            // Folders are hidden while selecting tracks for bulk actions.
+            if !editMode.isEditing {
+                Section {
+                    inboxRow
+                    ForEach(library.folders) { folder in
+                        folderRow(folder)
+                    }
+                }
+            }
+
+            Section {
+                ForEach(filteredTracks) { track in
+                    row(for: track)
+                }
+                if filteredTracks.isEmpty && !library.unfiledActiveTracks.isEmpty {
+                    Text("Nothing in \(filter.displayName)")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                if !editMode.isEditing {
+                    Text("Tracks")
+                }
             }
         }
         .listStyle(.plain)
     }
+
+    // MARK: - Folder rows
+
+    /// The Inbox is a virtual folder pinned above user folders: every active
+    /// track that hasn't been listened to yet, regardless of folder.
+    private var inboxRow: some View {
+        NavigationLink(value: LibraryRoute.inbox) {
+            HStack(spacing: 12) {
+                Image(systemName: "tray.fill")
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 24)
+                Text("Inbox")
+                    .font(.body)
+                Spacer()
+                Text("\(library.inboxTracks.count)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private func folderRow(_ folder: Folder) -> some View {
+        NavigationLink(value: LibraryRoute.folder(folder.id)) {
+            HStack(spacing: 12) {
+                Image(systemName: "folder.fill")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24)
+                Text(folder.name)
+                    .font(.body)
+                    .lineLimit(1)
+                Spacer()
+                Text("\(library.tracks(in: folder.id).count)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            .padding(.vertical, 4)
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) {
+                library.deleteFolder(folder)
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+            Button {
+                renameText = folder.name
+                renamingFolder = folder
+            } label: {
+                Label("Rename", systemImage: "pencil")
+            }
+            .tint(.orange)
+            Button {
+                path.append(.folderReorder(folder.id))
+            } label: {
+                Label("Reorder", systemImage: "arrow.up.arrow.down")
+            }
+            .tint(.blue)
+        }
+    }
+
+    // MARK: - Track rows
 
     @ViewBuilder
     private func row(for track: Track) -> some View {
@@ -131,6 +252,21 @@ struct LibraryView: View {
                     .tint(.purple)
                 }
             }
+            .contextMenu {
+                if !library.folders.isEmpty {
+                    Menu {
+                        ForEach(library.folders) { folder in
+                            Button {
+                                library.setFolder(track, folder.id)
+                            } label: {
+                                Label(folder.name, systemImage: "folder")
+                            }
+                        }
+                    } label: {
+                        Label("Move to Folder", systemImage: "folder")
+                    }
+                }
+            }
 
         if editMode.isEditing {
             base
@@ -157,6 +293,17 @@ struct LibraryView: View {
                     } label: {
                         Label("Archive", systemImage: "archivebox")
                     }
+                    if !library.folders.isEmpty {
+                        Menu {
+                            ForEach(library.folders) { folder in
+                                Button(folder.name) {
+                                    moveSelected(to: folder.id)
+                                }
+                            }
+                        } label: {
+                            Label("Move to Folder", systemImage: "folder")
+                        }
+                    }
                     Button(role: .destructive) {
                         deleteSelected()
                     } label: {
@@ -177,7 +324,15 @@ struct LibraryView: View {
             }
         }
 
-        ToolbarItem(placement: .navigationBarTrailing) {
+        ToolbarItemGroup(placement: .navigationBarTrailing) {
+            if !editMode.isEditing {
+                Button {
+                    newFolderName = ""
+                    showNewFolder = true
+                } label: {
+                    Label("New Folder", systemImage: "folder.badge.plus")
+                }
+            }
             Button(editMode.isEditing ? "Done" : "Select") {
                 withAnimation {
                     if editMode.isEditing {
@@ -188,7 +343,7 @@ struct LibraryView: View {
                     }
                 }
             }
-            .disabled(library.activeTracks.isEmpty && !editMode.isEditing)
+            .disabled(library.unfiledActiveTracks.isEmpty && !editMode.isEditing)
         }
     }
 
@@ -205,6 +360,13 @@ struct LibraryView: View {
     private func archiveSelected() {
         for track in selectedTracks() {
             library.setArchived(track, true)
+        }
+        endEditing()
+    }
+
+    private func moveSelected(to folderID: UUID) {
+        for track in selectedTracks() {
+            library.setFolder(track, folderID)
         }
         endEditing()
     }
@@ -277,7 +439,7 @@ struct ArchivedTracksView: View {
     }
 }
 
-private struct TrackRow: View {
+struct TrackRow: View {
     let track: Track
     let isCurrent: Bool
 

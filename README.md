@@ -23,6 +23,16 @@ Three screens (tabs):
    (mic icon) resume where you left off and show a progress bar. Video tracks
    (film icon) play with picture on the Player screen. Archived tracks live in an
    **Archived** folder (toolbar).
+
+   **Folders** organize the library: an **Inbox** pinned to the top collects
+   every track you haven't listened to yet (starting playback — or a
+   **Mark Played** swipe — clears it from the Inbox), and user folders sit
+   below it, above the unfiled tracks. Create folders with the toolbar's
+   folder button; move tracks in via touch-and-hold → **Move to Folder** (or
+   the bulk Select menu). Swipe a folder row for its slide menu: **Delete**
+   (the folder only — its tracks return to the library), **Rename**, and
+   **Reorder** (drag-reorder the tracks inside it). Folders persist to
+   `Documents/folders.json`.
 3. **Player** — artwork, scrubber, play/pause, next/previous. Drives the lock
    screen and Control Center.
 4. **Log** — timestamped, copyable stream of every pipeline step (queue,
@@ -41,8 +51,8 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | File | Role |
 |------|------|
 | `OfflineListenApp.swift` | App entry; wires up the shared stores. |
-| `Models.swift` | `Track`, `DownloadMode`, `LibraryFilter`, paths, helpers. |
-| `LibraryStore.swift` | Persists the library to `Documents/library.json`. |
+| `Models.swift` | `Track`, `Folder`, `DownloadMode`, `LibraryFilter`, paths, helpers. |
+| `LibraryStore.swift` | Persists the library to `Documents/library.json` and folders to `Documents/folders.json`. |
 | `DownloadManager.swift` | Serial download queue + `DownloadJob`. |
 | `YouTubeExtractor.swift` | `MediaExtractor` protocol + YoutubeDL-iOS impl + a mock. |
 | `YouTubeKitExtractor.swift` | Native-Swift (b5i/YouTubeKit) primary extractor. |
@@ -53,6 +63,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `PlaybackManager.swift` | `AVPlayer` engine (audio + video), audio session, lock screen. |
 | `Logger.swift` | `LogStore` — thread-safe, app-wide log sink. |
 | `*View.swift` | The four SwiftUI screens (Download, Library, Player, Log). |
+| `FolderView.swift` | Folder detail (tap-to-play, reorder) and Inbox screens. |
 
 The extraction step is isolated behind a `MediaExtractor` seam (a mock
 implementation is included), so adapting to a library API change touches one
