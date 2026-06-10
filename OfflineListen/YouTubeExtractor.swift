@@ -142,16 +142,31 @@ final class YoutubeDLExtractor: YouTubeAudioExtractor {
                    level: .success, category: category)
 
             // Pick the best audio-only stream, preferring m4a (AAC) so the file
-            // is directly playable by AVFoundation with no transcode.
+            // is directly playable by AVFoundation with no transcode. If there is
+            // no dedicated audio stream at all, fall back to the smallest muxed
+            // (video+audio) MP4 and extract its audio track after download.
             let audioOnly = formats.filter { $0.isAudioOnly }
             let m4a = audioOnly.filter { $0.ext == "m4a" }
             let pool = m4a.isEmpty ? audioOnly : m4a
-            guard let chosen = pool.max(by: { ($0.abr ?? $0.tbr ?? 0) < ($1.abr ?? $1.tbr ?? 0) })
-                ?? formats.max(by: { ($0.tbr ?? 0) < ($1.tbr ?? 0) }) else {
-                throw ExtractorError.noAudioFormat
+
+            let chosen: Format
+            var extractAfterDownload = false
+            if let audio = pool.max(by: { ($0.abr ?? $0.tbr ?? 0) < ($1.abr ?? $1.tbr ?? 0) }) {
+                chosen = audio
+                appLog("Selected format \(chosen.format_id) · \(chosen.ext) · \(Int(chosen.abr ?? chosen.tbr ?? 0)) kbps",
+                       category: category)
+            } else {
+                // Muxed = has both audio and video. AVFoundation can't read WebM,
+                // so only MP4 qualifies; lowest resolution wins (we only want audio).
+                let muxed = formats.filter { !$0.isAudioOnly && !$0.isVideoOnly && $0.ext == "mp4" }
+                guard let video = muxed.min(by: { ($0.height ?? .max) < ($1.height ?? .max) }) else {
+                    throw ExtractorError.noAudioFormat
+                }
+                chosen = video
+                extractAfterDownload = true
+                appLog("No audio-only stream — falling back to muxed video \(chosen.format_id) (\(chosen.height.map { "\($0)p" } ?? "?")) + audio extraction",
+                       level: .warning, category: category)
             }
-            appLog("Selected format \(chosen.format_id) · \(chosen.ext) · \(Int(chosen.abr ?? chosen.tbr ?? 0)) kbps",
-                   category: category)
 
             guard let mediaURL = URL(string: chosen.url) else {
                 throw ExtractorError.noAudioFormat
@@ -165,11 +180,11 @@ final class YoutubeDLExtractor: YouTubeAudioExtractor {
             }
 
             let ext = chosen.ext.isEmpty ? "m4a" : chosen.ext
-            let dest = AppPaths.work.appendingPathComponent("\(UUID().uuidString).\(ext)")
+            var dest = AppPaths.work.appendingPathComponent("\(UUID().uuidString).\(ext)")
 
             let expected = chosen.filesize
             let sizeHint = expected.map { " (~\($0 / 1024 / 1024) MB)" } ?? ""
-            appLog("Downloading audio stream in chunks\(sizeHint)…", category: category)
+            appLog("Downloading \(extractAfterDownload ? "video" : "audio") stream in chunks\(sizeHint)…", category: category)
             onDownloadStart()
 
             try await AudioStreamDownloader.download(
@@ -179,6 +194,10 @@ final class YoutubeDLExtractor: YouTubeAudioExtractor {
                 category: category,
                 onProgress: onProgress
             )
+
+            if extractAfterDownload {
+                dest = try await VideoAudioExtractor.extractAudio(fromVideo: dest, category: category)
+            }
 
             let size = (try? FileManager.default.attributesOfItem(atPath: dest.path)[.size] as? Int) ?? nil
             let sizeText = size.map { " (\($0 / 1024) KB)" } ?? ""

@@ -35,12 +35,37 @@ final class YouTubeKitExtractor: YouTubeAudioExtractor {
         let usable = audioFormats.filter { $0.url != nil }
         let mp4 = usable.filter { ($0.mimeType ?? "").contains("mp4") }
         let pool = mp4.isEmpty ? usable : mp4
-        guard let chosen = pool.max(by: { ($0.averageBitrate ?? 0) < ($1.averageBitrate ?? 0) }),
-              let mediaURL = chosen.url else {
-            throw ExtractorError.noAudioFormat
+
+        let mediaURL: URL
+        let ext: String
+        let expectedSize: Int?
+        var extractAfterDownload = false
+
+        if let chosen = pool.max(by: { ($0.averageBitrate ?? 0) < ($1.averageBitrate ?? 0) }),
+           let chosenURL = chosen.url {
+            mediaURL = chosenURL
+            ext = (chosen.mimeType ?? "").contains("webm") ? "webm" : "m4a"
+            expectedSize = chosen.contentLength
+            appLog("Selected audio · \(ext) · \(Int(chosen.averageBitrate ?? 0) / 1000) kbps", category: category)
+        } else {
+            // Fallback: no dedicated audio stream. Download a muxed (video+audio)
+            // MP4 and extract its audio track afterwards. AVFoundation can't read
+            // WebM, so only MP4 candidates qualify. Lowest resolution wins — we
+            // only want the audio.
+            let muxed = (response.downloadFormats + response.defaultFormats)
+                .compactMap { $0 as? VideoDownloadFormat }
+                .filter { $0.url != nil && ($0.mimeType ?? "").contains("mp4") }
+            guard let video = muxed.min(by: { ($0.height ?? .max) < ($1.height ?? .max) }),
+                  let videoURL = video.url else {
+                throw ExtractorError.noAudioFormat
+            }
+            mediaURL = videoURL
+            ext = "mp4"
+            expectedSize = video.contentLength
+            extractAfterDownload = true
+            appLog("No audio-only stream — falling back to muxed video (\(video.quality ?? "?")) + audio extraction",
+                   level: .warning, category: category)
         }
-        let ext = (chosen.mimeType ?? "").contains("webm") ? "webm" : "m4a"
-        appLog("Selected audio · \(ext) · \(Int(chosen.averageBitrate ?? 0) / 1000) kbps", category: category)
 
         var request = URLRequest(url: mediaURL)
         request.setValue(
@@ -48,17 +73,21 @@ final class YouTubeKitExtractor: YouTubeAudioExtractor {
             forHTTPHeaderField: "User-Agent"
         )
 
-        let dest = AppPaths.work.appendingPathComponent("\(UUID().uuidString).\(ext)")
-        appLog("Downloading audio stream in chunks…", category: category)
+        var dest = AppPaths.work.appendingPathComponent("\(UUID().uuidString).\(ext)")
+        appLog("Downloading \(extractAfterDownload ? "video" : "audio") stream in chunks…", category: category)
         onDownloadStart()
 
         try await AudioStreamDownloader.download(
             baseRequest: request,
-            expectedSize: chosen.contentLength,
+            expectedSize: expectedSize,
             to: dest,
             category: category,
             onProgress: onProgress
         )
+
+        if extractAfterDownload {
+            dest = try await VideoAudioExtractor.extractAudio(fromVideo: dest, category: category)
+        }
 
         // YouTubeKit's response carries no duration; read it from the file.
         let duration = (try? AVAudioPlayer(contentsOf: dest))?.duration ?? 0

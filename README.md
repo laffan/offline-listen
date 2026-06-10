@@ -150,6 +150,12 @@ treated as a failure, so Cancel doesn't trigger the fallback):
    extractor fails. `extractInfo(url:)` resolves the video; the Download tab's
    "⋯" menu has **Refresh yt-dlp engine** to re-pull a stale module.
 
+If a video exposes **no dedicated audio-only stream**, both extractors fall back
+to downloading the smallest muxed (video+audio) **MP4** and extracting its audio
+track to m4a via `VideoAudioExtractor` (AVFoundation's `AVAssetExportSession` —
+no FFmpeg). The result is verified to actually contain an audio track. WebM is
+excluded because AVFoundation can't read it.
+
 Both resolve a direct stream URL and then hand it to the shared
 `AudioStreamDownloader`, which fetches it in **5 MB HTTP byte-range chunks**
 (each retried on transient errors). YouTube throttles/drops single large
