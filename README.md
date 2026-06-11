@@ -30,7 +30,9 @@ Three screens (tabs):
    below it, above the unfiled tracks. Create folders with the toolbar's
    folder button; move tracks in via touch-and-hold → **Move to Folder** (or
    the bulk Select menu). The Inbox is itself a move target — moving a track
-   there returns it to unlistened. Swipe a folder row for its slide menu: **Delete**
+   there returns it to unlistened. Touch-and-hold also offers **Rename**, whose
+   modal includes **Reset to Original** to restore the download title. Swipe a
+   folder row for its slide menu: **Delete**
    (the folder only — its tracks return to the library), **Rename**, and
    **Reorder** (drag-reorder the tracks inside it). Folders persist to
    `Documents/folders.json`.

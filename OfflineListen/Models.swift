@@ -121,6 +121,9 @@ struct Track: Identifiable, Codable, Hashable {
     /// True once playback of the track has been started at least once; tracks
     /// where this is false make up the Inbox.
     var hasBeenPlayed: Bool
+    /// The title the track was downloaded with, recorded on first rename so
+    /// "Reset to Original" can restore it. Nil while never renamed.
+    var originalTitle: String?
 
     init(id: UUID = UUID(),
          title: String,
@@ -134,7 +137,8 @@ struct Track: Identifiable, Codable, Hashable {
          lastPosition: Double = 0,
          isVideo: Bool = false,
          folderID: UUID? = nil,
-         hasBeenPlayed: Bool = false) {
+         hasBeenPlayed: Bool = false,
+         originalTitle: String? = nil) {
         self.id = id
         self.title = title
         self.artist = artist
@@ -148,10 +152,11 @@ struct Track: Identifiable, Codable, Hashable {
         self.isVideo = isVideo
         self.folderID = folderID
         self.hasBeenPlayed = hasBeenPlayed
+        self.originalTitle = originalTitle
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, artist, fileName, sourceURL, duration, dateAdded, isArchived, kind, lastPosition, isVideo, folderID, hasBeenPlayed
+        case id, title, artist, fileName, sourceURL, duration, dateAdded, isArchived, kind, lastPosition, isVideo, folderID, hasBeenPlayed, originalTitle
     }
 
     // Custom decode so libraries saved before these fields existed still load.
@@ -170,6 +175,7 @@ struct Track: Identifiable, Codable, Hashable {
         isVideo = try c.decodeIfPresent(Bool.self, forKey: .isVideo) ?? false
         folderID = try c.decodeIfPresent(UUID.self, forKey: .folderID)
         hasBeenPlayed = try c.decodeIfPresent(Bool.self, forKey: .hasBeenPlayed) ?? false
+        originalTitle = try c.decodeIfPresent(String.self, forKey: .originalTitle)
     }
 
     /// Absolute on-disk location resolved at access time.

@@ -13,6 +13,7 @@ struct FolderDetailView: View {
     @Binding var share: SharePayload?
 
     @State private var editMode: EditMode = .inactive
+    @State private var renamingTrack: Track?
 
     private var folder: Folder? {
         library.folders.first { $0.id == folderID }
@@ -45,6 +46,7 @@ struct FolderDetailView: View {
         .navigationTitle(folder?.name ?? "Folder")
         .navigationBarTitleDisplayMode(.inline)
         .environment(\.editMode, $editMode)
+        .renameTrackAlert(for: $renamingTrack)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button(editMode.isEditing ? "Done" : "Reorder") {
@@ -103,6 +105,11 @@ struct FolderDetailView: View {
                 }
             }
             .contextMenu {
+                Button {
+                    renamingTrack = track
+                } label: {
+                    Label("Rename", systemImage: "pencil")
+                }
                 Menu {
                     Button {
                         library.moveToInbox(track)
@@ -146,6 +153,8 @@ struct InboxView: View {
     let onPlay: () -> Void
     @Binding var share: SharePayload?
 
+    @State private var renamingTrack: Track?
+
     private var tracks: [Track] {
         library.inboxTracks
     }
@@ -187,6 +196,11 @@ struct InboxView: View {
                                 .tint(.green)
                             }
                             .contextMenu {
+                                Button {
+                                    renamingTrack = track
+                                } label: {
+                                    Label("Rename", systemImage: "pencil")
+                                }
                                 if !library.folders.isEmpty {
                                     Menu {
                                         ForEach(library.folders) { folder in
@@ -213,6 +227,7 @@ struct InboxView: View {
         }
         .navigationTitle("Inbox")
         .navigationBarTitleDisplayMode(.inline)
+        .renameTrackAlert(for: $renamingTrack)
         .toolbar {
             if !tracks.isEmpty {
                 ToolbarItem(placement: .navigationBarTrailing) {

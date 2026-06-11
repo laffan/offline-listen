@@ -154,6 +154,28 @@ final class LibraryStore: ObservableObject {
         save()
     }
 
+    /// Renames a track. The first rename records the download title so
+    /// `resetTitle` can restore it later.
+    func rename(_ track: Track, to title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let index = tracks.firstIndex(where: { $0.id == track.id }),
+              tracks[index].title != trimmed else { return }
+        if tracks[index].originalTitle == nil {
+            tracks[index].originalTitle = tracks[index].title
+        }
+        tracks[index].title = trimmed
+        save()
+    }
+
+    /// Restores a renamed track's original (download) title.
+    func resetTitle(_ track: Track) {
+        guard let index = tracks.firstIndex(where: { $0.id == track.id }),
+              let original = tracks[index].originalTitle else { return }
+        tracks[index].title = original
+        save()
+    }
+
     /// Archives or unarchives a track.
     func setArchived(_ track: Track, _ archived: Bool) {
         guard let index = tracks.firstIndex(where: { $0.id == track.id }) else { return }

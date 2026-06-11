@@ -19,6 +19,46 @@ struct ActivityView: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
+/// Shared rename-track alert: prefills the current title and, once a track has
+/// ever been renamed, offers "Reset to Original" to restore the download title.
+struct RenameTrackAlert: ViewModifier {
+    @EnvironmentObject private var library: LibraryStore
+    @Binding var track: Track?
+    @State private var title = ""
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: track) { newValue in
+                if let newValue { title = newValue.title }
+            }
+            .alert("Rename Track", isPresented: isPresented, presenting: track) { track in
+                TextField("Title", text: $title)
+                Button("Rename") { library.rename(track, to: title) }
+                if let original = track.originalTitle, original != track.title {
+                    Button("Reset to Original") { library.resetTitle(track) }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: { track in
+                if let original = track.originalTitle, original != track.title {
+                    Text("Original: \(original)")
+                }
+            }
+    }
+
+    private var isPresented: Binding<Bool> {
+        Binding(
+            get: { track != nil },
+            set: { if !$0 { track = nil } }
+        )
+    }
+}
+
+extension View {
+    func renameTrackAlert(for track: Binding<Track?>) -> some View {
+        modifier(RenameTrackAlert(track: track))
+    }
+}
+
 /// Navigation targets reachable from the library list.
 enum LibraryRoute: Hashable {
     case inbox
@@ -45,6 +85,7 @@ struct LibraryView: View {
     @State private var newFolderName = ""
     @State private var renamingFolder: Folder?
     @State private var renameText = ""
+    @State private var renamingTrack: Track?
 
     private var filteredTracks: [Track] {
         library.unfiledActiveTracks.filter { filter.matches($0) }
@@ -109,6 +150,7 @@ struct LibraryView: View {
                 Button("Rename") { library.renameFolder(folder, to: renameText) }
                 Button("Cancel", role: .cancel) {}
             }
+            .renameTrackAlert(for: $renamingTrack)
         }
     }
 
@@ -253,6 +295,11 @@ struct LibraryView: View {
                 }
             }
             .contextMenu {
+                Button {
+                    renamingTrack = track
+                } label: {
+                    Label("Rename", systemImage: "pencil")
+                }
                 Menu {
                     Button {
                         library.moveToInbox(track)
