@@ -26,16 +26,19 @@ enum VideoAudioExtractor {
         session.outputURL = dest
         session.outputFileType = .m4a
 
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            session.exportAsynchronously {
-                switch session.status {
-                case .completed:
-                    continuation.resume()
-                case .cancelled:
-                    continuation.resume(throwing: CancellationError())
-                default:
-                    let message = session.error?.localizedDescription ?? "Audio extraction failed."
-                    continuation.resume(throwing: ExtractorError.downloadFailed(message))
+        try await withHeartbeat("Still extracting audio", category: category,
+                                progress: { Double(session.progress) }) {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                session.exportAsynchronously {
+                    switch session.status {
+                    case .completed:
+                        continuation.resume()
+                    case .cancelled:
+                        continuation.resume(throwing: CancellationError())
+                    default:
+                        let message = session.error?.localizedDescription ?? "Audio extraction failed."
+                        continuation.resume(throwing: ExtractorError.downloadFailed(message))
+                    }
                 }
             }
         }

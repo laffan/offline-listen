@@ -77,3 +77,36 @@ final class LogStore: ObservableObject {
 func appLog(_ message: String, level: LogLevel = .info, category: String = "App") {
     LogStore.shared.log(message, level: level, category: category)
 }
+
+/// Runs `operation` while a detached watchdog logs a heartbeat line every
+/// `interval` seconds. Wrap any opaque, potentially slow step (info
+/// resolution, a single chunk request, an AVFoundation export) so that when it
+/// stalls, the Log screen shows *which* step is stuck and for how long instead
+/// of going silent. Heartbeats only appear if the step outlives `interval`,
+/// so fast steps add no noise.
+///
+/// The watchdog runs detached so it keeps ticking even if `operation` starves
+/// the cooperative pool. `progress` (0…1), when provided, is sampled into each
+/// heartbeat line.
+func withHeartbeat<T>(_ label: String,
+                      category: String,
+                      interval: TimeInterval = 10,
+                      level: LogLevel = .info,
+                      progress: (@Sendable () -> Double?)? = nil,
+                      operation: () async throws -> T) async rethrows -> T {
+    let started = Date()
+    let heartbeat = Task.detached {
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+            if Task.isCancelled { return }
+            let elapsed = Int(Date().timeIntervalSince(started))
+            if let fraction = progress?() {
+                appLog("\(label)… \(Int(fraction * 100))% · \(elapsed)s elapsed", level: level, category: category)
+            } else {
+                appLog("\(label)… \(elapsed)s elapsed", level: level, category: category)
+            }
+        }
+    }
+    defer { heartbeat.cancel() }
+    return try await operation()
+}

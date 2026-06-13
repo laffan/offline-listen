@@ -12,9 +12,13 @@ enum VideoMerger {
     static func ensureAudio(videoFile: URL,
                             audioRequest: URLRequest?,
                             category: String) async throws -> URL {
+        appLog("Checking downloaded video for an embedded audio track…", level: .debug, category: category)
         let videoAsset = AVURLAsset(url: videoFile)
-        let existingAudio = (try? await videoAsset.loadTracks(withMediaType: .audio)) ?? []
+        let existingAudio = (try? await withHeartbeat("Still inspecting video tracks", category: category) {
+            try await videoAsset.loadTracks(withMediaType: .audio)
+        }) ?? []
         if !existingAudio.isEmpty {
+            appLog("Video already contains audio — no merge needed.", level: .debug, category: category)
             return videoFile
         }
 
@@ -36,6 +40,7 @@ enum VideoMerger {
     }
 
     private static func merge(video: URL, audio: URL, category: String) async throws -> URL {
+        appLog("Building merge composition…", level: .debug, category: category)
         let composition = AVMutableComposition()
         let videoAsset = AVURLAsset(url: video)
         let audioAsset = AVURLAsset(url: audio)
@@ -63,15 +68,19 @@ enum VideoMerger {
         export.outputURL = dest
         export.outputFileType = .mp4
 
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            export.exportAsynchronously {
-                switch export.status {
-                case .completed:
-                    continuation.resume()
-                case .cancelled:
-                    continuation.resume(throwing: CancellationError())
-                default:
-                    continuation.resume(throwing: ExtractorError.downloadFailed(export.error?.localizedDescription ?? "Video merge failed."))
+        appLog("Muxing video + audio (passthrough export)…", category: category)
+        try await withHeartbeat("Still muxing video + audio", category: category,
+                                progress: { Double(export.progress) }) {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                export.exportAsynchronously {
+                    switch export.status {
+                    case .completed:
+                        continuation.resume()
+                    case .cancelled:
+                        continuation.resume(throwing: CancellationError())
+                    default:
+                        continuation.resume(throwing: ExtractorError.downloadFailed(export.error?.localizedDescription ?? "Video merge failed."))
+                    }
                 }
             }
         }

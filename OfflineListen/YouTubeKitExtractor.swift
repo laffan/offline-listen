@@ -20,12 +20,17 @@ final class YouTubeKitExtractor: MediaExtractor {
         }
         appLog("Resolving \(videoID) via YouTubeKit…", category: category)
 
+        // The resolve call is opaque (network + on-device player-JS decoding);
+        // a heartbeat keeps a stall visible in the log instead of silent.
         let model = YouTubeModel()
-        let response = try await VideoInfosWithDownloadFormatsResponse.sendThrowingRequest(
-            youtubeModel: model,
-            data: [.query: videoID],
-            useCookies: nil
-        )
+        let response = try await withHeartbeat("Still resolving \(videoID) via YouTubeKit",
+                                               category: category) {
+            try await VideoInfosWithDownloadFormatsResponse.sendThrowingRequest(
+                youtubeModel: model,
+                data: [.query: videoID],
+                useCookies: nil
+            )
+        }
 
         let title = response.videoInfos.title ?? url.absoluteString
 
@@ -36,10 +41,10 @@ final class YouTubeKitExtractor: MediaExtractor {
         // Log every discovered format so we can see what's available.
         appLog("Info: \"\(title)\" · \(videoFormats.count) video, \(audioFormats.count) audio", level: .success, category: category)
         for v in videoFormats.prefix(20) {
-            appLog("· video \(v.quality ?? "?") \(v.mimeType ?? "?") url=\(v.url != nil)", level: .debug, category: category)
+            appLog("· video \(v.quality ?? "?") \(v.mimeType ?? "?") len=\(v.contentLength.map(String.init) ?? "?") url=\(v.url != nil)", level: .debug, category: category)
         }
         for a in audioFormats.prefix(20) {
-            appLog("· audio \(a.mimeType ?? "?") \(Int(a.averageBitrate ?? 0) / 1000)kbps url=\(a.url != nil)", level: .debug, category: category)
+            appLog("· audio \(a.mimeType ?? "?") \(Int(a.averageBitrate ?? 0) / 1000)kbps len=\(a.contentLength.map(String.init) ?? "?") url=\(a.url != nil)", level: .debug, category: category)
         }
 
         func userAgentRequest(_ u: URL) -> URLRequest {
@@ -75,12 +80,14 @@ final class YouTubeKitExtractor: MediaExtractor {
             ext = "mp4"
             expectedSize = video.contentLength
             mergeAudioRequest = bestAudio?.url.map(userAgentRequest)
-            appLog("Selected video (\(video.quality ?? "?"))", category: category)
+            let sizeHint = video.contentLength.map { " · ~\($0 / 1024 / 1024) MB" } ?? " · size unknown"
+            appLog("Selected video (\(video.quality ?? "?"))\(sizeHint)\(bestAudio == nil ? " · no audio-only stream found to merge" : "")", category: category)
         } else if let chosen = bestAudio, let chosenURL = chosen.url {
             mediaURL = chosenURL
             ext = (chosen.mimeType ?? "").contains("webm") ? "webm" : "m4a"
             expectedSize = chosen.contentLength
-            appLog("Selected audio · \(ext) · \(Int(chosen.averageBitrate ?? 0) / 1000) kbps", category: category)
+            let sizeHint = chosen.contentLength.map { " · ~\($0 / 1024 / 1024) MB" } ?? " · size unknown"
+            appLog("Selected audio · \(ext) · \(Int(chosen.averageBitrate ?? 0) / 1000) kbps\(sizeHint)", category: category)
         } else {
             // No dedicated audio stream: grab the smallest muxed MP4 and extract audio.
             let mp4Video = videoFormats.filter { $0.url != nil && ($0.mimeType ?? "").contains("mp4") }
