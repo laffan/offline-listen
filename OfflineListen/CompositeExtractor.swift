@@ -32,6 +32,12 @@ final class CompositeExtractor: MediaExtractor {
             }
             appLog("\(primaryName) failed: \(error.localizedDescription) — falling back to \(fallbackName)",
                    level: .warning, category: "Extract")
+            // localizedDescription is generic (e.g. YouTubeKit's "ResponseError
+            // error 1"); the full value usually names the real reason a video is
+            // rejected — age-gate, region/members-only, sign-in required, or a
+            // player change — which is what distinguishes a video that works
+            // from one that doesn't.
+            appLog("\(primaryName) error detail: \(String(describing: error))", level: .debug, category: "Extract")
             return try await fallback.extractMedia(from: url, mode: mode,
                                                    onDownloadStart: onDownloadStart,
                                                    onProgress: onProgress)
