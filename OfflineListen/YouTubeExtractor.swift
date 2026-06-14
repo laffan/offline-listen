@@ -19,6 +19,7 @@ enum ExtractorError: LocalizedError {
     case invalidURL
     case noAudioFormat
     case noVideoFormat
+    case unplayableVideoCodec(String)
     case downloadFailed(String)
 
     var errorDescription: String? {
@@ -31,9 +32,39 @@ enum ExtractorError: LocalizedError {
             return "No downloadable audio track was found for this video."
         case .noVideoFormat:
             return "No downloadable video (with audio) was found for this video."
+        case .unplayableVideoCodec(let codecs):
+            return "The only video stream offered uses a codec this device can't play (\(codecs)). Try the download again — YouTube often serves an H.264 stream on a retry — or download it as Audio."
         case .downloadFailed(let message):
             return message
         }
+    }
+}
+
+/// Decides whether AVFoundation can actually *decode* a video codec on this
+/// device. YouTube increasingly serves video-only streams as AV1 (`av01`) or
+/// VP9, which AVFoundation can't decode on the overwhelming majority of iPhones
+/// — selecting one produces a file whose timeline scrubs but shows the
+/// QuickTime placeholder instead of a picture (and whose audio won't play
+/// either, because the undecodable video track poisons the whole item). We
+/// keep this conservative: only H.264 (`avc1`/`avc3`) and HEVC (`hvc1`/`hev1`)
+/// are treated as playable. Devices new enough to decode AV1 (A17 Pro / M3+)
+/// are also offered H.264, so preferring it loses nothing in practice.
+enum PlayableVideoCodec {
+    /// `codec` is a codecs string such as "avc1.640028", "av01.0.08M.08",
+    /// "vp09.00.10.08", "hev1.1.6.L93.B0".
+    static func isPlayable(codec: String?) -> Bool {
+        let c = (codec ?? "").lowercased()
+        if c.isEmpty || c == "none" { return false }
+        return c.hasPrefix("avc1") || c.hasPrefix("avc3") || c.hasPrefix("h264") || c.hasPrefix("mp4v")
+            || c.hasPrefix("hvc1") || c.hasPrefix("hev1") || c.hasPrefix("h265")
+    }
+
+    /// Extracts the codecs value from a mimeType like
+    /// `video/mp4; codecs="avc1.640028"` and tests it.
+    static func isPlayable(mimeType: String?) -> Bool {
+        guard let mt = mimeType, let range = mt.range(of: "codecs=") else { return false }
+        let raw = mt[range.upperBound...].trimmingCharacters(in: CharacterSet(charactersIn: "\"' "))
+        return isPlayable(codec: raw)
     }
 }
 
@@ -208,15 +239,25 @@ final class YoutubeDLExtractor: MediaExtractor {
             var extractAudioAfterDownload = false
 
             if mode == .video {
-                // Best MP4 carrying video (muxed or video-only); AVFoundation needs
-                // MP4/avc1. If it's video-only we merge the best audio afterwards.
+                // Pick the best video AVFoundation can actually decode. YouTube
+                // often offers AV1/VP9 video-only streams that iOS can't play —
+                // selecting one yields a file that scrubs but shows no picture
+                // (and no audio). Restrict to H.264/HEVC, then take the tallest.
                 let videoMP4 = formats.filter { !$0.isAudioOnly && $0.ext == "mp4" }
-                guard let video = videoMP4.max(by: { ($0.height ?? 0) < ($1.height ?? 0) }) else {
+                let playable = videoMP4.filter { PlayableVideoCodec.isPlayable(codec: $0.vcodec) }
+                if playable.isEmpty {
+                    let offered = videoMP4.compactMap { $0.vcodec }.filter { $0 != "none" }
+                    let list = offered.isEmpty ? "none" : Set(offered).sorted().joined(separator: ", ")
+                    appLog("No device-playable video stream (need H.264/HEVC) — offered: \(list)",
+                           level: .error, category: category)
+                    throw ExtractorError.unplayableVideoCodec(list)
+                }
+                guard let video = playable.max(by: { ($0.height ?? 0) < ($1.height ?? 0) }) else {
                     throw ExtractorError.noVideoFormat
                 }
                 chosen = video
                 mergeAudioRequest = bestAudio.flatMap(makeRequest)
-                appLog("Selected video \(chosen.format_id) (\(chosen.height.map { "\($0)p" } ?? "?")) \(chosen.isVideoOnly ? "video-only — will merge audio" : "muxed")",
+                appLog("Selected video \(chosen.format_id) (\(chosen.height.map { "\($0)p" } ?? "?")) \(chosen.vcodec ?? "?") \(chosen.isVideoOnly ? "video-only — will merge audio" : "muxed")",
                        category: category)
             } else if let audio = bestAudio {
                 chosen = audio

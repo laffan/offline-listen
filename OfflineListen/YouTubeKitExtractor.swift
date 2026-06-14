@@ -70,10 +70,18 @@ final class YouTubeKitExtractor: MediaExtractor {
         var extractAudioAfterDownload = false
 
         if mode == .video {
-            // Best MP4 with video (could be muxed or video-only). If video-only,
-            // VideoMerger pulls in the audio afterwards.
+            // Best MP4 with video AVFoundation can decode. AV1/VP9 streams (which
+            // YouTube often offers) play as a blank QuickTime placeholder on iOS,
+            // so restrict to H.264/HEVC. If video-only, VideoMerger adds audio.
             let mp4Video = videoFormats.filter { $0.url != nil && ($0.mimeType ?? "").contains("mp4") }
-            guard let video = mp4Video.max(by: { ($0.height ?? 0) < ($1.height ?? 0) }), let videoURL = video.url else {
+            let playable = mp4Video.filter { PlayableVideoCodec.isPlayable(mimeType: $0.mimeType) }
+            if playable.isEmpty {
+                let offered = Set(mp4Video.compactMap { $0.mimeType }).sorted().joined(separator: " | ")
+                appLog("No device-playable video stream (need H.264/HEVC) — offered: \(offered.isEmpty ? "none" : offered)",
+                       level: .error, category: category)
+                throw ExtractorError.unplayableVideoCodec(offered.isEmpty ? "none" : offered)
+            }
+            guard let video = playable.max(by: { ($0.height ?? 0) < ($1.height ?? 0) }), let videoURL = video.url else {
                 throw ExtractorError.noVideoFormat
             }
             mediaURL = videoURL
@@ -81,7 +89,7 @@ final class YouTubeKitExtractor: MediaExtractor {
             expectedSize = video.contentLength
             mergeAudioRequest = bestAudio?.url.map(userAgentRequest)
             let sizeHint = video.contentLength.map { " · ~\($0 / 1024 / 1024) MB" } ?? " · size unknown"
-            appLog("Selected video (\(video.quality ?? "?"))\(sizeHint)\(bestAudio == nil ? " · no audio-only stream found to merge" : "")", category: category)
+            appLog("Selected video (\(video.quality ?? "?")) \(video.mimeType ?? "?")\(sizeHint)\(bestAudio == nil ? " · no audio-only stream found to merge" : "")", category: category)
         } else if let chosen = bestAudio, let chosenURL = chosen.url {
             mediaURL = chosenURL
             ext = (chosen.mimeType ?? "").contains("webm") ? "webm" : "m4a"
