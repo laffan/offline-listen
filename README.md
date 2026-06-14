@@ -153,6 +153,18 @@ the lock screen.
   the picture and PiP) but is driven by the app's own transport controls — the
   same suite audio gets — and keeps its audio in the background.
 
+  Video selection is **codec-aware** (`PlayableVideoCodec`): only **H.264**
+  (`avc1`/`avc3`) and **HEVC** (`hvc1`/`hev1`) are chosen, because AVFoundation
+  can't decode the **AV1** (`av01`) or **VP9** streams YouTube increasingly
+  serves — an AV1 file plays its timeline but shows a blank QuickTime
+  placeholder with no picture or sound. When *only* such codecs are on offer (it
+  happens when the on-device player JS can't be resolved and every H.264 URL,
+  which needs nsig descrambling, gets dropped), the yt-dlp path runs a
+  **recovery**: it re-resolves forcing the **iOS/web_safari/mweb player
+  clients**, whose H.264 URLs need no descrambling — the same renditions Safari
+  plays. Only if that still yields nothing decodable does the download fail with
+  a clear `unplayableVideoCodec` message.
+
 ## Extraction: native primary + yt-dlp fallback
 
 Extraction sits behind the `MediaExtractor` protocol, and `CompositeExtractor`
@@ -183,6 +195,15 @@ hardwired to a *background* `URLSession` that doesn't complete on the Simulator.
 If the YouTubeKit package isn't linked yet, its extractor throws and the composite
 falls back to yt-dlp automatically. To exercise the UI with no native dependency
 at all, point `DownloadManager`'s default extractor at `MockExtractor`.
+
+The H.264 **recovery** path drives yt-dlp's Python `YoutubeDL` directly (to pass
+`extractor_args`, which the structured `extractInfo` API can't), so it needs
+**PythonKit** importable from the app target. PythonKit is a transitive
+dependency of YoutubeDL-iOS; if `import PythonKit` doesn't resolve, add it as an
+explicit package dependency on the **OfflineListen** target in
+*Project ▸ Package Dependencies*. Guarded by `#if canImport(PythonKit)`, so
+without it the recovery compiles out and an AV1-only video fails with the clear
+`unplayableVideoCodec` message instead.
 
 ## Status
 

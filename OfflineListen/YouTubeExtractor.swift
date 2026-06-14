@@ -5,6 +5,15 @@ import AVFoundation
 import YoutubeDL
 #endif
 
+// PythonKit (a transitive dependency of YoutubeDL-iOS) lets us drive yt-dlp's
+// Python `YoutubeDL` directly to pass options the structured `extractInfo` API
+// can't — specifically a forced player client. Add it as an explicit package
+// dependency on the app target to enable the H.264 recovery path below; without
+// it, `canImport` is false and the recovery simply compiles out.
+#if canImport(PythonKit)
+import PythonKit
+#endif
+
 /// Result of extracting + downloading media for a URL.
 struct ExtractedMedia {
     /// On-disk location of the downloaded file (`.m4a` for audio, `.mp4` for video).
@@ -184,6 +193,122 @@ final class YoutubeDLExtractor: MediaExtractor {
     }
 #endif
 
+#if canImport(YoutubeDL) && canImport(PythonKit)
+    /// Recovery for videos whose default extraction exposes only video codecs
+    /// AVFoundation can't decode (e.g. AV1-only, which happens when the on-device
+    /// player JS can't be resolved and every H.264 URL — needing nsig
+    /// descrambling — is dropped). Re-runs yt-dlp's info extraction forcing the
+    /// iOS/web_safari/mweb player clients, whose H.264 (avc1) streams carry URLs
+    /// that need no descrambling — the same renditions Safari plays. Downloads
+    /// and merges the result, or returns nil if even these clients offer no
+    /// decodable video (caller then surfaces the clear error).
+    ///
+    /// Drives Python directly (mirroring YoutubeDL-iOS's own internal calls)
+    /// because the structured `extractInfo` API can't pass `extractor_args`.
+    /// `.throwing` converts Python exceptions to Swift errors, and every dict
+    /// access uses `.get(...)` so a missing key yields Python `None` rather than
+    /// trapping.
+    private func recoverPlayableVideo(url: URL,
+                                      category: String,
+                                      onDownloadStart: @escaping () -> Void,
+                                      onProgress: @escaping (Double) -> Void) async throws -> ExtractedMedia? {
+        appLog("Recovery: re-resolving with forced iOS/web_safari player client for H.264…",
+               level: .warning, category: category)
+
+        let info: PythonObject
+        do {
+            info = try await withHeartbeat("Still re-resolving (forced client)", category: category) {
+                let ytdlpModule = Python.import("yt_dlp")
+                let options: PythonObject = [
+                    "quiet": true,
+                    "no_warnings": true,
+                    "noplaylist": true,
+                    "nocheckcertificate": true,
+                    "extractor_args": ["youtube": ["player_client": ["ios", "web_safari", "mweb"]]],
+                ]
+                let ytdlp = ytdlpModule.YoutubeDL(options)
+                return try ytdlp.extract_info.throwing.dynamicallyCall(withKeywordArguments: [
+                    "": url.absoluteString, "download": false, "process": true,
+                ])
+            }
+        } catch {
+            appLog("Recovery extraction failed: \(error.localizedDescription)", level: .error, category: category)
+            return nil
+        }
+
+        let formatsObj = info.get("formats")
+        if formatsObj == Python.None {
+            appLog("Recovery: extraction returned no formats.", level: .error, category: category)
+            return nil
+        }
+
+        func headers(_ format: PythonObject) -> [String: String] {
+            var result: [String: String] = [:]
+            let h = format.get("http_headers")
+            if h == Python.None { return result }
+            for key in h.keys() {
+                if let k = String(key), let v = String(h[key]) { result[k] = v }
+            }
+            return result
+        }
+
+        struct VideoCand { let url: String; let height: Int; let vcodec: String; let headers: [String: String] }
+        struct AudioCand { let url: String; let abr: Double; let headers: [String: String] }
+        var videos: [VideoCand] = []
+        var audios: [AudioCand] = []
+
+        for format in formatsObj {
+            guard let furl = String(format.get("url")) else { continue }
+            let vcodec = String(format.get("vcodec")) ?? "none"
+            let acodec = String(format.get("acodec")) ?? "none"
+            let ext = String(format.get("ext")) ?? ""
+            let hasVideo = vcodec != "none" && !vcodec.isEmpty
+            let hasAudio = acodec != "none" && !acodec.isEmpty
+
+            if hasVideo, ext == "mp4", PlayableVideoCodec.isPlayable(codec: vcodec) {
+                videos.append(VideoCand(url: furl, height: Int(format.get("height")) ?? 0,
+                                        vcodec: vcodec, headers: headers(format)))
+            } else if hasAudio, !hasVideo, ext == "m4a" {
+                let abr = Double(format.get("abr")) ?? Double(Int(format.get("tbr")) ?? 0)
+                audios.append(AudioCand(url: furl, abr: abr, headers: headers(format)))
+            }
+        }
+
+        guard let video = videos.max(by: { $0.height < $1.height }) else {
+            appLog("Recovery: forced client still offered no H.264/HEVC video.", level: .error, category: category)
+            return nil
+        }
+        let audio = audios.max(by: { $0.abr < $1.abr })
+        appLog("Recovery selected H.264 video \(video.height)p (\(video.vcodec))\(audio == nil ? " · no separate audio" : " + m4a audio")",
+               level: .success, category: category)
+
+        func request(_ urlString: String, _ headerFields: [String: String]) -> URLRequest? {
+            guard let u = URL(string: urlString) else { return nil }
+            var r = URLRequest(url: u)
+            for (key, value) in headerFields { r.setValue(value, forHTTPHeaderField: key) }
+            return r
+        }
+        guard let videoRequest = request(video.url, video.headers) else { return nil }
+        let audioRequest = audio.flatMap { request($0.url, $0.headers) }
+
+        let title = String(info.get("title")) ?? url.absoluteString
+        let reportedDuration = Double(info.get("duration")) ?? 0
+
+        var dest = AppPaths.work.appendingPathComponent("\(UUID().uuidString).mp4")
+        appLog("Downloading recovered video stream in chunks…", category: category)
+        onDownloadStart()
+        try await AudioStreamDownloader.download(baseRequest: videoRequest, expectedSize: nil,
+                                                 to: dest, category: category, onProgress: onProgress)
+        dest = try await VideoMerger.ensureAudio(videoFile: dest, audioRequest: audioRequest, category: category)
+
+        let duration = reportedDuration > 0 ? reportedDuration : await mediaDuration(of: dest)
+        let size = (try? FileManager.default.attributesOfItem(atPath: dest.path)[.size] as? Int) ?? nil
+        appLog("Recovery download finished: \(dest.lastPathComponent)\(size.map { " (\($0 / 1024) KB)" } ?? "")",
+               level: .success, category: category)
+        return ExtractedMedia(fileURL: dest, title: title, duration: duration, isVideo: true)
+    }
+#endif
+
     func extractMedia(from url: URL,
                       mode: DownloadMode,
                       onDownloadStart: @escaping () -> Void,
@@ -248,6 +373,17 @@ final class YoutubeDLExtractor: MediaExtractor {
                 if playable.isEmpty {
                     let offered = videoMP4.compactMap { $0.vcodec }.filter { $0 != "none" }
                     let list = offered.isEmpty ? "none" : Set(offered).sorted().joined(separator: ", ")
+                    appLog("Default extraction offered no device-playable video (need H.264/HEVC) — offered: \(list)",
+                           level: .warning, category: category)
+                    // Recovery: re-resolve forcing a player client that returns
+                    // H.264. Bypasses the rest of this method on success.
+                    #if canImport(PythonKit)
+                    if let recovered = try await recoverPlayableVideo(
+                        url: url, category: category,
+                        onDownloadStart: onDownloadStart, onProgress: onProgress) {
+                        return recovered
+                    }
+                    #endif
                     appLog("No device-playable video stream (need H.264/HEVC) — offered: \(list)",
                            level: .error, category: category)
                     throw ExtractorError.unplayableVideoCodec(list)
