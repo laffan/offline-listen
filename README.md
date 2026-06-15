@@ -135,11 +135,21 @@ Three pieces make this work, already configured:
 
 - `UIBackgroundModes = [audio]` in `Info.plist`.
 - `AVAudioSession` set to the `.playback` category in `PlaybackManager`.
-- `MPNowPlayingInfoCenter` + `MPRemoteCommandCenter` for lock-screen metadata
-  and transport controls.
+- `MPNowPlayingInfoCenter` (now-playing metadata **and** an explicit
+  `playbackState`, which iOS 13+ needs to reliably surface the controls) +
+  `MPRemoteCommandCenter` for the lock-screen transport buttons.
 
 Start a track, lock the phone — audio keeps playing and the controls appear on
 the lock screen.
+
+The lock screen / Control Center renders only **three** transport buttons (a
+centre play/pause plus two side buttons), and iOS shows *either* the
+next/previous-track commands *or* the skip-forward/backward commands — never
+both. We surface **jump ahead 30s / back 15s** on the side buttons (the most
+useful for long tracks and podcasts); next/previous-track stays available from
+the in-app Player. Enabling both command pairs makes them conflict and the
+skip buttons silently fail to appear, so `PlaybackManager` explicitly disables
+`nextTrackCommand` / `previousTrackCommand`.
 
 ## Audio vs. Video
 

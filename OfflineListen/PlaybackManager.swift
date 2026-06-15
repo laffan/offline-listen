@@ -260,33 +260,45 @@ final class PlaybackManager: NSObject, ObservableObject {
     private func setupRemoteCommands() {
         let center = MPRemoteCommandCenter.shared()
 
+        center.playCommand.isEnabled = true
         center.playCommand.addTarget { [weak self] _ in
             self?.resume(); return .success
         }
+        center.pauseCommand.isEnabled = true
         center.pauseCommand.addTarget { [weak self] _ in
             self?.pause(); return .success
         }
+        center.togglePlayPauseCommand.isEnabled = true
         center.togglePlayPauseCommand.addTarget { [weak self] _ in
             self?.togglePlayPause(); return .success
         }
-        center.nextTrackCommand.addTarget { [weak self] _ in
-            self?.next(); return .success
-        }
-        center.previousTrackCommand.addTarget { [weak self] _ in
-            self?.previous(); return .success
-        }
+
+        // The lock screen / Control Center only renders three transport buttons
+        // (one centre play/pause plus two side buttons), and it can show EITHER
+        // next/previous-track OR skip-forward/backward — not both. Enabling both
+        // makes them conflict and the skip-interval buttons never surface. We
+        // want the jump-ahead/behind buttons on the lock screen, so the
+        // next/previous-track commands are explicitly disabled here (they remain
+        // available via the in-app Player's own controls, which call next() /
+        // previous() directly rather than through the command centre).
+        center.nextTrackCommand.isEnabled = false
+        center.previousTrackCommand.isEnabled = false
+
+        center.skipForwardCommand.isEnabled = true
         center.skipForwardCommand.preferredIntervals = [30]
         center.skipForwardCommand.addTarget { [weak self] event in
             let interval = (event as? MPSkipIntervalCommandEvent)?.interval ?? 30
             self?.skipForward(interval)
             return .success
         }
+        center.skipBackwardCommand.isEnabled = true
         center.skipBackwardCommand.preferredIntervals = [15]
         center.skipBackwardCommand.addTarget { [weak self] event in
             let interval = (event as? MPSkipIntervalCommandEvent)?.interval ?? 15
             self?.skipBackward(interval)
             return .success
         }
+        center.changePlaybackPositionCommand.isEnabled = true
         center.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard let event = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
             self?.seek(to: event.positionTime)
@@ -295,8 +307,10 @@ final class PlaybackManager: NSObject, ObservableObject {
     }
 
     private func updateNowPlaying() {
+        let center = MPNowPlayingInfoCenter.default()
         guard let track = currentTrack else {
-            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            center.nowPlayingInfo = nil
+            center.playbackState = .stopped
             return
         }
         var info: [String: Any] = [
@@ -307,6 +321,10 @@ final class PlaybackManager: NSObject, ObservableObject {
             MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0
         ]
         info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = 1.0
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        center.nowPlayingInfo = info
+        // iOS 13+ uses an explicit playback state to decide whether (and how) to
+        // present the Now Playing controls on the lock screen; without it the
+        // controls can fail to surface or get stuck out of sync with playback.
+        center.playbackState = isPlaying ? .playing : .paused
     }
 }
