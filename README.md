@@ -160,10 +160,11 @@ the lock screen.
   placeholder with no picture or sound. When *only* such codecs are on offer (it
   happens when the on-device player JS can't be resolved and every H.264 URL,
   which needs nsig descrambling, gets dropped), the yt-dlp path runs a
-  **recovery**: it re-resolves forcing the **iOS/web_safari/mweb player
-  clients**, whose H.264 URLs need no descrambling — the same renditions Safari
-  plays. Only if that still yields nothing decodable does the download fail with
-  a clear `unplayableVideoCodec` message.
+  **recovery**: it re-resolves forcing alternate **player clients** (`ios`,
+  `web_safari`, `android`, `tv`, `mweb`, `web`) one at a time, whose H.264 URLs
+  need no descrambling — the same renditions Safari plays — and takes the first
+  that yields a decodable stream. Only if every client still yields nothing
+  decodable does the download fail with a clear `unplayableVideoCodec` message.
 
 ## Extraction: native primary + yt-dlp fallback
 

@@ -212,35 +212,69 @@ final class YoutubeDLExtractor: MediaExtractor {
                                       category: String,
                                       onDownloadStart: @escaping () -> Void,
                                       onProgress: @escaping (Double) -> Void) async throws -> ExtractedMedia? {
-        appLog("Recovery: re-resolving with forced iOS/web_safari player client for H.264…",
-               level: .warning, category: category)
+        // Try clients one at a time with fallback: an unsupported client name
+        // (older on-device yt-dlp) or a PO-token-gated client fails only its own
+        // attempt instead of the whole recovery. Ordered by how reliably each
+        // returns H.264 URLs that need no nsig descrambling.
+        let clientSets: [[String]] = [["ios"], ["web_safari"], ["android"], ["tv"], ["mweb"], ["web"]]
 
-        let info: PythonObject
-        do {
-            info = try await withHeartbeat("Still re-resolving (forced client)", category: category) {
-                let ytdlpModule = Python.import("yt_dlp")
-                let options: PythonObject = [
-                    "quiet": true,
-                    "no_warnings": true,
-                    "noplaylist": true,
-                    "nocheckcertificate": true,
-                    "extractor_args": ["youtube": ["player_client": ["ios", "web_safari", "mweb"]]],
-                ]
-                let ytdlp = ytdlpModule.YoutubeDL(options)
-                return try ytdlp.extract_info.throwing.dynamicallyCall(withKeywordArguments: [
-                    "": url.absoluteString, "download": false, "process": true,
-                ])
+        for clients in clientSets {
+            let label = clients.joined(separator: ",")
+            appLog("Recovery: re-resolving with forced player client \(label) for H.264…",
+                   level: .warning, category: category)
+
+            let info: PythonObject
+            do {
+                info = try await withHeartbeat("Still re-resolving (\(label))", category: category) {
+                    let ytdlpModule = Python.import("yt_dlp")
+                    let options: PythonObject = [
+                        "quiet": true,
+                        "noplaylist": true,
+                        "nocheckcertificate": true,
+                        "extractor_args": ["youtube": ["player_client": PythonObject(clients)]],
+                    ]
+                    let ytdlp = ytdlpModule.YoutubeDL(options)
+                    return try ytdlp.extract_info.throwing.dynamicallyCall(withKeywordArguments: [
+                        "": url.absoluteString, "download": false, "process": true,
+                    ])
+                }
+            } catch {
+                appLog("Recovery: client \(label) failed: \(error.localizedDescription)",
+                       level: .warning, category: category)
+                // localizedDescription is the opaque "PythonError error 0"; the
+                // full value carries the real Python exception text.
+                appLog("Recovery detail (\(label)): \(String(describing: error))",
+                       level: .debug, category: category)
+                continue
             }
-        } catch {
-            appLog("Recovery extraction failed: \(error.localizedDescription)", level: .error, category: category)
-            return nil
+
+            if let media = try await downloadPlayable(from: info, client: label, url: url,
+                                                       category: category,
+                                                       onDownloadStart: onDownloadStart,
+                                                       onProgress: onProgress) {
+                return media
+            }
+            appLog("Recovery: client \(label) returned no H.264/HEVC video — trying next.",
+                   category: category)
         }
 
+        appLog("Recovery: no forced client produced a device-playable video.",
+               level: .error, category: category)
+        return nil
+    }
+
+    /// Picks the tallest H.264/HEVC video (+ best m4a audio) from a resolved
+    /// yt-dlp info dict and downloads + merges it. Returns nil if the dict has no
+    /// decodable video. Every dict read uses `.get(...)` so a missing key yields
+    /// Python `None` rather than trapping.
+    private func downloadPlayable(from info: PythonObject,
+                                  client: String,
+                                  url: URL,
+                                  category: String,
+                                  onDownloadStart: @escaping () -> Void,
+                                  onProgress: @escaping (Double) -> Void) async throws -> ExtractedMedia? {
         let formatsObj = info.get("formats")
-        if formatsObj == Python.None {
-            appLog("Recovery: extraction returned no formats.", level: .error, category: category)
-            return nil
-        }
+        if formatsObj == Python.None { return nil }
 
         func headers(_ format: PythonObject) -> [String: String] {
             var result: [String: String] = [:]
@@ -274,12 +308,9 @@ final class YoutubeDLExtractor: MediaExtractor {
             }
         }
 
-        guard let video = videos.max(by: { $0.height < $1.height }) else {
-            appLog("Recovery: forced client still offered no H.264/HEVC video.", level: .error, category: category)
-            return nil
-        }
+        guard let video = videos.max(by: { $0.height < $1.height }) else { return nil }
         let audio = audios.max(by: { $0.abr < $1.abr })
-        appLog("Recovery selected H.264 video \(video.height)p (\(video.vcodec))\(audio == nil ? " · no separate audio" : " + m4a audio")",
+        appLog("Recovery (\(client)) selected H.264 video \(video.height)p (\(video.vcodec))\(audio == nil ? " · no separate audio" : " + m4a audio")",
                level: .success, category: category)
 
         func request(_ urlString: String, _ headerFields: [String: String]) -> URLRequest? {
