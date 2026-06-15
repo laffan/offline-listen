@@ -221,8 +221,15 @@ final class PlaybackManager: NSObject, ObservableObject {
         if now.isFinite, abs(progress.currentTime - now) > 0.01 {
             progress.currentTime = now
         }
-        if let itemDuration = player.currentItem?.duration.seconds,
-           itemDuration.isFinite, itemDuration > 0, itemDuration != progress.duration {
+        // The duration recorded at download time (track.duration, shown in the
+        // library) is authoritative. We only read it off the player item as a
+        // fallback when we never got one — overwriting a known-good value here
+        // is wrong because AVFoundation over-reports the duration of some
+        // YouTube audio (HE-AAC/SBR streams report ~2x their real length), which
+        // made the player show double the library's figure for the same track.
+        if progress.duration <= 0,
+           let itemDuration = player.currentItem?.duration.seconds,
+           itemDuration.isFinite, itemDuration > 0 {
             progress.duration = itemDuration
         }
         updateNowPlaying()
