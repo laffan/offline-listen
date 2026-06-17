@@ -116,6 +116,21 @@ final class YoutubeDLExtractor: MediaExtractor {
     /// Deletes the cached yt-dlp Python module and re-downloads it. Useful when
     /// extraction starts failing because the engine is stale relative to
     /// YouTube's frequent changes.
+    /// Canonicalises a YouTube watch URL to `https://www.youtube.com/watch?v=ID`,
+    /// dropping the mobile host (`m.youtube.com`) and tracking/autoplay query
+    /// params (`pp`, `ra`, …). A mobile or heavily-parameterised URL can push
+    /// yt-dlp's on-device extraction down a slower/different code path; the bare
+    /// desktop watch form is what the extractor handles most reliably. Falls back
+    /// to the original URL when no video id can be parsed (non-watch URLs are left
+    /// untouched).
+    static func canonicalURL(_ url: URL) -> URL {
+        guard let id = YouTubeKitExtractor.videoID(from: url),
+              let canonical = URL(string: "https://www.youtube.com/watch?v=\(id)") else {
+            return url
+        }
+        return canonical
+    }
+
     static func refreshEngine() async {
         let category = "yt-dlp"
         #if canImport(YoutubeDL)
@@ -194,33 +209,41 @@ final class YoutubeDLExtractor: MediaExtractor {
 #endif
 
 #if canImport(YoutubeDL) && canImport(PythonKit)
-    /// Recovery for videos whose default extraction exposes only video codecs
-    /// AVFoundation can't decode (e.g. AV1-only, which happens when the on-device
-    /// player JS can't be resolved and every H.264 URL — needing nsig
-    /// descrambling — is dropped). Re-runs yt-dlp's info extraction forcing the
-    /// iOS/web_safari/mweb player clients, whose H.264 (avc1) streams carry URLs
-    /// that need no descrambling — the same renditions Safari plays. Downloads
-    /// and merges the result, or returns nil if even these clients offer no
-    /// decodable video (caller then surfaces the clear error).
+    /// Re-resolves a URL forcing yt-dlp's `ios`/`web_safari`/… player clients,
+    /// whose stream URLs need **no nsig descrambling** — the same renditions
+    /// Safari plays. Used in two situations:
+    ///
+    /// - **Codec recovery** (`mode == .video`): the default extraction exposed
+    ///   only video codecs AVFoundation can't decode (e.g. AV1-only, which
+    ///   happens when the on-device player JS can't be resolved and every H.264
+    ///   URL — needing descrambling — is dropped). These clients return decodable
+    ///   H.264 (avc1).
+    /// - **Timeout/failure recovery** (either mode): the default `extractInfo`
+    ///   stalled or threw. On device, the default web client needs nsig
+    ///   descrambling run through the slow pure-Python JS interpreter, which can
+    ///   hang past the timeout; these clients skip that step entirely, so they're
+    ///   fast and succeed for videos that play in the browser.
     ///
     /// Drives Python directly (mirroring YoutubeDL-iOS's own internal calls)
     /// because the structured `extractInfo` API can't pass `extractor_args`.
     /// `.throwing` converts Python exceptions to Swift errors, and every dict
     /// access uses `.get(...)` so a missing key yields Python `None` rather than
-    /// trapping.
-    private func recoverPlayableVideo(url: URL,
-                                      category: String,
-                                      onDownloadStart: @escaping () -> Void,
-                                      onProgress: @escaping (Double) -> Void) async throws -> ExtractedMedia? {
+    /// trapping. Returns nil if no client yields a usable stream (caller then
+    /// surfaces a clear error).
+    private func extractViaForcedClients(url: URL,
+                                         mode: DownloadMode,
+                                         category: String,
+                                         onDownloadStart: @escaping () -> Void,
+                                         onProgress: @escaping (Double) -> Void) async throws -> ExtractedMedia? {
         // Try clients one at a time with fallback: an unsupported client name
         // (older on-device yt-dlp) or a PO-token-gated client fails only its own
         // attempt instead of the whole recovery. Ordered by how reliably each
-        // returns H.264 URLs that need no nsig descrambling.
+        // returns URLs that need no nsig descrambling.
         let clientSets: [[String]] = [["ios"], ["web_safari"], ["android"], ["tv"], ["mweb"], ["web"]]
 
         for clients in clientSets {
             let label = clients.joined(separator: ",")
-            appLog("Recovery: re-resolving with forced player client \(label) for H.264…",
+            appLog("Forced-client extract: re-resolving with player client \(label)…",
                    level: .warning, category: category)
 
             let info: PythonObject
@@ -239,26 +262,28 @@ final class YoutubeDLExtractor: MediaExtractor {
                     ])
                 }
             } catch {
-                appLog("Recovery: client \(label) failed: \(error.localizedDescription)",
+                appLog("Forced-client extract: client \(label) failed: \(error.localizedDescription)",
                        level: .warning, category: category)
                 // localizedDescription is the opaque "PythonError error 0"; the
                 // full value carries the real Python exception text.
-                appLog("Recovery detail (\(label)): \(String(describing: error))",
+                appLog("Forced-client detail (\(label)): \(String(describing: error))",
                        level: .debug, category: category)
                 continue
             }
 
-            if let media = try await downloadPlayable(from: info, client: label, url: url,
-                                                       category: category,
-                                                       onDownloadStart: onDownloadStart,
-                                                       onProgress: onProgress) {
-                return media
-            }
-            appLog("Recovery: client \(label) returned no H.264/HEVC video — trying next.",
+            let media = mode == .video
+                ? try await downloadPlayable(from: info, client: label, url: url,
+                                             category: category,
+                                             onDownloadStart: onDownloadStart, onProgress: onProgress)
+                : try await downloadBestAudio(from: info, client: label, url: url,
+                                              category: category,
+                                              onDownloadStart: onDownloadStart, onProgress: onProgress)
+            if let media { return media }
+            appLog("Forced-client extract: client \(label) returned no usable \(mode == .video ? "H.264/HEVC video" : "audio") — trying next.",
                    category: category)
         }
 
-        appLog("Recovery: no forced client produced a device-playable video.",
+        appLog("Forced-client extract: no player client produced a usable \(mode == .video ? "video" : "audio") stream.",
                level: .error, category: category)
         return nil
     }
@@ -338,6 +363,99 @@ final class YoutubeDLExtractor: MediaExtractor {
                level: .success, category: category)
         return ExtractedMedia(fileURL: dest, title: title, duration: duration, isVideo: true)
     }
+
+    /// Audio counterpart to `downloadPlayable`: picks the best audio from a
+    /// forced-client info dict — a dedicated audio-only m4a if present (no
+    /// transcoding), otherwise the smallest muxed mp4 with its audio extracted to
+    /// m4a. Mirrors the default path's audio selection. Returns nil if the dict
+    /// offers no usable audio. Every dict read uses `.get(...)` so a missing key
+    /// yields Python `None` rather than trapping.
+    private func downloadBestAudio(from info: PythonObject,
+                                   client: String,
+                                   url: URL,
+                                   category: String,
+                                   onDownloadStart: @escaping () -> Void,
+                                   onProgress: @escaping (Double) -> Void) async throws -> ExtractedMedia? {
+        let formatsObj = info.get("formats")
+        if formatsObj == Python.None { return nil }
+
+        func headers(_ format: PythonObject) -> [String: String] {
+            var result: [String: String] = [:]
+            let h = format.get("http_headers")
+            if h == Python.None { return result }
+            for key in h.keys() {
+                if let k = String(key), let v = String(h[key]) { result[k] = v }
+            }
+            return result
+        }
+
+        struct AudioCand { let url: String; let abr: Double; let headers: [String: String] }
+        struct MuxedCand { let url: String; let height: Int; let headers: [String: String] }
+        var audios: [AudioCand] = []
+        var muxed: [MuxedCand] = []
+
+        for format in formatsObj {
+            guard let furl = String(format.get("url")) else { continue }
+            let vcodec = String(format.get("vcodec")) ?? "none"
+            let acodec = String(format.get("acodec")) ?? "none"
+            let ext = String(format.get("ext")) ?? ""
+            let hasVideo = vcodec != "none" && !vcodec.isEmpty
+            let hasAudio = acodec != "none" && !acodec.isEmpty
+
+            if hasAudio, !hasVideo, ext == "m4a" {
+                let abr = Double(format.get("abr")) ?? Double(Int(format.get("tbr")) ?? 0)
+                audios.append(AudioCand(url: furl, abr: abr, headers: headers(format)))
+            } else if hasAudio, hasVideo, ext == "mp4" {
+                muxed.append(MuxedCand(url: furl, height: Int(format.get("height")) ?? Int.max,
+                                       headers: headers(format)))
+            }
+        }
+
+        func request(_ urlString: String, _ headerFields: [String: String]) -> URLRequest? {
+            guard let u = URL(string: urlString) else { return nil }
+            var r = URLRequest(url: u)
+            for (key, value) in headerFields { r.setValue(value, forHTTPHeaderField: key) }
+            return r
+        }
+
+        let title = String(info.get("title")) ?? url.absoluteString
+        let reportedDuration = Double(info.get("duration")) ?? 0
+
+        // Prefer a dedicated audio-only m4a — no transcoding, no extraction step.
+        if let audio = audios.max(by: { $0.abr < $1.abr }),
+           let audioRequest = request(audio.url, audio.headers) {
+            appLog("Forced-client (\(client)) selected audio-only m4a \(Int(audio.abr)) kbps",
+                   level: .success, category: category)
+            let dest = AppPaths.work.appendingPathComponent("\(UUID().uuidString).m4a")
+            onDownloadStart()
+            try await AudioStreamDownloader.download(baseRequest: audioRequest, expectedSize: nil,
+                                                     to: dest, category: category, onProgress: onProgress)
+            let duration = reportedDuration > 0 ? reportedDuration : await mediaDuration(of: dest)
+            let size = (try? FileManager.default.attributesOfItem(atPath: dest.path)[.size] as? Int) ?? nil
+            appLog("Forced-client audio download finished: \(dest.lastPathComponent)\(size.map { " (\($0 / 1024) KB)" } ?? "")",
+                   level: .success, category: category)
+            return ExtractedMedia(fileURL: dest, title: title, duration: duration, isVideo: false)
+        }
+
+        // No audio-only stream: take the smallest muxed mp4 and extract its audio.
+        guard let video = muxed.min(by: { $0.height < $1.height }),
+              let videoRequest = request(video.url, video.headers) else {
+            return nil
+        }
+        appLog("Forced-client (\(client)) no audio-only stream — using muxed mp4 \(video.height)p + audio extraction",
+               level: .warning, category: category)
+        var dest = AppPaths.work.appendingPathComponent("\(UUID().uuidString).mp4")
+        onDownloadStart()
+        try await AudioStreamDownloader.download(baseRequest: videoRequest, expectedSize: nil,
+                                                 to: dest, category: category, onProgress: onProgress)
+        dest = try await VideoAudioExtractor.extractAudio(fromVideo: dest, category: category)
+
+        let duration = reportedDuration > 0 ? reportedDuration : await mediaDuration(of: dest)
+        let size = (try? FileManager.default.attributesOfItem(atPath: dest.path)[.size] as? Int) ?? nil
+        appLog("Forced-client audio extraction finished: \(dest.lastPathComponent)\(size.map { " (\($0 / 1024) KB)" } ?? "")",
+               level: .success, category: category)
+        return ExtractedMedia(fileURL: dest, title: title, duration: duration, isVideo: false)
+    }
 #endif
 
     func extractMedia(from url: URL,
@@ -346,7 +464,15 @@ final class YoutubeDLExtractor: MediaExtractor {
                       onProgress: @escaping (Double) -> Void) async throws -> ExtractedMedia {
         let category = "yt-dlp"
         #if canImport(YoutubeDL)
+        // Canonicalise away the mobile host / tracking params before handing the
+        // URL to yt-dlp (they can trigger a slower extraction path on device).
+        let originalURL = url
+        let url = Self.canonicalURL(url)
         do {
+            if url != originalURL {
+                appLog("Normalized URL \(originalURL.absoluteString) → \(url.absoluteString)",
+                       level: .debug, category: category)
+            }
             appLog("Resolving \(url.absoluteString)", category: category)
 
             // First run: fetch the on-device yt-dlp Python module if missing.
@@ -364,7 +490,31 @@ final class YoutubeDLExtractor: MediaExtractor {
             let youtubeDL = YoutubeDL()
 
             appLog("Extracting video info (running yt-dlp)…", category: category)
-            let (formats, info) = try await resolveInfo(youtubeDL, url: url, category: category)
+            let formats: [Format]
+            let info: Info
+            do {
+                (formats, info) = try await resolveInfo(youtubeDL, url: url, category: category)
+            } catch {
+                // The default extraction stalled (the on-device web client needs
+                // nsig descrambling via the slow pure-Python JS interpreter, which
+                // can hang past the timeout) or failed outright. Retry forcing the
+                // ios/web_safari/… player clients, whose URLs need no descrambling
+                // — fast, and the same renditions Safari plays, so they succeed for
+                // videos that work in the browser. Cancellation is never retried.
+                if error is CancellationError || (error as? URLError)?.code == .cancelled || Task.isCancelled {
+                    throw error
+                }
+                #if canImport(PythonKit)
+                appLog("Default extraction failed (\(error.localizedDescription)) — retrying with forced fast player clients…",
+                       level: .warning, category: category)
+                if let media = try await extractViaForcedClients(
+                    url: url, mode: mode, category: category,
+                    onDownloadStart: onDownloadStart, onProgress: onProgress) {
+                    return media
+                }
+                #endif
+                throw error
+            }
             appLog("Info: \"\(info.title)\" · \(formats.count) formats · \(Int(info.duration ?? 0))s",
                    level: .success, category: category)
 
@@ -409,8 +559,8 @@ final class YoutubeDLExtractor: MediaExtractor {
                     // Recovery: re-resolve forcing a player client that returns
                     // H.264. Bypasses the rest of this method on success.
                     #if canImport(PythonKit)
-                    if let recovered = try await recoverPlayableVideo(
-                        url: url, category: category,
+                    if let recovered = try await extractViaForcedClients(
+                        url: url, mode: .video, category: category,
                         onDownloadStart: onDownloadStart, onProgress: onProgress) {
                         return recovered
                     }

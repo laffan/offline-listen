@@ -188,7 +188,20 @@ Cancel doesn't trigger the fallback):
    `AudioOnlyFormat`.
 2. **`YoutubeDLExtractor` (fallback)** — the yt-dlp path, used when the native
    extractor fails. `extractInfo(url:)` resolves the video; the Download tab's
-   "⋯" menu has **Refresh yt-dlp engine** to re-pull a stale module.
+   "⋯" menu has **Refresh yt-dlp engine** to re-pull a stale module. The URL is
+   first **canonicalised** to `https://www.youtube.com/watch?v=ID` — the mobile
+   host (`m.youtube.com`) and tracking/autoplay params (`pp`, `ra`, …) are
+   stripped, since a parameterised mobile URL can push on-device extraction down
+   a slower path.
+
+   If that default extraction **stalls or times out** (90s) — which happens when
+   yt-dlp's default *web* client has to run YouTube's nsig descrambling through
+   the slow pure-Python JS interpreter on device — the extractor automatically
+   **retries with forced fast player clients** (`ios`, `web_safari`, `android`,
+   `tv`, `mweb`, `web`, one at a time). Those clients return stream URLs that
+   need no descrambling — the same renditions Safari plays, so they succeed for
+   videos that play fine in the browser but hang the default path. This forced-
+   client recovery handles **both audio and video** downloads (see below).
 
 If a video exposes **no dedicated audio-only stream**, both extractors fall back
 to downloading the smallest muxed (video+audio) **MP4** and extracting its audio
@@ -207,14 +220,18 @@ If the YouTubeKit package isn't linked yet, its extractor throws and the composi
 falls back to yt-dlp automatically. To exercise the UI with no native dependency
 at all, point `DownloadManager`'s default extractor at `MockExtractor`.
 
-The H.264 **recovery** path drives yt-dlp's Python `YoutubeDL` directly (to pass
-`extractor_args`, which the structured `extractInfo` API can't), so it needs
-**PythonKit** importable from the app target. PythonKit is a transitive
-dependency of YoutubeDL-iOS; if `import PythonKit` doesn't resolve, add it as an
-explicit package dependency on the **OfflineListen** target in
+The forced-client **recovery** (`extractViaForcedClients`) drives yt-dlp's Python
+`YoutubeDL` directly (to pass `extractor_args`, which the structured `extractInfo`
+API can't), so it needs **PythonKit** importable from the app target. It serves
+two cases: re-resolving for decodable **H.264** when the default path offers only
+AV1/VP9 (video mode), and re-resolving when the default path **stalls/times out
+or fails** (audio *or* video). PythonKit is a transitive dependency of
+YoutubeDL-iOS; if `import PythonKit` doesn't resolve, add it as an explicit
+package dependency on the **OfflineListen** target in
 *Project ▸ Package Dependencies*. Guarded by `#if canImport(PythonKit)`, so
-without it the recovery compiles out and an AV1-only video fails with the clear
-`unplayableVideoCodec` message instead.
+without it the recovery compiles out — an AV1-only video then fails with the
+clear `unplayableVideoCodec` message, and a timed-out extraction with the
+timeout error.
 
 ## Status
 
