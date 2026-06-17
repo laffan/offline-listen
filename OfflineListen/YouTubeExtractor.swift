@@ -155,8 +155,11 @@ final class YoutubeDLExtractor: MediaExtractor {
     /// The timeout fires from a **GCD timer**, not a Swift-concurrency task: the
     /// underlying yt-dlp call blocks its thread synchronously and can starve the
     /// cooperative pool, which would prevent a `Task.sleep`-based timeout from
-    /// ever running. If it times out we abandon the extraction (the orphaned
-    /// Python work keeps running until it returns, but the queue moves on).
+    /// ever running. On timeout we stop *waiting* and let the queue move on, but
+    /// we deliberately keep observing the orphaned extraction: when it eventually
+    /// returns or throws, we log that real outcome — it's the only place yt-dlp's
+    /// own error (bot check, unavailable video, signature failure) surfaces,
+    /// since our own timeout message would otherwise bury it.
     private func resolveInfo(_ youtubeDL: YoutubeDL,
                              url: URL,
                              category: String,
@@ -177,18 +180,24 @@ final class YoutubeDLExtractor: MediaExtractor {
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<([Format], Info), Error>) in
             let lock = NSLock()
             var finished = false
-            func finish(_ work: () -> Void) {
+            // Returns true if *this* call was the one that settled the
+            // continuation (so the late observer below can tell whether it raced
+            // in after the timeout already fired).
+            func finish(_ work: () -> Void) -> Bool {
                 lock.lock(); defer { lock.unlock() }
-                guard !finished else { return }
+                guard !finished else { return false }
                 finished = true
                 work()
+                return true
             }
 
             let timer = DispatchSource.makeTimerSource(queue: .global(qos: .userInitiated))
             timer.schedule(deadline: .now() + timeout)
             timer.setEventHandler {
-                finish {
-                    extraction.cancel()
+                _ = finish {
+                    // Don't cancel the extraction: cancellation wouldn't stop the
+                    // synchronous Python work anyway, and letting it run to the end
+                    // is what lets us log yt-dlp's real result/error below.
                     continuation.resume(throwing: ExtractorError.downloadFailed(
                         "Timed out after \(Int(timeout))s extracting info. YouTube may have changed — try the ⋯ menu → Refresh yt-dlp engine, or a different video."))
                 }
@@ -199,16 +208,118 @@ final class YoutubeDLExtractor: MediaExtractor {
             Task {
                 do {
                     let value = try await extraction.value
-                    finish { timer.cancel(); continuation.resume(returning: value) }
+                    let settled = finish { timer.cancel(); continuation.resume(returning: value) }
+                    if !settled {
+                        // We already timed out and moved on; the abandoned run
+                        // finally succeeded. The 90s limit was simply too tight
+                        // for this video (or it stalled then recovered).
+                        appLog("Note: the extraction that timed out actually succeeded after \(Int(Date().timeIntervalSince(started)))s (\(value.0.count) formats). The video isn't broken — extraction was just slow this time.",
+                               level: .warning, category: category)
+                    }
                 } catch {
-                    finish { timer.cancel(); continuation.resume(throwing: error) }
+                    let settled = finish { timer.cancel(); continuation.resume(throwing: error) }
+                    if !settled {
+                        // The real reason the default extraction was failing,
+                        // arriving after our timeout message. This is the line to
+                        // read when diagnosing a timeout.
+                        appLog("yt-dlp's own error (arrived \(Int(Date().timeIntervalSince(started)))s in, after the timeout): \(error.localizedDescription)",
+                               level: .error, category: category)
+                        appLog("Detail: \(String(describing: error))", level: .debug, category: category)
+                        if let hint = Self.diagnosticHint(for: "\(error.localizedDescription) \(String(describing: error))") {
+                            appLog("Hint: \(hint)", level: .warning, category: category)
+                        }
+                    }
                 }
             }
         }
     }
+
+    /// Maps common yt-dlp / YouTube failure signatures to a plain-language hint so
+    /// an otherwise opaque error in the log comes with a likely cause and next
+    /// step. Returns nil when nothing recognisable matches (so we never invent a
+    /// diagnosis). Pure string matching — safe to call from any path.
+    static func diagnosticHint(for text: String) -> String? {
+        let t = text.lowercased()
+        func has(_ s: String) -> Bool { t.contains(s) }
+
+        if has("sign in to confirm") || has("not a bot") || has("confirm you’re not a bot") {
+            return "YouTube is applying a bot check to this request (it wants a signed-in / PO-token-backed client). It commonly hits one video while others pass. Retrying later, switching network, or the forced ios/tv clients often clears it."
+        }
+        if has("po token") || has("po_token") || has("missing a po") {
+            return "This video wants a PO token. The forced ios/tv player clients sidestep it; if they also fail, YouTube is gating this particular video harder than usual."
+        }
+        if has("nsig") || has("signature extraction failed") || (has("unable to extract") && has("player")) {
+            return "yt-dlp couldn't run YouTube's signature/nsig descrambling — usually the player JS changed and the cached engine is stale. Try ⋯ → Refresh yt-dlp engine, then retry."
+        }
+        if has("private video") { return "The video is private — not downloadable." }
+        if has("members-only") || has("join this channel") { return "Members-only video — needs the channel membership; not downloadable here." }
+        if has("age") && (has("confirm your age") || has("age-restricted") || has("inappropriate") || has("sign in")) {
+            return "Age-restricted video — yt-dlp has no signed-in session to confirm age."
+        }
+        if has("video unavailable") || has("this video is not available") || has("removed by the uploader") {
+            return "YouTube reports the video as unavailable — region block, takedown, or a stale/changed id."
+        }
+        if has("requested format is not available") {
+            return "yt-dlp resolved the video but none of the requested formats matched — the codec/format filter may be too strict for what this video offers."
+        }
+        if has("unable to download webpage") || has("failed to resolve") || has("connection") || has("network is") {
+            return "A network error reaching YouTube — check connectivity and retry."
+        }
+        return nil
+    }
 #endif
 
 #if canImport(YoutubeDL) && canImport(PythonKit)
+    /// Builds a Python object that yt-dlp will treat as its `logger`, collecting
+    /// every debug/info/warning/error message into a list we can drain into the
+    /// app log afterwards. This is how yt-dlp's *own* diagnostics — "Sign in to
+    /// confirm you're not a bot", "missing a PO token", "Some formats may be
+    /// missing", signature/nsig failures — become visible, instead of being
+    /// swallowed silently. Returns nil (capture simply disabled) if the tiny
+    /// Python class can't be defined, so it never blocks an extraction.
+    private func makeCaptureLogger() -> PythonObject? {
+        let code = "class _OLLogger:\n"
+            + "    def __init__(self):\n"
+            + "        self.lines = []\n"
+            + "    def debug(self, m):\n"
+            + "        self.lines.append(('debug', str(m)))\n"
+            + "    def info(self, m):\n"
+            + "        self.lines.append(('info', str(m)))\n"
+            + "    def warning(self, m):\n"
+            + "        self.lines.append(('warning', str(m)))\n"
+            + "    def error(self, m):\n"
+            + "        self.lines.append(('error', str(m)))\n"
+        do {
+            let builtins = Python.import("builtins")
+            let namespace = builtins.dict()
+            _ = try builtins.exec.throwing.dynamicallyCall(withArguments: [code.pythonObject, namespace])
+            return namespace["_OLLogger"]()
+        } catch {
+            appLog("yt-dlp log capture unavailable: \(error.localizedDescription)", level: .debug, category: "yt-dlp")
+            return nil
+        }
+    }
+
+    /// Forwards everything a capture logger collected into the app log, tagged
+    /// with the client so it's clear which attempt produced it. yt-dlp's warning
+    /// and error lines are the diagnostic gold; debug lines are kept but at
+    /// `.debug` level. Capped to the most recent lines so a chatty extraction
+    /// can't flood the log.
+    private func drainCaptureLogger(_ logger: PythonObject, client: String, category: String) {
+        let lines = logger.lines
+        let count = Int(Python.len(lines)) ?? 0
+        guard count > 0 else { return }
+        let start = max(0, count - 50)
+        for i in start..<count {
+            let entry = lines[i]
+            let kind = String(entry[0]) ?? "info"
+            let message = (String(entry[1]) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if message.isEmpty { continue }
+            let level: LogLevel = kind == "error" ? .error : (kind == "warning" ? .warning : .debug)
+            appLog("yt-dlp(\(client)): \(message)", level: level, category: category)
+        }
+    }
+
     /// Re-resolves a URL forcing yt-dlp's `ios`/`web_safari`/… player clients,
     /// whose stream URLs need **no nsig descrambling** — the same renditions
     /// Safari plays. Used in two situations:
@@ -246,28 +357,42 @@ final class YoutubeDLExtractor: MediaExtractor {
             appLog("Forced-client extract: re-resolving with player client \(label)…",
                    level: .warning, category: category)
 
+            let logger = makeCaptureLogger()
             let info: PythonObject
             do {
                 info = try await withHeartbeat("Still re-resolving (\(label))", category: category) {
                     let ytdlpModule = Python.import("yt_dlp")
+                    // A `None` logger is what yt-dlp falls back to anyway, so this
+                    // is a no-op when capture couldn't be installed.
                     let options: PythonObject = [
                         "quiet": true,
                         "noplaylist": true,
                         "nocheckcertificate": true,
                         "extractor_args": ["youtube": ["player_client": PythonObject(clients)]],
+                        "logger": logger ?? Python.None,
                     ]
                     let ytdlp = ytdlpModule.YoutubeDL(options)
                     return try ytdlp.extract_info.throwing.dynamicallyCall(withKeywordArguments: [
                         "": url.absoluteString, "download": false, "process": true,
                     ])
                 }
+                // Surface any warnings yt-dlp emitted even on a success (skipped
+                // formats, PO-token notices) — they explain odd selections later.
+                if let logger { drainCaptureLogger(logger, client: label, category: category) }
             } catch {
+                // Drain first: yt-dlp's logger usually holds the *real* reason
+                // (bot check, unavailable, signature failure) the bare exception
+                // text only hints at.
+                if let logger { drainCaptureLogger(logger, client: label, category: category) }
                 appLog("Forced-client extract: client \(label) failed: \(error.localizedDescription)",
                        level: .warning, category: category)
                 // localizedDescription is the opaque "PythonError error 0"; the
                 // full value carries the real Python exception text.
-                appLog("Forced-client detail (\(label)): \(String(describing: error))",
-                       level: .debug, category: category)
+                let detail = String(describing: error)
+                appLog("Forced-client detail (\(label)): \(detail)", level: .debug, category: category)
+                if let hint = Self.diagnosticHint(for: "\(error.localizedDescription) \(detail)") {
+                    appLog("Hint (\(label)): \(hint)", level: .warning, category: category)
+                }
                 continue
             }
 
@@ -633,7 +758,11 @@ final class YoutubeDLExtractor: MediaExtractor {
             // The localized description hides yt-dlp/Python exception text; the
             // full value usually contains the real reason (e.g. "Sign in to
             // confirm you're not a bot", "Video unavailable").
-            appLog("Detail: \(String(describing: error))", level: .debug, category: category)
+            let detail = String(describing: error)
+            appLog("Detail: \(detail)", level: .debug, category: category)
+            if let hint = Self.diagnosticHint(for: "\(error.localizedDescription) \(detail)") {
+                appLog("Hint: \(hint)", level: .warning, category: category)
+            }
             throw (error as? ExtractorError) ?? ExtractorError.downloadFailed(error.localizedDescription)
         }
         #else

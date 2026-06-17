@@ -233,6 +233,27 @@ without it the recovery compiles out — an AV1-only video then fails with the
 clear `unplayableVideoCodec` message, and a timed-out extraction with the
 timeout error.
 
+### Diagnosing failures from the Log
+
+The **Log** tab is the primary diagnostic tool, so failures are made as legible
+as possible rather than collapsing to one opaque line:
+
+- **The timeout no longer hides yt-dlp's real error.** When the 90s limit fires
+  the queue moves on, but the abandoned extraction keeps running and its *actual*
+  outcome is logged when it finally settles — either `yt-dlp's own error (arrived
+  Ns in…)` with the real reason, or a note that it simply succeeded late (so you
+  know the video isn't broken, extraction was just slow).
+- **yt-dlp's own messages are captured.** The forced-client path installs a
+  Python `logger` so yt-dlp's warnings/errors — "Sign in to confirm you're not a
+  bot", "missing a PO token", "Some formats may be missing", signature/nsig
+  failures — appear in the log tagged `yt-dlp(<client>):`, instead of being
+  swallowed.
+- **Plain-language hints.** `diagnosticHint(for:)` maps common signatures (bot
+  check, PO token, private/members-only/age-restricted, unavailable, stale nsig
+  engine, network) to a `Hint:` line suggesting the likely cause and next step.
+  It returns nothing when it doesn't recognise the error — it never invents a
+  diagnosis.
+
 ## Status
 
 Built as a complete, ready-to-open Xcode project, authored on Linux without an
