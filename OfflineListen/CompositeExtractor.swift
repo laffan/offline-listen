@@ -21,6 +21,15 @@ final class CompositeExtractor: MediaExtractor {
                       mode: DownloadMode,
                       onDownloadStart: @escaping () -> Void,
                       onProgress: @escaping (Double) -> Void) async throws -> ExtractedMedia {
+        // Skip the primary entirely for URLs it can't handle (e.g. the native
+        // YouTube extractor on a Vimeo/SoundCloud link) — going straight to the
+        // fallback avoids a noisy, guaranteed failure in the log.
+        guard primary.canHandle(url) else {
+            appLog("\(primaryName) doesn't handle this URL — using \(fallbackName).", category: "Extract")
+            return try await fallback.extractMedia(from: url, mode: mode,
+                                                   onDownloadStart: onDownloadStart,
+                                                   onProgress: onProgress)
+        }
         do {
             appLog("Trying \(primaryName)…", category: "Extract")
             return try await primary.extractMedia(from: url, mode: mode,

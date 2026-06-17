@@ -12,10 +12,12 @@ locked.
 
 Three screens (tabs):
 
-1. **Download** — paste one or more URLs (whitespace/line-break separated; only
-   YouTube links are queued, the rest are skipped), choose **Audio** or **Video**
-   (default Audio), watch the queue. Swipe a row for **Cancel** (active/queued),
-   **Restart**, or **Clear**; tap a finished row to play it.
+1. **Download** — paste one or more URLs (whitespace/line-break separated; any
+   http(s) link is queued and the rest of a pasted blob is skipped), choose
+   **Audio** or **Video** (default Audio), watch the queue. Links from **any site
+   yt-dlp supports** work — YouTube, Vimeo, SoundCloud and ~hundreds more — not
+   just YouTube. Swipe a row for **Cancel** (active/queued), **Restart**, or
+   **Clear**; tap a finished row to play it.
 2. **Library** — downloaded tracks; tap to play. A **filter** (All / Music /
    Podcasts / Video) is at the top. Swipe **left** for Delete/Share/Archive (and
    bulk versions via **Select**); swipe **right** on an audio track to classify
@@ -180,12 +182,16 @@ skip buttons silently fail to appear, so `PlaybackManager` explicitly disables
 
 Extraction sits behind the `MediaExtractor` protocol, and `CompositeExtractor`
 tries a primary then a fallback (cancellation is never treated as a failure, so
-Cancel doesn't trigger the fallback):
+Cancel doesn't trigger the fallback). Each extractor advertises which URLs it can
+handle via `canHandle(_:)`, so the composite **skips** a primary that doesn't
+apply (the YouTube-only native extractor on a Vimeo/SoundCloud link) and goes
+straight to yt-dlp, instead of logging a guaranteed failure:
 
-1. **`YouTubeKitExtractor` (primary)** — b5i/YouTubeKit resolves the audio-only
-   stream URL natively in Swift (no Python, no engine download, fast). Pure
-   `VideoInfosWithDownloadFormatsResponse.sendThrowingRequest` → best
-   `AudioOnlyFormat`.
+1. **`YouTubeKitExtractor` (primary, YouTube only)** — b5i/YouTubeKit resolves
+   the audio-only stream URL natively in Swift (no Python, no engine download,
+   fast). Pure `VideoInfosWithDownloadFormatsResponse.sendThrowingRequest` → best
+   `AudioOnlyFormat`. `canHandle` returns true only when a YouTube video id can be
+   parsed, so non-YouTube links bypass it.
 2. **`YoutubeDLExtractor` (fallback)** — the yt-dlp path, used when the native
    extractor fails. `extractInfo(url:)` resolves the video; the Download tab's
    "⋯" menu has **Refresh yt-dlp engine** to re-pull a stale module. The URL is
@@ -215,6 +221,25 @@ Both resolve a direct stream URL and then hand it to the shared
 connections, so — like yt-dlp — ranged requests are what make big files download
 reliably. We deliberately avoid YoutubeDL-iOS's own `download(...)`: it's
 hardwired to a *background* `URLSession` that doesn't complete on the Simulator.
+
+### Any yt-dlp site (Vimeo, SoundCloud, …) — progressive only
+
+The yt-dlp path isn't YouTube-specific: it resolves whatever URL it's given, so
+Vimeo, SoundCloud and the rest of yt-dlp's catalogue work. Two constraints shape
+which formats we pick:
+
+- **Progressive only.** `AudioStreamDownloader` fetches a single file over byte
+  ranges; it can't assemble an **HLS** playlist or **segmented DASH**. So
+  `isProgressiveDownloadable` (and, on the Python path, yt-dlp's `protocol`
+  field) filters those out, keeping only single-URL streams — including
+  YouTube's DASH renditions, which *are* direct URLs. A link that offers
+  **only** HLS fails fast with the clear `hlsOnly` message rather than
+  downloading an unplayable playlist.
+- **Playable containers.** Audio is saved raw only when it's a container
+  AVFoundation can decode (`m4a`/`mp3`/`aac`/`wav`/`aiff` — so SoundCloud's
+  progressive **mp3** saves directly, while an opus/webm-only stream routes to
+  the muxed-video + audio-extraction fallback instead). Video stays restricted
+  to decodable **H.264/HEVC** MP4.
 
 If the YouTubeKit package isn't linked yet, its extractor throws and the composite
 falls back to yt-dlp automatically. To exercise the UI with no native dependency

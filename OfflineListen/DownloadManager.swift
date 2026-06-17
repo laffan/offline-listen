@@ -82,15 +82,18 @@ final class DownloadManager: ObservableObject {
         self.extractor = extractor
     }
 
-    /// Enqueues every YouTube link found in `text`, treating whitespace/newlines
-    /// as separators (URLs contain no spaces). Non-YouTube links are skipped.
+    /// Enqueues every downloadable link found in `text`, treating whitespace/
+    /// newlines as separators (URLs contain no spaces). Anything that isn't an
+    /// http(s) URL is skipped, so pasting a blob of prose only queues the links.
+    /// We accept *any* site (not just YouTube) and let yt-dlp decide — it
+    /// supports Vimeo, SoundCloud and ~hundreds of others.
     func enqueueLinks(from text: String, mode: DownloadMode) {
         let tokens = text.split(whereSeparator: { $0.isWhitespace })
         var added = 0
         var skipped = 0
         for token in tokens {
             let link = String(token)
-            if Self.isYouTubeURL(link) {
+            if Self.isQueueableURL(link) {
                 enqueue(urlString: link, mode: mode)
                 added += 1
             } else {
@@ -98,11 +101,19 @@ final class DownloadManager: ObservableObject {
             }
         }
         if skipped > 0 {
-            appLog("Skipped \(skipped) non-YouTube link(s).", level: .warning, category: "Queue")
+            appLog("Skipped \(skipped) non-URL token(s).", level: .warning, category: "Queue")
         }
         if added == 0 {
-            appLog("No YouTube links found in input.", level: .warning, category: "Queue")
+            appLog("No links found in input.", level: .warning, category: "Queue")
         }
+    }
+
+    /// Any well-formed http(s) URL with a host is queueable; yt-dlp handles the
+    /// site detection. (We don't gate on a host allowlist — yt-dlp's reach is
+    /// far wider than anything we'd hard-code.)
+    static func isQueueableURL(_ string: String) -> Bool {
+        guard let url = URL(string: string), let scheme = url.scheme?.lowercased() else { return false }
+        return (scheme == "http" || scheme == "https") && (url.host?.isEmpty == false)
     }
 
     static func isYouTubeURL(_ string: String) -> Bool {

@@ -9,6 +9,13 @@ import YouTubeKit
 /// engine download). Resolves the audio-only stream URL via YouTube's internal
 /// API and downloads it with the shared chunked downloader.
 final class YouTubeKitExtractor: MediaExtractor {
+    /// YouTubeKit only speaks to YouTube, so it can handle a URL exactly when we
+    /// can pull a video id out of it. Non-YouTube links (Vimeo, SoundCloud, …)
+    /// return false so the composite goes straight to the yt-dlp fallback.
+    func canHandle(_ url: URL) -> Bool {
+        DownloadManager.isYouTubeURL(url.absoluteString) && Self.videoID(from: url) != nil
+    }
+
     func extractMedia(from url: URL,
                       mode: DownloadMode,
                       onDownloadStart: @escaping () -> Void,

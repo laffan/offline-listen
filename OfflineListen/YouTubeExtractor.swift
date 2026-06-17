@@ -29,6 +29,7 @@ enum ExtractorError: LocalizedError {
     case noAudioFormat
     case noVideoFormat
     case unplayableVideoCodec(String)
+    case hlsOnly
     case downloadFailed(String)
 
     var errorDescription: String? {
@@ -43,6 +44,8 @@ enum ExtractorError: LocalizedError {
             return "No downloadable video (with audio) was found for this video."
         case .unplayableVideoCodec(let codecs):
             return "The only video stream offered uses a codec this device can't play (\(codecs)). Try the download again — YouTube often serves an H.264 stream on a retry — or download it as Audio."
+        case .hlsOnly:
+            return "This link only offers HLS/streaming formats, which this app can't download yet (it fetches progressive files). Try a different quality, or a source that offers a direct file."
         case .downloadFailed(let message):
             return message
         }
@@ -96,6 +99,15 @@ protocol MediaExtractor {
                       mode: DownloadMode,
                       onDownloadStart: @escaping () -> Void,
                       onProgress: @escaping (Double) -> Void) async throws -> ExtractedMedia
+
+    /// Whether this extractor can handle `url` at all. Lets a composite skip a
+    /// primary that's URL-specific (e.g. the YouTube-only native extractor) for
+    /// links it can't resolve, instead of failing through it. Defaults to true.
+    func canHandle(_ url: URL) -> Bool
+}
+
+extension MediaExtractor {
+    func canHandle(_ url: URL) -> Bool { true }
 }
 
 /// Production implementation backed by kewlbear/YoutubeDL-iOS (yt-dlp on device).
@@ -129,6 +141,27 @@ final class YoutubeDLExtractor: MediaExtractor {
             return url
         }
         return canonical
+    }
+
+    /// Container/codecs AVFoundation can decode for a *direct audio save* (no
+    /// extraction step). Anything outside this — opus, webm, ogg, flac — routes
+    /// to the muxed-video + audio-extraction fallback instead of being saved raw.
+    static let playableAudioExts: Set<String> = ["m4a", "mp3", "aac", "wav", "aiff", "m4b"]
+
+    /// Whether a yt-dlp format is a single, range-fetchable file (what
+    /// `AudioStreamDownloader` needs) rather than an HLS playlist or segmented
+    /// DASH stream we can't assemble. Detected from the bits every extractor
+    /// exposes (id/ext/url), deliberately *not* from "dash" alone: YouTube's
+    /// DASH renditions use numeric ids and direct googlevideo URLs and download
+    /// fine — only the segmented `http_dash_segments` marker is excluded.
+    static func isProgressiveDownloadable(formatID: String, ext: String, url: String) -> Bool {
+        let id = formatID.lowercased()
+        let lowerURL = url.lowercased()
+        if ext.lowercased() == "m3u8" || ext.lowercased() == "mpd" { return false }
+        if lowerURL.contains(".m3u8") || lowerURL.contains(".mpd") { return false }
+        if id.contains("hls") { return false }
+        if id.contains("dash_segments") || id.contains("http_dash") { return false }
+        return true
     }
 
     static func refreshEngine() async {
@@ -413,10 +446,26 @@ final class YoutubeDLExtractor: MediaExtractor {
         return nil
     }
 
+    /// Whether a format dict is a single, range-fetchable file. Uses yt-dlp's
+    /// `protocol` field when present (the authoritative signal — rejects
+    /// `m3u8*`, `http_dash_segments`, `ism`, `rtmp`, `mhtml`) and falls back to
+    /// the id/ext/url heuristic otherwise.
+    private func isProgressivePython(_ format: PythonObject) -> Bool {
+        let proto = (String(format.get("protocol")) ?? "").lowercased()
+        if proto.contains("m3u8") || proto.contains("dash_segments")
+            || proto == "mhtml" || proto == "ism" || proto == "rtmp" {
+            return false
+        }
+        return Self.isProgressiveDownloadable(
+            formatID: String(format.get("format_id")) ?? "",
+            ext: String(format.get("ext")) ?? "",
+            url: String(format.get("url")) ?? "")
+    }
+
     /// Picks the tallest H.264/HEVC video (+ best m4a audio) from a resolved
     /// yt-dlp info dict and downloads + merges it. Returns nil if the dict has no
-    /// decodable video. Every dict read uses `.get(...)` so a missing key yields
-    /// Python `None` rather than trapping.
+    /// decodable, progressively-downloadable video. Every dict read uses
+    /// `.get(...)` so a missing key yields Python `None` rather than trapping.
     private func downloadPlayable(from info: PythonObject,
                                   client: String,
                                   url: URL,
@@ -443,6 +492,7 @@ final class YoutubeDLExtractor: MediaExtractor {
 
         for format in formatsObj {
             guard let furl = String(format.get("url")) else { continue }
+            guard isProgressivePython(format) else { continue }
             let vcodec = String(format.get("vcodec")) ?? "none"
             let acodec = String(format.get("acodec")) ?? "none"
             let ext = String(format.get("ext")) ?? ""
@@ -514,22 +564,27 @@ final class YoutubeDLExtractor: MediaExtractor {
             return result
         }
 
-        struct AudioCand { let url: String; let abr: Double; let headers: [String: String] }
+        struct AudioCand { let url: String; let abr: Double; let ext: String; let headers: [String: String] }
         struct MuxedCand { let url: String; let height: Int; let headers: [String: String] }
         var audios: [AudioCand] = []
         var muxed: [MuxedCand] = []
 
         for format in formatsObj {
             guard let furl = String(format.get("url")) else { continue }
+            guard isProgressivePython(format) else { continue }
             let vcodec = String(format.get("vcodec")) ?? "none"
             let acodec = String(format.get("acodec")) ?? "none"
-            let ext = String(format.get("ext")) ?? ""
+            let ext = (String(format.get("ext")) ?? "").lowercased()
             let hasVideo = vcodec != "none" && !vcodec.isEmpty
             let hasAudio = acodec != "none" && !acodec.isEmpty
 
-            if hasAudio, !hasVideo, ext == "m4a" {
+            // Accept any audio-only container AVFoundation can play directly
+            // (m4a/mp3/aac/…) — covers SoundCloud's progressive mp3, not just
+            // YouTube's m4a. Unplayable (opus/webm) audio is ignored here and
+            // handled by the muxed-extraction fallback.
+            if hasAudio, !hasVideo, Self.playableAudioExts.contains(ext) {
                 let abr = Double(format.get("abr")) ?? Double(Int(format.get("tbr")) ?? 0)
-                audios.append(AudioCand(url: furl, abr: abr, headers: headers(format)))
+                audios.append(AudioCand(url: furl, abr: abr, ext: ext, headers: headers(format)))
             } else if hasAudio, hasVideo, ext == "mp4" {
                 muxed.append(MuxedCand(url: furl, height: Int(format.get("height")) ?? Int.max,
                                        headers: headers(format)))
@@ -546,12 +601,13 @@ final class YoutubeDLExtractor: MediaExtractor {
         let title = String(info.get("title")) ?? url.absoluteString
         let reportedDuration = Double(info.get("duration")) ?? 0
 
-        // Prefer a dedicated audio-only m4a — no transcoding, no extraction step.
+        // Prefer a dedicated audio-only stream — no transcoding, no extraction
+        // step. Keep its real container extension (m4a, mp3, …).
         if let audio = audios.max(by: { $0.abr < $1.abr }),
            let audioRequest = request(audio.url, audio.headers) {
-            appLog("Forced-client (\(client)) selected audio-only m4a \(Int(audio.abr)) kbps",
+            appLog("Forced-client (\(client)) selected audio-only \(audio.ext) \(Int(audio.abr)) kbps",
                    level: .success, category: category)
-            let dest = AppPaths.work.appendingPathComponent("\(UUID().uuidString).m4a")
+            let dest = AppPaths.work.appendingPathComponent("\(UUID().uuidString).\(audio.ext.isEmpty ? "m4a" : audio.ext)")
             onDownloadStart()
             try await AudioStreamDownloader.download(baseRequest: audioRequest, expectedSize: nil,
                                                      to: dest, category: category, onProgress: onProgress)
@@ -658,9 +714,21 @@ final class YoutubeDLExtractor: MediaExtractor {
                 return r
             }
 
-            // Best audio-only (m4a preferred) — used directly for audio mode and
-            // as the track to merge for video-only video downloads.
-            let audioOnly = formats.filter { $0.isAudioOnly }
+            // Only progressive (single-URL) formats are fetchable by the chunked
+            // downloader; HLS/segmented-DASH are filtered out here so non-YouTube
+            // sites (Vimeo, SoundCloud) that mix both don't yield an unusable
+            // playlist URL.
+            func progressive(_ f: Format) -> Bool {
+                Self.isProgressiveDownloadable(formatID: f.format_id, ext: f.ext, url: f.url)
+            }
+
+            // Best audio-only (m4a preferred), restricted to containers
+            // AVFoundation can play directly — so an opus/webm-only stream isn't
+            // saved raw but routes to the muxed + extraction fallback below. Used
+            // for audio mode and as the merge track for video-only downloads.
+            let audioOnly = formats.filter {
+                $0.isAudioOnly && progressive($0) && Self.playableAudioExts.contains($0.ext.lowercased())
+            }
             let m4aAudio = audioOnly.filter { $0.ext == "m4a" }
             let bestAudio = (m4aAudio.isEmpty ? audioOnly : m4aAudio)
                 .max(by: { ($0.abr ?? $0.tbr ?? 0) < ($1.abr ?? $1.tbr ?? 0) })
@@ -673,10 +741,21 @@ final class YoutubeDLExtractor: MediaExtractor {
                 // Pick the best video AVFoundation can actually decode. YouTube
                 // often offers AV1/VP9 video-only streams that iOS can't play —
                 // selecting one yields a file that scrubs but shows no picture
-                // (and no audio). Restrict to H.264/HEVC, then take the tallest.
-                let videoMP4 = formats.filter { !$0.isAudioOnly && $0.ext == "mp4" }
+                // (and no audio). Restrict to H.264/HEVC progressive, tallest.
+                let videoMP4 = formats.filter { !$0.isAudioOnly && $0.ext == "mp4" && progressive($0) }
                 let playable = videoMP4.filter { PlayableVideoCodec.isPlayable(codec: $0.vcodec) }
                 if playable.isEmpty {
+                    // Distinguish "all the video was HLS/streaming" (a non-YouTube
+                    // case) from "only undecodable codecs were offered" (the
+                    // AV1/VP9 case, which the recovery below can still rescue). It's
+                    // HLS-only when video exists but *none of it* is progressive.
+                    let hadAnyVideo = formats.contains { !$0.isAudioOnly && ($0.vcodec ?? "none") != "none" }
+                    let hadProgressiveVideo = formats.contains { !$0.isAudioOnly && progressive($0) }
+                    if hadAnyVideo && !hadProgressiveVideo {
+                        appLog("Only HLS/streaming video formats offered — none progressively downloadable.",
+                               level: .error, category: category)
+                        throw ExtractorError.hlsOnly
+                    }
                     let offered = videoMP4.compactMap { $0.vcodec }.filter { $0 != "none" }
                     let list = offered.isEmpty ? "none" : Set(offered).sorted().joined(separator: ", ")
                     appLog("Default extraction offered no device-playable video (need H.264/HEVC) — offered: \(list)",
@@ -706,9 +785,18 @@ final class YoutubeDLExtractor: MediaExtractor {
                 appLog("Selected format \(chosen.format_id) · \(chosen.ext) · \(Int(chosen.abr ?? chosen.tbr ?? 0)) kbps",
                        category: category)
             } else {
-                // No audio-only stream: take the smallest muxed MP4 and extract its audio.
-                let muxedMP4 = formats.filter { !$0.isAudioOnly && !$0.isVideoOnly && $0.ext == "mp4" }
+                // No directly-playable audio-only stream: take the smallest
+                // progressive muxed MP4 and extract its audio.
+                let muxedMP4 = formats.filter { !$0.isAudioOnly && !$0.isVideoOnly && $0.ext == "mp4" && progressive($0) }
                 guard let video = muxedMP4.min(by: { ($0.height ?? .max) < ($1.height ?? .max) }) else {
+                    // If the site offered formats but none were progressive, the
+                    // blocker is HLS, not a missing audio track — say which.
+                    let hadProgressive = formats.contains { progressive($0) }
+                    if !formats.isEmpty && !hadProgressive {
+                        appLog("Only HLS/streaming formats offered — none progressively downloadable.",
+                               level: .error, category: category)
+                        throw ExtractorError.hlsOnly
+                    }
                     throw ExtractorError.noAudioFormat
                 }
                 chosen = video
