@@ -13,7 +13,11 @@ final class YouTubeKitExtractor: MediaExtractor {
     /// can pull a video id out of it. Non-YouTube links (Vimeo, SoundCloud, …)
     /// return false so the composite goes straight to the yt-dlp fallback.
     func canHandle(_ url: URL) -> Bool {
-        DownloadManager.isYouTubeURL(url.absoluteString) && Self.videoID(from: url) != nil
+        let host = (url.host ?? "").lowercased()
+        let isYouTubeHost = host == "youtu.be"
+            || host.hasSuffix("youtube.com")
+            || host.hasSuffix("youtube-nocookie.com")
+        return isYouTubeHost && Self.videoID(from: url) != nil
     }
 
     func extractMedia(from url: URL,
