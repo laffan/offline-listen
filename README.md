@@ -38,8 +38,9 @@ Three screens (tabs):
    from the row: tapping the **title** plays the track normally, tapping the
    **arrow** opens a list of chapters to jump to. Touch-and-hold such a track
    for **Break Chapters into Playlist**, which exports one file per chapter into
-   a new folder named after the track and deletes the original — turning a
-   chaptered recording into a proper playlist.
+   a new folder named after the track and then asks whether to delete the
+   original — turning a chaptered recording into a proper playlist. The
+   chapter list also highlights the chapter currently playing.
 
    **Folders** organize the library: an **Inbox** pinned to the top collects
    every track you haven't listened to yet (starting playback — or a
@@ -313,7 +314,8 @@ libraries decode with an empty list).
 Chapters surface three ways: a jump-to list behind the library row's arrow, dots
 + a current-chapter line on the Player, and **Break Chapters into Playlist**,
 which uses `AVAssetExportSession` (audio → `.m4a`, video → passthrough `.mp4`)
-to cut one file per chapter into a new folder and then deletes the original.
+to cut one file per chapter into a new folder, then asks whether to delete the
+original (Split & Delete vs. Split & Keep).
 
 ## Status
 

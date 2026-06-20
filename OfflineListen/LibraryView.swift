@@ -59,6 +59,45 @@ extension View {
     }
 }
 
+/// Shared confirmation for "Break Chapters into Playlist": lets the user choose
+/// whether to delete the original track once the per-chapter slices are made.
+struct BreakChaptersConfirm: ViewModifier {
+    @EnvironmentObject private var library: LibraryStore
+    @Binding var track: Track?
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog(
+            "Break into Playlist",
+            isPresented: isPresented,
+            titleVisibility: .visible,
+            presenting: track
+        ) { track in
+            Button("Split & Delete Original", role: .destructive) {
+                library.breakChaptersIntoPlaylist(track, deleteOriginal: true)
+            }
+            Button("Split & Keep Original") {
+                library.breakChaptersIntoPlaylist(track, deleteOriginal: false)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { track in
+            Text("Splits “\(track.title)” into \(track.chapters.count) chapter tracks in a new playlist folder.")
+        }
+    }
+
+    private var isPresented: Binding<Bool> {
+        Binding(
+            get: { track != nil },
+            set: { if !$0 { track = nil } }
+        )
+    }
+}
+
+extension View {
+    func breakChaptersConfirm(for track: Binding<Track?>) -> some View {
+        modifier(BreakChaptersConfirm(track: track))
+    }
+}
+
 /// Navigation targets reachable from the library list.
 enum LibraryRoute: Hashable {
     case inbox
@@ -87,6 +126,7 @@ struct LibraryView: View {
     @State private var renameText = ""
     @State private var renamingTrack: Track?
     @State private var chapterContext: ChapterContext?
+    @State private var splittingTrack: Track?
 
     private var filteredTracks: [Track] {
         library.unfiledActiveTracks.filter { filter.matches($0) }
@@ -155,6 +195,7 @@ struct LibraryView: View {
                 Button("Cancel", role: .cancel) {}
             }
             .renameTrackAlert(for: $renamingTrack)
+            .breakChaptersConfirm(for: $splittingTrack)
         }
     }
 
@@ -202,8 +243,10 @@ struct LibraryView: View {
     private var inboxRow: some View {
         NavigationLink(value: LibraryRoute.inbox) {
             HStack(spacing: 12) {
+                // Red is reserved for the currently-playing location, so the
+                // Inbox uses the same neutral icon tint as user folders.
                 Image(systemName: "tray.fill")
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(.secondary)
                     .frame(width: 24)
                 Text("Inbox")
                     .font(.body)
@@ -217,11 +260,19 @@ struct LibraryView: View {
         }
     }
 
+    /// True when the currently-playing track lives in this folder, so its row
+    /// can light up red like the playing track itself.
+    private func isPlaying(in folder: Folder) -> Bool {
+        guard let id = playback.currentTrack?.id else { return false }
+        return library.tracks(in: folder.id).contains { $0.id == id }
+    }
+
     private func folderRow(_ folder: Folder) -> some View {
-        NavigationLink(value: LibraryRoute.folder(folder.id)) {
+        let playingHere = isPlaying(in: folder)
+        return NavigationLink(value: LibraryRoute.folder(folder.id)) {
             HStack(spacing: 12) {
                 Image(systemName: "folder.fill")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(playingHere ? Color.accentColor : .secondary)
                     .frame(width: 24)
                 Text(folder.name)
                     .font(.body)
@@ -326,7 +377,7 @@ struct LibraryView: View {
                 }
                 if track.hasChapters {
                     Button {
-                        library.breakChaptersIntoPlaylist(track)
+                        splittingTrack = track
                     } label: {
                         Label("Break Chapters into Playlist", systemImage: "list.bullet.indent")
                     }
@@ -625,27 +676,26 @@ struct ChapterListView: View {
     let queue: [Track]
     let onPlay: () -> Void
 
+    private var isCurrentTrack: Bool {
+        playback.currentTrack?.id == track.id
+    }
+
     var body: some View {
         NavigationStack {
-            List(track.chapters) { chapter in
-                Button {
-                    playback.play(track, in: queue, startAt: chapter.start)
-                    dismiss()
-                    onPlay()
-                } label: {
-                    HStack {
-                        Text(chapter.title)
-                            .font(.body)
-                            .lineLimit(2)
-                        Spacer()
-                        Text(chapter.start.asPlaybackTime)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
+            List {
+                ForEach(Array(track.chapters.enumerated()), id: \.element.id) { index, chapter in
+                    ChapterRow(
+                        progress: playback.progress,
+                        chapter: chapter,
+                        chapters: track.chapters,
+                        index: index,
+                        isCurrentTrack: isCurrentTrack
+                    ) {
+                        playback.play(track, in: queue, startAt: chapter.start)
+                        dismiss()
+                        onPlay()
                     }
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
             }
             .listStyle(.plain)
             .navigationTitle(track.title)
@@ -656,6 +706,43 @@ struct ChapterListView: View {
                 }
             }
         }
+    }
+}
+
+/// A row in the chapter list. Observes the playback ticker so the chapter the
+/// playhead is currently in lights up red (and only while *this* track plays).
+private struct ChapterRow: View {
+    @ObservedObject var progress: PlaybackProgress
+    let chapter: Chapter
+    let chapters: [Chapter]
+    let index: Int
+    let isCurrentTrack: Bool
+    let action: () -> Void
+
+    private var isCurrentChapter: Bool {
+        isCurrentTrack && chapters.index(at: progress.currentTime) == index
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: isCurrentChapter ? "speaker.wave.2.fill" : "play.circle")
+                    .font(.callout)
+                    .foregroundStyle(isCurrentChapter ? Color.accentColor : .secondary)
+                    .frame(width: 22)
+                Text(chapter.title)
+                    .font(.body)
+                    .foregroundStyle(isCurrentChapter ? Color.accentColor : .primary)
+                    .lineLimit(2)
+                Spacer()
+                Text(chapter.start.asPlaybackTime)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 

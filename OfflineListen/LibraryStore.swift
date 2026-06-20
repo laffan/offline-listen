@@ -167,10 +167,12 @@ final class LibraryStore: ObservableObject {
     // MARK: - Chapters → playlist
 
     /// Breaks a track that has chapter markers into a folder of one track per
-    /// chapter, exporting a slice of the original file for each, then deletes the
-    /// original. The new folder is named after the original track. Runs the
-    /// exports off the main actor; library mutation stays on the main actor.
-    func breakChaptersIntoPlaylist(_ track: Track) {
+    /// chapter, exporting a slice of the original file for each. The new folder
+    /// is named after the original track. When `deleteOriginal` is true the
+    /// source track is removed once the slices are in place; otherwise it stays
+    /// in the library alongside the new playlist. Runs the exports off the main
+    /// actor; library mutation stays on the main actor.
+    func breakChaptersIntoPlaylist(_ track: Track, deleteOriginal: Bool) {
         guard track.hasChapters else { return }
         guard let current = tracks.first(where: { $0.id == track.id }) else { return }
         let chapters = current.chapters
@@ -236,8 +238,10 @@ final class LibraryStore: ObservableObject {
                     return
                 }
                 self.addTracks(newTracks)
-                self.delete(track)
-                appLog("Created playlist \"\(folder.name)\" with \(newTracks.count) chapter track(s).",
+                if deleteOriginal {
+                    self.delete(track)
+                }
+                appLog("Created playlist \"\(folder.name)\" with \(newTracks.count) chapter track(s)\(deleteOriginal ? "; removed the original." : "; kept the original.")",
                        level: .success, category: "Chapters")
             }
         }

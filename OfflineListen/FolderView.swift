@@ -15,6 +15,7 @@ struct FolderDetailView: View {
     @State private var editMode: EditMode = .inactive
     @State private var renamingTrack: Track?
     @State private var chapterContext: ChapterContext?
+    @State private var splittingTrack: Track?
 
     private var folder: Folder? {
         library.folders.first { $0.id == folderID }
@@ -48,6 +49,7 @@ struct FolderDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .environment(\.editMode, $editMode)
         .renameTrackAlert(for: $renamingTrack)
+        .breakChaptersConfirm(for: $splittingTrack)
         .sheet(item: $chapterContext) { context in
             ChapterListView(track: context.track, queue: context.queue, onPlay: onPlay)
         }
@@ -141,7 +143,7 @@ struct FolderDetailView: View {
                 }
                 if track.hasChapters {
                     Button {
-                        library.breakChaptersIntoPlaylist(track)
+                        splittingTrack = track
                     } label: {
                         Label("Break Chapters into Playlist", systemImage: "list.bullet.indent")
                     }
@@ -170,6 +172,7 @@ struct InboxView: View {
 
     @State private var renamingTrack: Track?
     @State private var chapterContext: ChapterContext?
+    @State private var splittingTrack: Track?
 
     private var tracks: [Track] {
         library.inboxTracks
@@ -241,7 +244,7 @@ struct InboxView: View {
                                 }
                                 if track.hasChapters {
                                     Button {
-                                        library.breakChaptersIntoPlaylist(track)
+                                        splittingTrack = track
                                     } label: {
                                         Label("Break Chapters into Playlist", systemImage: "list.bullet.indent")
                                     }
@@ -255,6 +258,7 @@ struct InboxView: View {
         .navigationTitle("Inbox")
         .navigationBarTitleDisplayMode(.inline)
         .renameTrackAlert(for: $renamingTrack)
+        .breakChaptersConfirm(for: $splittingTrack)
         .sheet(item: $chapterContext) { context in
             ChapterListView(track: context.track, queue: context.queue, onPlay: onPlay)
         }
