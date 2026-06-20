@@ -157,6 +157,7 @@ final class PlaybackManager: NSObject, ObservableObject {
         currentTrack = track
         progress.currentTime = 0
         progress.duration = track.duration
+        updateTransportButtons()
         stopEngine()
 
         let item = AVPlayerItem(url: track.fileURL)
@@ -300,35 +301,49 @@ final class PlaybackManager: NSObject, ObservableObject {
 
         // The lock screen / Control Center only renders three transport buttons
         // (one centre play/pause plus two side buttons), and it can show EITHER
-        // next/previous-track OR skip-forward/backward — not both. Enabling both
-        // makes them conflict and the skip-interval buttons never surface. We
-        // want the jump-ahead/behind buttons on the lock screen, so the
-        // next/previous-track commands are explicitly disabled here (they remain
-        // available via the in-app Player's own controls, which call next() /
-        // previous() directly rather than through the command centre).
-        center.nextTrackCommand.isEnabled = false
-        center.previousTrackCommand.isEnabled = false
+        // next/previous-track OR skip-forward/backward — not both. Which pair the
+        // side buttons show is chosen per track in `updateTransportButtons()`:
+        // songs/videos get next/previous-track, podcasts get the 30s/15s jumps
+        // (more useful for long episodes). Targets for all four are installed
+        // here; only their `isEnabled` flags are toggled as the track changes.
+        center.nextTrackCommand.addTarget { [weak self] _ in
+            self?.next(); return .success
+        }
+        center.previousTrackCommand.addTarget { [weak self] _ in
+            self?.previous(); return .success
+        }
 
-        center.skipForwardCommand.isEnabled = true
         center.skipForwardCommand.preferredIntervals = [30]
         center.skipForwardCommand.addTarget { [weak self] event in
             let interval = (event as? MPSkipIntervalCommandEvent)?.interval ?? 30
             self?.skipForward(interval)
             return .success
         }
-        center.skipBackwardCommand.isEnabled = true
         center.skipBackwardCommand.preferredIntervals = [15]
         center.skipBackwardCommand.addTarget { [weak self] event in
             let interval = (event as? MPSkipIntervalCommandEvent)?.interval ?? 15
             self?.skipBackward(interval)
             return .success
         }
+        updateTransportButtons()
         center.changePlaybackPositionCommand.isEnabled = true
         center.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard let event = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
             self?.seek(to: event.positionTime)
             return .success
         }
+    }
+
+    /// Picks which pair of side buttons the lock screen shows for the current
+    /// track: next/previous-track for songs and videos, 30s/15s jumps for
+    /// podcasts. iOS renders only one pair, so the other is disabled.
+    private func updateTransportButtons() {
+        let center = MPRemoteCommandCenter.shared()
+        let useTrackButtons = currentTrack.map { $0.playbackCategory != .podcast } ?? false
+        center.nextTrackCommand.isEnabled = useTrackButtons
+        center.previousTrackCommand.isEnabled = useTrackButtons
+        center.skipForwardCommand.isEnabled = !useTrackButtons
+        center.skipBackwardCommand.isEnabled = !useTrackButtons
     }
 
     private func updateNowPlaying() {
