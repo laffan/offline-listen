@@ -63,6 +63,9 @@ struct PlayerView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
+                if track.hasChapters {
+                    CurrentChapterLabel(progress: playback.progress, chapters: track.chapters)
+                }
             }
             .padding(.horizontal)
 
@@ -129,7 +132,8 @@ struct PlayerView: View {
     }
 
     private var scrubber: some View {
-        PlayerScrubber(progress: playback.progress) { time in
+        PlayerScrubber(progress: playback.progress,
+                       chapters: playback.currentTrack?.chapters ?? []) { time in
             playback.seek(to: time)
         }
     }
@@ -175,6 +179,7 @@ struct PlayerView: View {
 /// 2 Hz playhead ticker re-renders just this and not whole screens.
 private struct PlayerScrubber: View {
     @ObservedObject var progress: PlaybackProgress
+    var chapters: [Chapter] = []
     let onSeek: (Double) -> Void
 
     @State private var isScrubbing = false
@@ -195,6 +200,7 @@ private struct PlayerScrubber: View {
                     }
                 }
             )
+            .overlay(chapterDots)
 
             HStack {
                 Text((isScrubbing ? scrubTime : progress.currentTime).asPlaybackTime)
@@ -206,6 +212,47 @@ private struct PlayerScrubber: View {
             .monospacedDigit()
         }
         .padding(.horizontal)
+    }
+
+    /// Small dots overlaid on the track at each chapter's start position. The
+    /// track inset roughly matches the slider thumb radius so the dots line up
+    /// with the fill. Hidden until we know the duration.
+    @ViewBuilder
+    private var chapterDots: some View {
+        if progress.duration > 0, chapters.count > 1 {
+            GeometryReader { geo in
+                let inset: CGFloat = 8
+                let usable = max(geo.size.width - inset * 2, 1)
+                ForEach(chapters) { chapter in
+                    let fraction = min(max(chapter.start / progress.duration, 0), 1)
+                    Circle()
+                        .fill(Color.white)
+                        .overlay(Circle().stroke(Color.accentColor, lineWidth: 1))
+                        .frame(width: 5, height: 5)
+                        .position(x: inset + usable * CGFloat(fraction),
+                                  y: geo.size.height / 2)
+                }
+            }
+            .allowsHitTesting(false)
+        }
+    }
+}
+
+/// One-line label showing the chapter the playhead is currently in. Observes the
+/// 2 Hz progress ticker (only this view re-renders) so it updates as playback
+/// crosses a chapter boundary.
+private struct CurrentChapterLabel: View {
+    @ObservedObject var progress: PlaybackProgress
+    let chapters: [Chapter]
+
+    var body: some View {
+        if let chapter = chapters.chapter(at: progress.currentTime) {
+            Text(chapter.title)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(Color.accentColor)
+                .multilineTextAlignment(.center)
+                .lineLimit(1)
+        }
     }
 }
 

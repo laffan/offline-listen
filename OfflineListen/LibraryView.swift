@@ -86,6 +86,7 @@ struct LibraryView: View {
     @State private var renamingFolder: Folder?
     @State private var renameText = ""
     @State private var renamingTrack: Track?
+    @State private var chapterContext: ChapterContext?
 
     private var filteredTracks: [Track] {
         library.unfiledActiveTracks.filter { filter.matches($0) }
@@ -123,6 +124,9 @@ struct LibraryView: View {
             .environment(\.editMode, $editMode)
             .sheet(item: $share) { payload in
                 ActivityView(items: payload.urls)
+            }
+            .sheet(item: $chapterContext) { context in
+                ChapterListView(track: context.track, queue: context.queue, onPlay: onPlay)
             }
             .navigationDestination(isPresented: $showArchived) {
                 ArchivedTracksView(onPlay: onPlay, share: $share)
@@ -256,7 +260,11 @@ struct LibraryView: View {
 
     @ViewBuilder
     private func row(for track: Track) -> some View {
-        let base = TrackRow(track: track, isCurrent: playback.currentTrack?.id == track.id)
+        let base = TrackRow(
+            track: track,
+            isCurrent: playback.currentTrack?.id == track.id,
+            onShowChapters: { chapterContext = ChapterContext(track: track, queue: filteredTracks) }
+        )
             .contentShape(Rectangle())
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                 Button(role: .destructive) {
@@ -315,6 +323,13 @@ struct LibraryView: View {
                     }
                 } label: {
                     Label("Move to Folder", systemImage: "folder")
+                }
+                if track.hasChapters {
+                    Button {
+                        library.breakChaptersIntoPlaylist(track)
+                    } label: {
+                        Label("Break Chapters into Playlist", systemImage: "list.bullet.indent")
+                    }
                 }
             }
 
@@ -453,6 +468,8 @@ struct ArchivedTracksView: View {
     let onPlay: () -> Void
     @Binding var share: SharePayload?
 
+    @State private var chapterContext: ChapterContext?
+
     var body: some View {
         Group {
             if library.archivedTracks.isEmpty {
@@ -464,7 +481,11 @@ struct ArchivedTracksView: View {
             } else {
                 List {
                     ForEach(library.archivedTracks) { track in
-                        TrackRow(track: track, isCurrent: playback.currentTrack?.id == track.id)
+                        TrackRow(
+                            track: track,
+                            isCurrent: playback.currentTrack?.id == track.id,
+                            onShowChapters: { chapterContext = ChapterContext(track: track, queue: library.archivedTracks) }
+                        )
                             .contentShape(Rectangle())
                             .onTapGesture {
                                 playback.play(track, in: library.archivedTracks)
@@ -496,12 +517,18 @@ struct ArchivedTracksView: View {
         }
         .navigationTitle("Archived")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $chapterContext) { context in
+            ChapterListView(track: context.track, queue: context.queue, onPlay: onPlay)
+        }
     }
 }
 
 struct TrackRow: View {
     let track: Track
     let isCurrent: Bool
+    /// When set and the track has chapters, a tappable arrow appears after the
+    /// title that opens the chapter list (instead of playing the track).
+    var onShowChapters: (() -> Void)? = nil
 
     private var hasArtist: Bool {
         !track.artist.isEmpty && track.artist.lowercased() != "unknown"
@@ -549,6 +576,10 @@ struct TrackRow: View {
                 }
             }
 
+            if let onShowChapters, track.hasChapters {
+                chapterButton(onShowChapters)
+            }
+
             Spacer()
 
             if !showsProgress, track.duration > 0 {
@@ -560,4 +591,78 @@ struct TrackRow: View {
         }
         .padding(.vertical, 4)
     }
+
+    /// The chapter-list affordance: a chevron set off by a left border so it
+    /// reads as a button distinct from the row's tap-to-play, echoing the
+    /// disclosure arrow folders show.
+    private func chapterButton(_ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.accentColor)
+                .padding(.leading, 12)
+                .padding(.vertical, 2)
+                .overlay(alignment: .leading) {
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.3))
+                        .frame(width: 1)
+                        .padding(.vertical, 2)
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// A sheet listing a track's chapters; tapping one starts the track at that
+/// marker. Carries the queue the track would normally play within so autoplay
+/// continues correctly afterwards.
+struct ChapterListView: View {
+    @EnvironmentObject private var playback: PlaybackManager
+    @Environment(\.dismiss) private var dismiss
+
+    let track: Track
+    let queue: [Track]
+    let onPlay: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            List(track.chapters) { chapter in
+                Button {
+                    playback.play(track, in: queue, startAt: chapter.start)
+                    dismiss()
+                    onPlay()
+                } label: {
+                    HStack {
+                        Text(chapter.title)
+                            .font(.body)
+                            .lineLimit(2)
+                        Spacer()
+                        Text(chapter.start.asPlaybackTime)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .listStyle(.plain)
+            .navigationTitle(track.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+/// Identifiable bundle so a chapter sheet can be presented via `.sheet(item:)`,
+/// carrying both the track and the queue it should play within.
+struct ChapterContext: Identifiable {
+    let id = UUID()
+    let track: Track
+    let queue: [Track]
 }

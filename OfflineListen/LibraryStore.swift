@@ -72,11 +72,14 @@ final class LibraryStore: ObservableObject {
 
     // MARK: - Folders
 
-    func createFolder(named name: String) {
+    @discardableResult
+    func createFolder(named name: String) -> Folder? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        folders.append(Folder(name: trimmed))
+        guard !trimmed.isEmpty else { return nil }
+        let folder = Folder(name: trimmed)
+        folders.append(folder)
         saveFolders()
+        return folder
     }
 
     func renameFolder(_ folder: Folder, to name: String) {
@@ -152,6 +155,92 @@ final class LibraryStore: ObservableObject {
     func add(_ track: Track) {
         tracks.insert(track, at: 0)
         save()
+    }
+
+    /// Inserts several tracks at the top of the library, keeping their order.
+    func addTracks(_ newTracks: [Track]) {
+        guard !newTracks.isEmpty else { return }
+        tracks.insert(contentsOf: newTracks, at: 0)
+        save()
+    }
+
+    // MARK: - Chapters → playlist
+
+    /// Breaks a track that has chapter markers into a folder of one track per
+    /// chapter, exporting a slice of the original file for each, then deletes the
+    /// original. The new folder is named after the original track. Runs the
+    /// exports off the main actor; library mutation stays on the main actor.
+    func breakChaptersIntoPlaylist(_ track: Track) {
+        guard track.hasChapters else { return }
+        guard let current = tracks.first(where: { $0.id == track.id }) else { return }
+        let chapters = current.chapters
+        let sourceURL = current.fileURL
+        let isVideo = current.isVideo
+        let kind = current.kind
+        let sourceURLString = current.sourceURL
+        // The original's known duration bounds the final chapter when yt-dlp's
+        // end_time is missing or runs past the file.
+        let totalDuration = current.duration
+
+        appLog("Breaking \"\(current.title)\" into \(chapters.count) chapters…",
+               level: .warning, category: "Chapters")
+
+        guard let folder = createFolder(named: current.title) else { return }
+
+        Task { [weak self] in
+            var newTracks: [Track] = []
+            for (offset, chapter) in chapters.enumerated() {
+                let start = chapter.start
+                // Prefer the chapter's own end; fall back to the next chapter's
+                // start, then the file duration.
+                var end = chapter.end
+                if end <= start {
+                    end = offset + 1 < chapters.count ? chapters[offset + 1].start : totalDuration
+                }
+                if totalDuration > 0 { end = min(end, totalDuration) }
+                guard end > start else {
+                    appLog("Skipping zero-length chapter \(offset + 1) (\(chapter.title)).",
+                           level: .warning, category: "Chapters")
+                    continue
+                }
+                do {
+                    let prefix = String(offset + 1).leftPadded(to: 2, with: "0")
+                    let fileName = try await ChapterSplitter.exportSlice(
+                        from: sourceURL, start: start, end: end, isVideo: isVideo,
+                        baseName: "\(prefix) \(chapter.title)")
+                    let chapterTrack = Track(
+                        title: chapter.title,
+                        fileName: fileName,
+                        sourceURL: sourceURLString,
+                        duration: end - start,
+                        kind: kind,
+                        isVideo: isVideo,
+                        folderID: folder.id,
+                        hasBeenPlayed: true)
+                    newTracks.append(chapterTrack)
+                    appLog("Exported chapter \(offset + 1)/\(chapters.count): \(chapter.title)",
+                           category: "Chapters")
+                } catch {
+                    appLog("Chapter \(offset + 1) (\(chapter.title)) failed: \(error.localizedDescription)",
+                           level: .error, category: "Chapters")
+                }
+            }
+
+            await MainActor.run {
+                guard let self else { return }
+                guard !newTracks.isEmpty else {
+                    // Nothing exported — undo the empty folder we created.
+                    self.deleteFolder(folder)
+                    appLog("Breaking into playlist produced no files — leaving the original in place.",
+                           level: .error, category: "Chapters")
+                    return
+                }
+                self.addTracks(newTracks)
+                self.delete(track)
+                appLog("Created playlist \"\(folder.name)\" with \(newTracks.count) chapter track(s).",
+                       level: .success, category: "Chapters")
+            }
+        }
     }
 
     /// Renames a track. The first rename records the download title so

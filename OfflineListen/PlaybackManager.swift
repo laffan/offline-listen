@@ -60,10 +60,17 @@ final class PlaybackManager: NSObject, ObservableObject {
 
     // MARK: - Public control
 
-    func play(_ track: Track, in tracks: [Track]) {
-        queue = tracks.isEmpty ? [track] : tracks
+    /// Starts `track`, building the autoplay queue from `tracks`. The queue is
+    /// restricted to tracks of the **same category** (song / podcast / video) as
+    /// the selected one and kept in list order, so when one finishes the next of
+    /// the same type plays and the others are skipped (see `handleTrackFinished`).
+    /// `startAt` overrides the natural start position — used to jump to a chapter.
+    func play(_ track: Track, in tracks: [Track], startAt: Double? = nil) {
+        let pool = tracks.isEmpty ? [track] : tracks
+        queue = pool.filter { $0.playbackCategory == track.playbackCategory }
+        if queue.isEmpty { queue = [track] }
         index = queue.firstIndex(where: { $0.id == track.id }) ?? 0
-        loadCurrent(autoPlay: true, startAt: startPosition(for: track))
+        loadCurrent(autoPlay: true, startAt: startAt ?? startPosition(for: track))
     }
 
     func togglePlayPause() {
@@ -72,20 +79,27 @@ final class PlaybackManager: NSObject, ObservableObject {
     }
 
     func next() {
-        guard !queue.isEmpty else { return }
-        index = (index + 1) % queue.count
+        // Advance within the (already category-filtered) queue; stop at the end
+        // rather than wrapping, so a list plays through once.
+        guard !queue.isEmpty, index + 1 < queue.count else { return }
+        index += 1
         loadCurrent(autoPlay: true, startAt: startPosition(for: queue[index]))
     }
 
     func previous() {
         guard !queue.isEmpty else { return }
-        // Restart current track if we're more than 3s in, else go to previous.
-        if currentTime > 3 {
+        // Restart current track if we're more than 3s in, or it's the first one.
+        if currentTime > 3 || index == 0 {
             seek(to: 0)
             return
         }
-        index = (index - 1 + queue.count) % queue.count
+        index -= 1
         loadCurrent(autoPlay: true, startAt: startPosition(for: queue[index]))
+    }
+
+    /// Jumps the current track to a chapter marker.
+    func seek(toChapter chapter: Chapter) {
+        seek(to: chapter.start)
     }
 
     /// Where a track should begin: podcasts resume from their freshest saved
@@ -116,7 +130,8 @@ final class PlaybackManager: NSObject, ObservableObject {
               let track = library.tracks.first(where: { $0.id == id }) else { return }
 
         let pool = track.isArchived ? library.archivedTracks : library.activeTracks
-        queue = pool.contains(where: { $0.id == id }) ? pool : [track]
+        let sameCategory = pool.filter { $0.playbackCategory == track.playbackCategory }
+        queue = sameCategory.contains(where: { $0.id == id }) ? sameCategory : [track]
         index = queue.firstIndex(where: { $0.id == id }) ?? 0
         loadCurrent(autoPlay: false, startAt: startPosition(for: track))
     }
@@ -243,8 +258,11 @@ final class PlaybackManager: NSObject, ObservableObject {
         if let track = currentTrack, track.kind == .podcast, !track.isVideo {
             library.updatePosition(for: track.id, to: 0)
         }
-        if queue.count > 1 {
-            next()
+        // Auto-advance to the next track in the (category-filtered) queue and keep
+        // going to the end of the list; stop, rather than loop, once it's done.
+        if index + 1 < queue.count {
+            index += 1
+            loadCurrent(autoPlay: true, startAt: startPosition(for: queue[index]))
         } else {
             seek(to: 0)
             pause()

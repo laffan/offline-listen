@@ -223,12 +223,20 @@ final class DownloadManager: ObservableObject {
             try FileManager.default.moveItem(at: extracted.fileURL, to: finalURL)
             appLog("Saved \(finalURL.lastPathComponent)", level: .success, category: "Queue")
 
+            // Capture chapter markers (best-effort) — from the extractor if it
+            // provided them, otherwise via a metadata-only yt-dlp lookup.
+            var chapters = extracted.chapters
+            if chapters.isEmpty {
+                chapters = await ChapterFetcher.fetch(url: url)
+            }
+
             let track = Track(
                 title: extracted.title,
                 fileName: finalURL.lastPathComponent,
                 sourceURL: job.url,
                 duration: extracted.duration,
-                isVideo: extracted.isVideo
+                isVideo: extracted.isVideo,
+                chapters: chapters
             )
             library.add(track)
             job.trackID = track.id

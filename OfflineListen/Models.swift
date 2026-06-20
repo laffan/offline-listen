@@ -85,6 +85,51 @@ enum TrackKind: String, Codable {
     case podcast
 }
 
+/// The three media categories autoplay keeps to: when one track finishes,
+/// playback advances to the next track of the *same* category, skipping over
+/// the others until the list ends. Mirrors the library's Song/Podcast/Video
+/// distinction (a video is a video regardless of its song/podcast kind).
+enum PlaybackCategory: Hashable {
+    case song
+    case podcast
+    case video
+}
+
+/// A single chapter marker within a track (as exposed by YouTube / yt-dlp).
+/// `start`/`end` are seconds from the start of the track.
+struct Chapter: Identifiable, Codable, Hashable {
+    let id: UUID
+    var title: String
+    var start: Double
+    var end: Double
+
+    init(id: UUID = UUID(), title: String, start: Double, end: Double) {
+        self.id = id
+        self.title = title
+        self.start = start
+        self.end = end
+    }
+}
+
+extension Array where Element == Chapter {
+    /// Index of the chapter that contains `time` (the last whose start is at or
+    /// before it), or nil when there are no chapters.
+    func index(at time: Double) -> Int? {
+        guard !isEmpty else { return nil }
+        var result = 0
+        for (i, chapter) in enumerated() where chapter.start <= time + 0.001 {
+            result = i
+        }
+        return result
+    }
+
+    /// The chapter that contains `time`, if any.
+    func chapter(at time: Double) -> Chapter? {
+        guard let i = index(at: time) else { return nil }
+        return self[i]
+    }
+}
+
 /// A user-created folder that groups library tracks. Deleting a folder never
 /// deletes its tracks — they just return to the main library list.
 struct Folder: Identifiable, Codable, Hashable {
@@ -124,6 +169,8 @@ struct Track: Identifiable, Codable, Hashable {
     /// The title the track was downloaded with, recorded on first rename so
     /// "Reset to Original" can restore it. Nil while never renamed.
     var originalTitle: String?
+    /// YouTube/yt-dlp chapter markers, in order. Empty when the source had none.
+    var chapters: [Chapter]
 
     init(id: UUID = UUID(),
          title: String,
@@ -138,7 +185,8 @@ struct Track: Identifiable, Codable, Hashable {
          isVideo: Bool = false,
          folderID: UUID? = nil,
          hasBeenPlayed: Bool = false,
-         originalTitle: String? = nil) {
+         originalTitle: String? = nil,
+         chapters: [Chapter] = []) {
         self.id = id
         self.title = title
         self.artist = artist
@@ -153,10 +201,11 @@ struct Track: Identifiable, Codable, Hashable {
         self.folderID = folderID
         self.hasBeenPlayed = hasBeenPlayed
         self.originalTitle = originalTitle
+        self.chapters = chapters
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, artist, fileName, sourceURL, duration, dateAdded, isArchived, kind, lastPosition, isVideo, folderID, hasBeenPlayed, originalTitle
+        case id, title, artist, fileName, sourceURL, duration, dateAdded, isArchived, kind, lastPosition, isVideo, folderID, hasBeenPlayed, originalTitle, chapters
     }
 
     // Custom decode so libraries saved before these fields existed still load.
@@ -176,11 +225,21 @@ struct Track: Identifiable, Codable, Hashable {
         folderID = try c.decodeIfPresent(UUID.self, forKey: .folderID)
         hasBeenPlayed = try c.decodeIfPresent(Bool.self, forKey: .hasBeenPlayed) ?? false
         originalTitle = try c.decodeIfPresent(String.self, forKey: .originalTitle)
+        chapters = try c.decodeIfPresent([Chapter].self, forKey: .chapters) ?? []
     }
 
     /// Absolute on-disk location resolved at access time.
     var fileURL: URL {
         AppPaths.documents.appendingPathComponent(fileName)
+    }
+
+    /// True when the track carries chapter markers worth surfacing.
+    var hasChapters: Bool { chapters.count > 1 }
+
+    /// The media category autoplay keeps to when advancing through a list.
+    var playbackCategory: PlaybackCategory {
+        if isVideo { return .video }
+        return kind == .podcast ? .podcast : .song
     }
 }
 
@@ -201,6 +260,13 @@ extension String {
         // Trailing dots/spaces are problematic in file names.
         cleaned = cleaned.trimmingCharacters(in: CharacterSet(charactersIn: ". "))
         return cleaned.isEmpty ? "audio" : cleaned
+    }
+}
+
+extension String {
+    /// Pads the string on the left with `pad` until it's at least `width` long.
+    func leftPadded(to width: Int, with pad: Character) -> String {
+        count >= width ? self : String(repeating: pad, count: width - count) + self
     }
 }
 

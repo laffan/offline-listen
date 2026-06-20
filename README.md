@@ -26,6 +26,21 @@ Three screens (tabs):
    (film icon) play with picture on the Player screen. Archived tracks live in an
    **Archived** folder (toolbar).
 
+   **Autoplay by type.** When a track finishes, playback advances to the next
+   track in the same list (a folder, the Inbox, or the unfiled root) and keeps
+   going to the end — it doesn't loop. It also stays within the **media type**
+   you started: pick a song and only songs play on (podcasts and videos are
+   skipped over until the next song or the list ends); the same holds for
+   podcasts and for videos.
+
+   **Chapters.** Tracks that carry YouTube chapter markers show an **arrow**
+   after the title, set off by a left border so it reads as a button distinct
+   from the row: tapping the **title** plays the track normally, tapping the
+   **arrow** opens a list of chapters to jump to. Touch-and-hold such a track
+   for **Break Chapters into Playlist**, which exports one file per chapter into
+   a new folder named after the track and deletes the original — turning a
+   chaptered recording into a proper playlist.
+
    **Folders** organize the library: an **Inbox** pinned to the top collects
    every track you haven't listened to yet (starting playback — or a
    **Mark Played** swipe — clears it from the Inbox), and user folders sit
@@ -42,7 +57,9 @@ Three screens (tabs):
    control suite for audio and video. Video is edge-to-edge in portrait and
    goes fullscreen automatically when the phone rotates to landscape (tap the
    picture to toggle the floating controls). Drives the lock screen and
-   Control Center.
+   Control Center. For a chaptered track, small **dots** sit along the scrubber
+   at each chapter's start and the **current chapter title** shows on its own
+   line beneath the title/artist, updating as playback crosses a marker.
 4. **Log** — timestamped, copyable stream of every pipeline step (queue,
    yt-dlp, conversion) with light colour coding, for diagnosing downloads.
 
@@ -67,6 +84,8 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `CompositeExtractor.swift` | Tries the native extractor, falls back to yt-dlp. |
 | `AudioStreamDownloader.swift` | Shared chunked byte-range stream downloader. |
 | `VideoAudioExtractor.swift` | Extracts audio from a muxed video via AVFoundation. |
+| `ChapterFetcher.swift` | Best-effort capture of YouTube chapter markers via the on-device yt-dlp module. |
+| `ChapterSplitter.swift` | Exports one file per chapter (AVFoundation) for "Break Chapters into Playlist". |
 | `VideoMerger.swift` | Muxes a video-only + audio-only stream into one MP4. |
 | `PlaybackManager.swift` | `AVPlayer` engine (audio + video), audio session, lock screen. |
 | `Logger.swift` | `LogStore` — thread-safe, app-wide log sink. |
@@ -278,6 +297,23 @@ as possible rather than collapsing to one opaque line:
   engine, network) to a `Hint:` line suggesting the likely cause and next step.
   It returns nothing when it doesn't recognise the error — it never invents a
   diagnosis.
+
+## Chapters
+
+YouTube chapter markers are captured after a download as a best-effort step
+(`ChapterFetcher`): a fast, metadata-only `yt-dlp` lookup
+(`extract_info(download=False, process=False)` via PythonKit) reads the
+`chapters` list (`title` / `start_time` / `end_time`) and stores it on the
+`Track`. It runs only when the on-device yt-dlp Python module is **already
+present**, so capturing chapters never triggers the tens-of-MB module download
+on its own; without PythonKit/the module, tracks simply carry no chapters and
+everything else is unchanged. Chapters persist in `library.json` (older
+libraries decode with an empty list).
+
+Chapters surface three ways: a jump-to list behind the library row's arrow, dots
++ a current-chapter line on the Player, and **Break Chapters into Playlist**,
+which uses `AVAssetExportSession` (audio → `.m4a`, video → passthrough `.mp4`)
+to cut one file per chapter into a new folder and then deletes the original.
 
 ## Status
 

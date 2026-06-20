@@ -21,6 +21,8 @@ struct ExtractedMedia {
     let title: String
     let duration: Double
     let isVideo: Bool
+    /// Chapter markers exposed by the source, if any (empty otherwise).
+    var chapters: [Chapter] = []
 }
 
 enum ExtractorError: LocalizedError {
