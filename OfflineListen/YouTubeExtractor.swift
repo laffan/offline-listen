@@ -395,21 +395,33 @@ final class YoutubeDLExtractor: MediaExtractor {
             let logger = makeCaptureLogger()
             let info: PythonObject
             do {
-                info = try await withHeartbeat("Still re-resolving (\(label))", category: category) {
-                    let ytdlpModule = Python.import("yt_dlp")
-                    // A `None` logger is what yt-dlp falls back to anyway, so this
-                    // is a no-op when capture couldn't be installed.
-                    let options: PythonObject = [
-                        "quiet": true,
-                        "noplaylist": true,
-                        "nocheckcertificate": true,
-                        "extractor_args": ["youtube": ["player_client": PythonObject(clients)]],
-                        "logger": logger ?? Python.None,
-                    ]
-                    let ytdlp = ytdlpModule.YoutubeDL(options)
-                    return try ytdlp.extract_info.throwing.dynamicallyCall(withKeywordArguments: [
-                        "": url.absoluteString, "download": false, "process": true,
-                    ])
+                // Hard per-client cap (the heartbeat alone never bounded this, so
+                // a client that hung inside Python stalled the whole download with
+                // no further log output). Breadcrumbs around each Python call are
+                // written to the durable on-disk log *before* the call runs, so if
+                // the interpreter faults the process the last persisted line names
+                // exactly which step died.
+                info = try await withTimeout("Forced-client (\(label)) re-resolve", category: category, seconds: 60) {
+                    try await withHeartbeat("Still re-resolving (\(label))", category: category) {
+                        appLog("Importing yt_dlp module (client \(label))…", level: .debug, category: category)
+                        let ytdlpModule = Python.import("yt_dlp")
+                        // A `None` logger is what yt-dlp falls back to anyway, so this
+                        // is a no-op when capture couldn't be installed.
+                        let options: PythonObject = [
+                            "quiet": true,
+                            "noplaylist": true,
+                            "nocheckcertificate": true,
+                            "extractor_args": ["youtube": ["player_client": PythonObject(clients)]],
+                            "logger": logger ?? Python.None,
+                        ]
+                        let ytdlp = ytdlpModule.YoutubeDL(options)
+                        appLog("Running extract_info (client \(label))…", level: .debug, category: category)
+                        let result = try ytdlp.extract_info.throwing.dynamicallyCall(withKeywordArguments: [
+                            "": url.absoluteString, "download": false, "process": true,
+                        ])
+                        appLog("extract_info returned (client \(label)).", level: .debug, category: category)
+                        return result
+                    }
                 }
                 // Surface any warnings yt-dlp emitted even on a success (skipped
                 // formats, PO-token notices) — they explain odd selections later.

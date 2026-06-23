@@ -299,6 +299,21 @@ as possible rather than collapsing to one opaque line:
   engine, network) to a `Hint:` line suggesting the likely cause and next step.
   It returns nothing when it doesn't recognise the error — it never invents a
   diagnosis.
+- **The log survives a crash.** The in-memory log is published on the main
+  actor, so a hard native fault (most plausibly a PythonKit crash inside a
+  forced-client `extract_info`) would take its buffered tail down with it — the
+  very lines naming *where* it died. `DiagnosticLogFile` therefore mirrors every
+  line to `Documents/diagnostics.log` with a synchronous `write()` before the
+  caller proceeds, and on launch rolls the prior file to `diagnostics-previous.log`.
+  The Log tab's **share** button exports both, so a trail that ends mid-step is
+  still readable after a relaunch.
+- **The forced-client recovery is bounded and breadcrumbed.** Each client
+  attempt now runs under a hard `withTimeout` (the heartbeat alone never capped
+  it, so a client that hung inside Python stalled the whole download with no
+  further output); a timed-out client is logged and the loop moves to the next
+  one. `.debug` breadcrumbs bracket each Python call (`Importing yt_dlp…`,
+  `Running extract_info…`, `extract_info returned`) so the last persisted line
+  pinpoints the exact in-flight step.
 
 ## Chapters
 

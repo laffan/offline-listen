@@ -4,6 +4,7 @@ import UIKit
 struct LogView: View {
     @EnvironmentObject private var log: LogStore
     @State private var copied = false
+    @State private var sharing = false
 
     var body: some View {
         NavigationStack {
@@ -38,6 +39,20 @@ struct LogView: View {
                     }
                     .disabled(log.entries.isEmpty)
                 }
+                // Shares the crash-durable on-disk log files — including the
+                // previous session's, which survives a hard crash that the
+                // in-memory log (and so Copy) loses.
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        sharing = true
+                    } label: {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                    .disabled(log.persistedLogURLs.isEmpty)
+                }
+            }
+            .sheet(isPresented: $sharing) {
+                ActivityView(items: log.persistedLogURLs)
             }
         }
     }
