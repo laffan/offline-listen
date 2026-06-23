@@ -9,10 +9,12 @@ struct OfflineListenApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
-        let library = LibraryStore()
-        _library = StateObject(wrappedValue: library)
-        _downloads = StateObject(wrappedValue: DownloadManager(library: library))
-        _playback = StateObject(wrappedValue: PlaybackManager(library: library))
+        // Use the process-wide shared stores so the CarPlay scene drives the very
+        // same library and playback engine as this phone UI (see `AppServices`).
+        let services = AppServices.shared
+        _library = StateObject(wrappedValue: services.library)
+        _downloads = StateObject(wrappedValue: services.downloads)
+        _playback = StateObject(wrappedValue: services.playback)
     }
 
     var body: some Scene {

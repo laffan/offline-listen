@@ -45,6 +45,10 @@ final class PlaybackManager: NSObject, ObservableObject {
     private var lastPersist = Date.distantPast
     private let library: LibraryStore
 
+    /// Cached Now Playing artwork, keyed by track id, so the 2 Hz now-playing
+    /// refresh doesn't rebuild it every tick.
+    private var artworkCache: (id: UUID, artwork: MPMediaItemArtwork)?
+
     private enum Keys {
         static let trackID = "lastTrackID"
     }
@@ -361,10 +365,20 @@ final class PlaybackManager: NSObject, ObservableObject {
             MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0
         ]
         info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = 1.0
+        // Placeholder cover art so the lock screen / Control Center / CarPlay Now
+        // Playing screen aren't blank (downloaded tracks carry no artwork).
+        info[MPMediaItemPropertyArtwork] = artwork(for: track)
         center.nowPlayingInfo = info
         // iOS 13+ uses an explicit playback state to decide whether (and how) to
         // present the Now Playing controls on the lock screen; without it the
         // controls can fail to surface or get stuck out of sync with playback.
         center.playbackState = isPlaying ? .playing : .paused
+    }
+
+    private func artwork(for track: Track) -> MPMediaItemArtwork {
+        if let cache = artworkCache, cache.id == track.id { return cache.artwork }
+        let artwork = TrackArtwork.nowPlayingArtwork(for: track)
+        artworkCache = (track.id, artwork)
+        return artwork
     }
 }

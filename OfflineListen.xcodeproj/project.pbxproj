@@ -30,6 +30,10 @@
 		1B00000000000000000000C8 /* FolderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B6 /* FolderView.swift */; };
 		1B00000000000000000000C9 /* ChapterFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B7 /* ChapterFetcher.swift */; };
 		1B00000000000000000000CA /* ChapterSplitter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B8 /* ChapterSplitter.swift */; };
+		1B00000000000000000000D1 /* AppServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000C1 /* AppServices.swift */; };
+		1B00000000000000000000D2 /* TrackArtwork.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000C2 /* TrackArtwork.swift */; };
+		1B00000000000000000000D3 /* CarPlayController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000C3 /* CarPlayController.swift */; };
+		1B00000000000000000000D4 /* CarPlaySceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000C4 /* CarPlaySceneDelegate.swift */; };
 		3B00000000000000000000A3 /* SharedInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A00000000000000000000A5 /* SharedInbox.swift */; };
 		3B00000000000000000000A1 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A00000000000000000000A1 /* ShareViewController.swift */; };
 		3B00000000000000000000A2 /* SharedInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A00000000000000000000A5 /* SharedInbox.swift */; };
@@ -67,6 +71,10 @@
 		1A00000000000000000000B6 /* FolderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderView.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B7 /* ChapterFetcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChapterFetcher.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B8 /* ChapterSplitter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChapterSplitter.swift; sourceTree = "<group>"; };
+		1A00000000000000000000C1 /* AppServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppServices.swift; sourceTree = "<group>"; };
+		1A00000000000000000000C2 /* TrackArtwork.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackArtwork.swift; sourceTree = "<group>"; };
+		1A00000000000000000000C3 /* CarPlayController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CarPlayController.swift; sourceTree = "<group>"; };
+		1A00000000000000000000C4 /* CarPlaySceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CarPlaySceneDelegate.swift; sourceTree = "<group>"; };
 		1A00000000000000000000AC /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		1A00000000000000000000AD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		1A00000000000000000000AE /* OfflineListen.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OfflineListen.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -111,6 +119,7 @@
 			isa = PBXGroup;
 			children = (
 				1A00000000000000000000A1 /* OfflineListenApp.swift */,
+				1A00000000000000000000C1 /* AppServices.swift */,
 				1A00000000000000000000A2 /* Models.swift */,
 				1A00000000000000000000A3 /* LibraryStore.swift */,
 				1A00000000000000000000A4 /* DownloadManager.swift */,
@@ -130,6 +139,9 @@
 				1A00000000000000000000B3 /* YouTubeKitExtractor.swift */,
 				1A00000000000000000000B4 /* VideoAudioExtractor.swift */,
 				1A00000000000000000000B5 /* VideoMerger.swift */,
+				1A00000000000000000000C2 /* TrackArtwork.swift */,
+				1A00000000000000000000C3 /* CarPlayController.swift */,
+				1A00000000000000000000C4 /* CarPlaySceneDelegate.swift */,
 				3A00000000000000000000A5 /* SharedInbox.swift */,
 				1A00000000000000000000AC /* Assets.xcassets */,
 				1A00000000000000000000AD /* Info.plist */,
@@ -279,6 +291,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				1B00000000000000000000B1 /* OfflineListenApp.swift in Sources */,
+				1B00000000000000000000D1 /* AppServices.swift in Sources */,
+				1B00000000000000000000D2 /* TrackArtwork.swift in Sources */,
+				1B00000000000000000000D3 /* CarPlayController.swift in Sources */,
+				1B00000000000000000000D4 /* CarPlaySceneDelegate.swift in Sources */,
 				1B00000000000000000000B2 /* Models.swift in Sources */,
 				1B00000000000000000000B3 /* LibraryStore.swift in Sources */,
 				1B00000000000000000000B4 /* DownloadManager.swift in Sources */,

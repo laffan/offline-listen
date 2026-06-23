@@ -77,6 +77,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | File | Role |
 |------|------|
 | `OfflineListenApp.swift` | App entry; wires up the shared stores. |
+| `AppServices.swift` | Process-wide owner of the shared stores, so the phone and CarPlay scenes drive the same library + playback engine. |
 | `Models.swift` | `Track`, `Folder`, `DownloadMode`, `LibraryFilter`, paths, helpers. |
 | `LibraryStore.swift` | Persists the library to `Documents/library.json` and folders to `Documents/folders.json`. |
 | `DownloadManager.swift` | Serial download queue + `DownloadJob`. |
@@ -89,6 +90,9 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `ChapterSplitter.swift` | Exports one file per chapter (AVFoundation) for "Break Chapters into Playlist". |
 | `VideoMerger.swift` | Muxes a video-only + audio-only stream into one MP4. |
 | `PlaybackManager.swift` | `AVPlayer` engine (audio + video), audio session, lock screen. |
+| `TrackArtwork.swift` | Generates placeholder cover art (Now Playing + CarPlay list icons). |
+| `CarPlaySceneDelegate.swift` | `CPTemplateApplicationSceneDelegate` — the CarPlay scene entry point. |
+| `CarPlayController.swift` | Builds the CarPlay browse templates and wires selection to playback. |
 | `Logger.swift` | `LogStore` — thread-safe, app-wide log sink. |
 | `*View.swift` | The four SwiftUI screens (Download, Library, Player, Log). |
 | `FolderView.swift` | Folder detail (tap-to-play, reorder) and Inbox screens. |
@@ -173,6 +177,55 @@ appear). So `PlaybackManager` chooses the side pair **per track** in
 while **podcasts** get **jump ahead 30s / back 15s** (more useful for long
 episodes). Whichever pair isn't shown stays available from the in-app Player,
 whose controls call `next()` / `previous()` / `skipForward()` directly.
+
+## CarPlay
+
+The app runs a **second scene** for CarPlay, so the library can be browsed and
+played from a car's head unit. It's an **audio app** in CarPlay terms: it draws
+its UI from CarPlay's fixed template set (lists + the system Now Playing screen)
+rather than rendering its own views — the right model for a media app and what
+Apple permits for this category.
+
+How it fits together:
+
+- **One engine, two scenes.** The phone UI and the CarPlay UI must drive the
+  *same* `LibraryStore` and `PlaybackManager`, so a track started in the car
+  shows in the phone's Now Playing (and vice-versa). `AppServices.shared` owns
+  the three stores; `OfflineListenApp` builds its `StateObject`s from it and
+  `CarPlaySceneDelegate` reads the same instances.
+- **Now Playing is free.** CarPlay's Now Playing screen — its artwork, metadata
+  and transport buttons — is driven entirely by the `MPNowPlayingInfoCenter` /
+  `MPRemoteCommandCenter` wiring that already powers the lock screen, including
+  the **per-track** button choice (next/prev for songs & videos, 30s/15s jumps
+  for podcasts). So the only CarPlay-specific code is the **browse** UI.
+  `TrackArtwork` adds placeholder cover art (an accent gradient + the category
+  glyph) to the now-playing info so the screen isn't blank, which also improves
+  the lock screen.
+- **Browse hierarchy** (`CarPlayController`), kept shallow for use while
+  driving: a root `CPListTemplate` with an **Inbox** row and a row per **folder**
+  (each drilling into its track list), plus a flat **Tracks** section of unfiled
+  tracks that play on tap. Selecting a track calls `playback.play(_:in:)` with
+  that list as the autoplay pool and surfaces `CPNowPlayingTemplate`. The list
+  rebuilds when the library changes and re-flags the now-playing row when the
+  track changes.
+
+### Required Xcode setup for CarPlay
+
+Two pieces are wired up in source, but **one needs Apple's approval**:
+
+1. **Scene manifest.** `Info.plist` declares a
+   `CPTemplateApplicationSceneSessionRoleApplication` scene pointing at
+   `CarPlaySceneDelegate`. The phone's window scene continues to use SwiftUI's
+   default configuration (only the CarPlay scene is declared), so the regular
+   app is unaffected.
+2. **The `com.apple.developer.carplay-audio` entitlement** is declared in
+   `OfflineListen.entitlements`, but Apple **only provisions it after you request
+   the CarPlay app entitlement** for your account/app
+   ([developer.apple.com/contact/carplay](https://developer.apple.com/contact/carplay/)).
+   Until it's granted, a **device** build won't sign with this entitlement — but
+   you can develop and test the whole CarPlay UI in the **Simulator**, which
+   doesn't check provisioning: run the app on an iOS Simulator, then in the
+   Simulator menu choose **I/O ▸ External Displays ▸ CarPlay**.
 
 ## Audio vs. Video
 
