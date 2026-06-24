@@ -594,9 +594,9 @@ struct TrackRow: View {
         return track.kind == .podcast ? "mic.fill" : "music.note"
     }
 
-    /// Podcasts (audio only) show a resume progress bar.
+    /// Podcasts and videos resume, so they show a progress bar; songs don't.
     private var showsProgress: Bool {
-        track.kind == .podcast && !track.isVideo
+        track.remembersPosition
     }
 
     var body: some View {

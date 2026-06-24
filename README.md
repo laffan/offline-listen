@@ -21,10 +21,10 @@ Three screens (tabs):
 2. **Library** — downloaded tracks; tap to play. A **filter** (All / Music /
    Podcasts / Video) is at the top. Swipe **left** for Delete/Share/Archive (and
    bulk versions via **Select**); swipe **right** on an audio track to classify
-   it **Song** or **Podcast**. Songs/videos start from the beginning; podcasts
-   (mic icon) resume where you left off and show a progress bar. Video tracks
-   (film icon) play with picture on the Player screen. Archived tracks live in an
-   **Archived** folder (toolbar).
+   it **Song** or **Podcast**. Songs start from the beginning; podcasts (mic
+   icon) and videos (film icon) resume where you left off and show a progress
+   bar. Video tracks play with picture on the Player screen. Archived tracks live
+   in an **Archived** folder (toolbar).
 
    **Autoplay by type.** When a track finishes, playback advances to the next
    track in the same list (a folder, the Inbox, or the unfiled root) and keeps

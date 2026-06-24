@@ -241,6 +241,13 @@ struct Track: Identifiable, Codable, Hashable {
         if isVideo { return .video }
         return kind == .podcast ? .podcast : .song
     }
+
+    /// Whether the track resumes from its saved playhead instead of starting
+    /// over. Podcasts and videos remember where you left off; songs always
+    /// start at 0. (Gates position save/restore and the library progress bar.)
+    var remembersPosition: Bool {
+        playbackCategory == .podcast || playbackCategory == .video
+    }
 }
 
 extension String {

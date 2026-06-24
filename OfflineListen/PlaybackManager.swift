@@ -102,10 +102,10 @@ final class PlaybackManager: NSObject, ObservableObject {
         seek(to: chapter.start)
     }
 
-    /// Where a track should begin: podcasts resume from their freshest saved
-    /// playhead; songs and videos always start at 0.
+    /// Where a track should begin: podcasts and videos resume from their
+    /// freshest saved playhead; songs always start at 0.
     private func startPosition(for track: Track) -> Double {
-        guard track.kind == .podcast, !track.isVideo else { return 0 }
+        guard track.remembersPosition else { return 0 }
         return library.tracks.first(where: { $0.id == track.id })?.lastPosition ?? track.lastPosition
     }
 
@@ -119,7 +119,7 @@ final class PlaybackManager: NSObject, ObservableObject {
     }
 
     /// Restores the last-played track (paused), unless playback is already
-    /// underway. Podcasts restore at their saved playhead; songs/videos at 0.
+    /// underway. Podcasts and videos restore at their saved playhead; songs at 0.
     func restoreLastSession() {
         guard !hasRestored else { return }
         hasRestored = true
@@ -214,8 +214,8 @@ final class PlaybackManager: NSObject, ObservableObject {
     private func persistState() {
         guard let track = currentTrack else { return }
         UserDefaults.standard.set(track.id.uuidString, forKey: Keys.trackID)
-        // Only podcasts remember their playhead.
-        if track.kind == .podcast, !track.isVideo {
+        // Podcasts and videos remember their playhead; songs don't.
+        if track.remembersPosition {
             library.updatePosition(for: track.id, to: currentTime)
         }
         lastPersist = Date()
@@ -255,8 +255,8 @@ final class PlaybackManager: NSObject, ObservableObject {
     }
 
     private func handleTrackFinished() {
-        // A finished podcast resets so a later tap starts it fresh.
-        if let track = currentTrack, track.kind == .podcast, !track.isVideo {
+        // A finished podcast or video resets so a later tap starts it fresh.
+        if let track = currentTrack, track.remembersPosition {
             library.updatePosition(for: track.id, to: 0)
         }
         // Auto-advance to the next track in the (category-filtered) queue and keep
