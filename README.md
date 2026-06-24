@@ -194,10 +194,17 @@ whose controls call `next()` / `previous()` / `skipForward()` directly.
   happens when the on-device player JS can't be resolved and every H.264 URL,
   which needs nsig descrambling, gets dropped), the yt-dlp path runs a
   **recovery**: it re-resolves forcing alternate **player clients** (`ios`,
-  `web_safari`, `android`, `tv`, `mweb`, `web`) one at a time, whose H.264 URLs
+  `tv`, `android`, `web_safari`, `mweb`, `web`) one at a time, whose H.264 URLs
   need no descrambling — the same renditions Safari plays — and takes the first
-  that yields a decodable stream. Only if every client still yields nothing
-  decodable does the download fail with a clear `unplayableVideoCodec` message.
+  that yields a decodable stream. The order matters for quality: it accepts the
+  first client that works, so the no-token, **higher-resolution** source (`tv`,
+  up to 1080p H.264) is tried before `android`, whose formats YouTube's SABR
+  experiment frequently caps low (360p); the web-family clients come last
+  because on device they usually fail the n-challenge (no JS runtime). When the
+  recovered H.264 is much lower than what was offered, the log says so — a 360p
+  save from a 2160p AV1-only source reads as a codec ceiling, not a bug. Only if
+  every client still yields nothing decodable does the download fail with a clear
+  `unplayableVideoCodec` message.
 
 ## Extraction: native primary + yt-dlp fallback
 
@@ -224,8 +231,8 @@ straight to yt-dlp, instead of logging a guaranteed failure:
    If that default extraction **stalls or times out** (90s) — which happens when
    yt-dlp's default *web* client has to run YouTube's nsig descrambling through
    the slow pure-Python JS interpreter on device — the extractor automatically
-   **retries with forced fast player clients** (`ios`, `web_safari`, `android`,
-   `tv`, `mweb`, `web`, one at a time). Those clients return stream URLs that
+   **retries with forced fast player clients** (`ios`, `tv`, `android`,
+   `web_safari`, `mweb`, `web`, one at a time). Those clients return stream URLs that
    need no descrambling — the same renditions Safari plays, so they succeed for
    videos that play fine in the browser but hang the default path. This forced-
    client recovery handles **both audio and video** downloads (see below).

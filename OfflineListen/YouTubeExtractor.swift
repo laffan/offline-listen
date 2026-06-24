@@ -376,16 +376,29 @@ final class YoutubeDLExtractor: MediaExtractor {
     /// access uses `.get(...)` so a missing key yields Python `None` rather than
     /// trapping. Returns nil if no client yields a usable stream (caller then
     /// surfaces a clear error).
+    /// - Parameter offeredVideoHeight: the tallest video resolution the *default*
+    ///   extraction exposed (in any codec, including the undecodable AV1/VP9 we're
+    ///   recovering from). Used only to explain in the log when the recovered
+    ///   H.264 stream is much lower — so a 360p save from a 2160p video reads as a
+    ///   codec limitation, not a silent quality bug.
     private func extractViaForcedClients(url: URL,
                                          mode: DownloadMode,
                                          category: String,
+                                         offeredVideoHeight: Int? = nil,
                                          onDownloadStart: @escaping () -> Void,
                                          onProgress: @escaping (Double) -> Void) async throws -> ExtractedMedia? {
         // Try clients one at a time with fallback: an unsupported client name
         // (older on-device yt-dlp) or a PO-token-gated client fails only its own
-        // attempt instead of the whole recovery. Ordered by how reliably each
-        // returns URLs that need no nsig descrambling.
-        let clientSets: [[String]] = [["ios"], ["web_safari"], ["android"], ["tv"], ["mweb"], ["web"]]
+        // attempt instead of the whole recovery. Ordered so the clients whose
+        // URLs need *no* nsig descrambling come first — and among those, the one
+        // that serves the highest-resolution H.264 (`tv`, up to 1080p) is tried
+        // ahead of `android`, whose renditions are frequently capped low (360p)
+        // when YouTube's SABR experiment strips its formats. We accept the first
+        // client that yields a playable stream, so this order is what decides the
+        // saved video quality. The web-family clients (`web_safari`/`mweb`/`web`)
+        // come last: on device they almost always fail the n-challenge (no JS
+        // runtime), so they're a last resort, not a quality source.
+        let clientSets: [[String]] = [["ios"], ["tv"], ["android"], ["web_safari"], ["mweb"], ["web"]]
 
         for clients in clientSets {
             let label = clients.joined(separator: ",")
@@ -445,7 +458,7 @@ final class YoutubeDLExtractor: MediaExtractor {
 
             let media = mode == .video
                 ? try await downloadPlayable(from: info, client: label, url: url,
-                                             category: category,
+                                             category: category, offeredVideoHeight: offeredVideoHeight,
                                              onDownloadStart: onDownloadStart, onProgress: onProgress)
                 : try await downloadBestAudio(from: info, client: label, url: url,
                                               category: category,
@@ -484,6 +497,7 @@ final class YoutubeDLExtractor: MediaExtractor {
                                   client: String,
                                   url: URL,
                                   category: String,
+                                  offeredVideoHeight: Int? = nil,
                                   onDownloadStart: @escaping () -> Void,
                                   onProgress: @escaping (Double) -> Void) async throws -> ExtractedMedia? {
         let formatsObj = info.get("formats")
@@ -526,6 +540,13 @@ final class YoutubeDLExtractor: MediaExtractor {
         let audio = audios.max(by: { $0.abr < $1.abr })
         appLog("Recovery (\(client)) selected H.264 video \(video.height)p (\(video.vcodec))\(audio == nil ? " · no separate audio" : " + m4a audio")",
                level: .success, category: category)
+        // If YouTube offered the video at a notably higher resolution but only in
+        // a codec this device can't decode (AV1/VP9), say so — otherwise a 360p
+        // save from a 2160p source looks like a bug rather than a codec ceiling.
+        if let offered = offeredVideoHeight, offered >= video.height + 240 {
+            appLog("Note: the highest resolution offered was \(offered)p, but only as AV1/VP9, which this device can't decode — \(video.height)p is the best H.264 (device-playable) rendition available.",
+                   level: .warning, category: category)
+        }
 
         func request(_ urlString: String, _ headerFields: [String: String]) -> URLRequest? {
             guard let u = URL(string: urlString) else { return nil }
@@ -772,13 +793,17 @@ final class YoutubeDLExtractor: MediaExtractor {
                     }
                     let offered = videoMP4.compactMap { $0.vcodec }.filter { $0 != "none" }
                     let list = offered.isEmpty ? "none" : Set(offered).sorted().joined(separator: ", ")
-                    appLog("Default extraction offered no device-playable video (need H.264/HEVC) — offered: \(list)",
+                    // Tallest resolution offered in *any* codec — passed to the
+                    // recovery so it can explain a large quality drop (e.g. a 2160p
+                    // AV1-only source recovered as 360p H.264).
+                    let offeredHeight = formats.filter { !$0.isAudioOnly }.compactMap { $0.height }.max()
+                    appLog("Default extraction offered no device-playable video (need H.264/HEVC) — offered: \(list)\(offeredHeight.map { " up to \($0)p" } ?? "")",
                            level: .warning, category: category)
                     // Recovery: re-resolve forcing a player client that returns
                     // H.264. Bypasses the rest of this method on success.
                     #if canImport(PythonKit)
                     if let recovered = try await extractViaForcedClients(
-                        url: url, mode: .video, category: category,
+                        url: url, mode: .video, category: category, offeredVideoHeight: offeredHeight,
                         onDownloadStart: onDownloadStart, onProgress: onProgress) {
                         return recovered
                     }
