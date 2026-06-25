@@ -169,12 +169,11 @@ struct OperationTimeout: LocalizedError {
 /// `Task.sleep`. A synchronous, pool-starving call — yt-dlp's Python
 /// `extract_info`, which blocks its thread and can starve the cooperative pool —
 /// would never let a `Task.sleep`-based timeout fire, so the timer runs on its
-/// own dispatch queue. On timeout we stop *waiting* and throw, but deliberately
-/// let the operation keep running: cancellation can't interrupt blocking Python
-/// work anyway, and abandoning the wait is what lets the caller move on (e.g. try
-/// the next forced player client) instead of hanging forever. Mirrors the
-/// default extraction path's `resolveInfo` timeout for the forced-client path,
-/// which previously had only a heartbeat and no cap.
+/// own dispatch queue. On timeout we cancel the work task and stop waiting.
+/// Cancellation is cooperative and won't interrupt a blocking Python call
+/// mid-flight, but it lets the task clean up promptly once the synchronous work
+/// returns — preventing orphaned tasks from accumulating memory while the
+/// forced-client loop tries subsequent clients.
 func withTimeout<T>(_ label: String,
                     category: String,
                     seconds: TimeInterval,
@@ -182,8 +181,6 @@ func withTimeout<T>(_ label: String,
     let work = Task { try await operation() }
     let lock = NSLock()
     var finished = false
-    // Returns true if *this* call settled the continuation, so the loser can
-    // tell it raced in after the deadline already fired.
     func finish(_ body: () -> Void) -> Bool {
         lock.lock(); defer { lock.unlock() }
         guard !finished else { return false }
@@ -196,7 +193,10 @@ func withTimeout<T>(_ label: String,
         let timer = DispatchSource.makeTimerSource(queue: .global(qos: .userInitiated))
         timer.schedule(deadline: .now() + seconds)
         timer.setEventHandler {
-            _ = finish { continuation.resume(throwing: OperationTimeout(label: label, seconds: Int(seconds))) }
+            _ = finish {
+                work.cancel()
+                continuation.resume(throwing: OperationTimeout(label: label, seconds: Int(seconds)))
+            }
             timer.cancel()
         }
         timer.resume()
@@ -210,8 +210,10 @@ func withTimeout<T>(_ label: String,
                 }
             } catch {
                 if !finish({ timer.cancel(); continuation.resume(throwing: error) }) {
-                    appLog("\(label): failed after the \(Int(seconds))s timeout had already fired: \(error.localizedDescription)",
-                           level: .debug, category: category)
+                    if !(error is CancellationError) {
+                        appLog("\(label): failed after the \(Int(seconds))s timeout had already fired: \(error.localizedDescription)",
+                               level: .debug, category: category)
+                    }
                 }
             }
         }

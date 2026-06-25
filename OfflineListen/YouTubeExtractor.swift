@@ -127,6 +127,38 @@ extension MediaExtractor {
 /// device. (The `Downloader` initializer that would yield a foreground session
 /// is `internal`, so it can't be substituted from here.)
 final class YoutubeDLExtractor: MediaExtractor {
+    /// Tracks the orphaned default extraction after a timeout so the
+    /// forced-client recovery can wait for it to settle before starting new
+    /// Python work — running two concurrent yt-dlp `extract_info` calls
+    /// through the embedded interpreter risks a crash (memory pressure or
+    /// PythonKit threading fault).
+    private var orphanedDefaultExtraction: Task<Void, Never>?
+
+    /// Waits up to `cap` seconds for the orphaned default extraction to finish
+    /// before starting forced-client recovery. Two concurrent Python
+    /// `extract_info` calls through the embedded interpreter can crash the
+    /// process (memory pressure on device, or a PythonKit/GIL threading fault).
+    private func waitForOrphanedExtraction(category: String, cap: TimeInterval = 5) async {
+        guard let orphan = orphanedDefaultExtraction else { return }
+        appLog("Waiting for orphaned default extraction to settle (up to \(Int(cap))s)…",
+               level: .debug, category: category)
+        let settled = await withTaskGroup(of: Bool.self) { group in
+            group.addTask { await orphan.value; return true }
+            group.addTask { try? await Task.sleep(nanoseconds: UInt64(cap * 1_000_000_000)); return false }
+            let first = await group.next() ?? false
+            group.cancelAll()
+            return first
+        }
+        orphanedDefaultExtraction = nil
+        if settled {
+            appLog("Orphaned extraction settled — proceeding with recovery.",
+                   level: .debug, category: category)
+        } else {
+            appLog("Orphaned extraction still running after \(Int(cap))s — proceeding anyway (memory pressure risk).",
+                   level: .warning, category: category)
+        }
+    }
+
     /// Deletes the cached yt-dlp Python module and re-downloads it. Useful when
     /// extraction starts failing because the engine is stale relative to
     /// YouTube's frequent changes.
@@ -215,9 +247,6 @@ final class YoutubeDLExtractor: MediaExtractor {
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<([Format], Info), Error>) in
             let lock = NSLock()
             var finished = false
-            // Returns true if *this* call was the one that settled the
-            // continuation (so the late observer below can tell whether it raced
-            // in after the timeout already fired).
             func finish(_ work: () -> Void) -> Bool {
                 lock.lock(); defer { lock.unlock() }
                 guard !finished else { return false }
@@ -228,15 +257,20 @@ final class YoutubeDLExtractor: MediaExtractor {
 
             let timer = DispatchSource.makeTimerSource(queue: .global(qos: .userInitiated))
             timer.schedule(deadline: .now() + timeout)
-            timer.setEventHandler {
+            timer.setEventHandler { [weak self] in
                 _ = finish {
-                    // Don't cancel the extraction: cancellation wouldn't stop the
-                    // synchronous Python work anyway, and letting it run to the end
-                    // is what lets us log yt-dlp's real result/error below.
+                    extraction.cancel()
                     continuation.resume(throwing: ExtractorError.downloadFailed(
                         "Timed out after \(Int(timeout))s extracting info. YouTube may have changed — try the ⋯ menu → Refresh yt-dlp engine, or a different video."))
                 }
                 timer.cancel()
+
+                // Track the orphaned extraction so the forced-client path can
+                // wait for it to settle before starting new Python work.
+                let orphan = Task {
+                    _ = try? await extraction.value
+                }
+                self?.orphanedDefaultExtraction = orphan
             }
             timer.resume()
 
@@ -245,23 +279,19 @@ final class YoutubeDLExtractor: MediaExtractor {
                     let value = try await extraction.value
                     let settled = finish { timer.cancel(); continuation.resume(returning: value) }
                     if !settled {
-                        // We already timed out and moved on; the abandoned run
-                        // finally succeeded. The 90s limit was simply too tight
-                        // for this video (or it stalled then recovered).
                         appLog("Note: the extraction that timed out actually succeeded after \(Int(Date().timeIntervalSince(started)))s (\(value.0.count) formats). The video isn't broken — extraction was just slow this time.",
                                level: .warning, category: category)
                     }
                 } catch {
                     let settled = finish { timer.cancel(); continuation.resume(throwing: error) }
                     if !settled {
-                        // The real reason the default extraction was failing,
-                        // arriving after our timeout message. This is the line to
-                        // read when diagnosing a timeout.
-                        appLog("yt-dlp's own error (arrived \(Int(Date().timeIntervalSince(started)))s in, after the timeout): \(error.localizedDescription)",
-                               level: .error, category: category)
-                        appLog("Detail: \(String(describing: error))", level: .debug, category: category)
-                        if let hint = Self.diagnosticHint(for: "\(error.localizedDescription) \(String(describing: error))") {
-                            appLog("Hint: \(hint)", level: .warning, category: category)
+                        if !(error is CancellationError) {
+                            appLog("yt-dlp's own error (arrived \(Int(Date().timeIntervalSince(started)))s in, after the timeout): \(error.localizedDescription)",
+                                   level: .error, category: category)
+                            appLog("Detail: \(String(describing: error))", level: .debug, category: category)
+                            if let hint = Self.diagnosticHint(for: "\(error.localizedDescription) \(String(describing: error))") {
+                                appLog("Hint: \(hint)", level: .warning, category: category)
+                            }
                         }
                     }
                 }
@@ -723,6 +753,7 @@ final class YoutubeDLExtractor: MediaExtractor {
                 #if canImport(PythonKit)
                 appLog("Default extraction failed (\(error.localizedDescription)) — retrying with forced fast player clients…",
                        level: .warning, category: category)
+                await waitForOrphanedExtraction(category: category)
                 if let media = try await extractViaForcedClients(
                     url: url, mode: mode, category: category,
                     onDownloadStart: onDownloadStart, onProgress: onProgress) {
