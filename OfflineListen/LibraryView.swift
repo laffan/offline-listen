@@ -109,6 +109,7 @@ enum LibraryRoute: Hashable {
 struct LibraryView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var playback: PlaybackManager
+    @Environment(\.openURL) private var openURL
 
     /// Called after a track starts playing so the parent can switch to the player tab.
     let onPlay: () -> Void
@@ -380,6 +381,13 @@ struct LibraryView: View {
                         splittingTrack = track
                     } label: {
                         Label("Break Chapters into Playlist", systemImage: "list.bullet.indent")
+                    }
+                }
+                if let url = URL(string: track.sourceURL) {
+                    Button {
+                        openURL(url)
+                    } label: {
+                        Label("View Original", systemImage: "safari")
                     }
                 }
             }

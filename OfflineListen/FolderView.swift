@@ -6,6 +6,7 @@ import SwiftUI
 struct FolderDetailView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var playback: PlaybackManager
+    @Environment(\.openURL) private var openURL
 
     let folderID: UUID
     let startReordering: Bool
@@ -148,6 +149,13 @@ struct FolderDetailView: View {
                         Label("Break Chapters into Playlist", systemImage: "list.bullet.indent")
                     }
                 }
+                if let url = URL(string: track.sourceURL) {
+                    Button {
+                        openURL(url)
+                    } label: {
+                        Label("View Original", systemImage: "safari")
+                    }
+                }
             }
 
         if editMode.isEditing {
@@ -166,6 +174,7 @@ struct FolderDetailView: View {
 struct InboxView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var playback: PlaybackManager
+    @Environment(\.openURL) private var openURL
 
     let onPlay: () -> Void
     @Binding var share: SharePayload?
@@ -247,6 +256,13 @@ struct InboxView: View {
                                         splittingTrack = track
                                     } label: {
                                         Label("Break Chapters into Playlist", systemImage: "list.bullet.indent")
+                                    }
+                                }
+                                if let url = URL(string: track.sourceURL) {
+                                    Button {
+                                        openURL(url)
+                                    } label: {
+                                        Label("View Original", systemImage: "safari")
                                     }
                                 }
                             }
