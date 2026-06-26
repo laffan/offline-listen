@@ -135,19 +135,31 @@ final class YoutubeDLExtractor: MediaExtractor {
     private var orphanedDefaultExtraction: Task<Void, Never>?
 
     /// Waits up to `cap` seconds for the orphaned default extraction to finish
-    /// before starting forced-client recovery. Two concurrent Python
-    /// `extract_info` calls through the embedded interpreter can crash the
-    /// process (memory pressure on device, or a PythonKit/GIL threading fault).
+    /// before starting forced-client recovery. Uses a GCD timer (not
+    /// Task.sleep / withTaskGroup) because the orphaned Python call can starve
+    /// the cooperative pool, and because withTaskGroup waits for *all* children
+    /// before returning — a non-throwing `await orphan.value` child would block
+    /// the group even after cancellation.
     private func waitForOrphanedExtraction(category: String, cap: TimeInterval = 5) async {
         guard let orphan = orphanedDefaultExtraction else { return }
         appLog("Waiting for orphaned default extraction to settle (up to \(Int(cap))s)…",
                level: .debug, category: category)
-        let settled = await withTaskGroup(of: Bool.self) { group in
-            group.addTask { await orphan.value; return true }
-            group.addTask { try? await Task.sleep(nanoseconds: UInt64(cap * 1_000_000_000)); return false }
-            let first = await group.next() ?? false
-            group.cancelAll()
-            return first
+        let settled: Bool = await withCheckedContinuation { continuation in
+            let lock = NSLock()
+            var done = false
+            func settle(_ value: Bool) {
+                lock.lock(); defer { lock.unlock() }
+                guard !done else { return }
+                done = true
+                continuation.resume(returning: value)
+            }
+
+            let timer = DispatchSource.makeTimerSource(queue: .global(qos: .userInitiated))
+            timer.schedule(deadline: .now() + cap)
+            timer.setEventHandler { settle(false); timer.cancel() }
+            timer.resume()
+
+            Task { await orphan.value; settle(true); timer.cancel() }
         }
         orphanedDefaultExtraction = nil
         if settled {
