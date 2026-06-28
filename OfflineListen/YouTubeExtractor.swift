@@ -760,6 +760,15 @@ final class YoutubeDLExtractor: MediaExtractor {
                 appLog("yt-dlp Python module downloaded.", level: .success, category: category)
             }
 
+            // Instantiate YoutubeDL up front: besides being the handle the default
+            // web-client path uses, constructing it is what bootstraps the embedded
+            // Python runtime (PYTHONHOME, the unpacked stdlib, PythonKit's module
+            // search path) so a later `Python.import("yt_dlp")` resolves. The
+            // forced-client path below drives Python directly, so it MUST run after
+            // this — calling it first crashes with "No module named 'encodings'".
+            appLog("Initializing yt-dlp…", level: .debug, category: category)
+            let youtubeDL = YoutubeDL()
+
             // For YouTube we go straight to the fast player clients (tv/ios/…),
             // whose stream URLs need *no* nsig descrambling. The default web
             // client would have to run YouTube's nsig challenge through the slow
@@ -784,9 +793,6 @@ final class YoutubeDLExtractor: MediaExtractor {
                        level: .warning, category: category)
             }
             #endif
-
-            appLog("Initializing yt-dlp…", level: .debug, category: category)
-            let youtubeDL = YoutubeDL()
 
             appLog("Extracting video info (running yt-dlp)…", category: category)
             let formats: [Format]
