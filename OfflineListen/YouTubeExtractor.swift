@@ -445,18 +445,28 @@ final class YoutubeDLExtractor: MediaExtractor {
                                          onProgress: @escaping (Double) -> Void) async throws -> ExtractedMedia? {
         // Try clients one at a time with fallback: an unsupported client name
         // (older on-device yt-dlp) or a PO-token-gated client fails only its own
-        // attempt instead of the whole recovery. Ordered so the clients whose
-        // URLs need *no* nsig descrambling come first — and among those, `tv`
-        // leads: it's the no-token, no-nsig client that serves the highest-
-        // resolution H.264 (up to 1080p) and, as of YouTube's 2024–25 SABR / PO-
-        // token tightening, is the most reliable on device, whereas `ios` is now
-        // frequently gated or slow. `android`'s renditions are often capped low
-        // (360p) when SABR strips its formats, so it follows. We accept the first
-        // client that yields a playable stream, so this order is what decides the
-        // saved video quality. The web-family clients (`web_safari`/`mweb`/`web`)
-        // come last: on device they almost always fail the n-challenge (no JS
-        // runtime), so they're a last resort, not a quality source.
-        let clientSets: [[String]] = [["tv"], ["ios"], ["android"], ["web_safari"], ["mweb"], ["web"]]
+        // attempt instead of the whole recovery. The order is **mode-aware**,
+        // because the right trade-off differs:
+        //
+        // - **Audio**: stream resolution is irrelevant, so we lead with the
+        //   pre-signed clients (`ios`, `android`) whose format URLs need no nsig
+        //   descrambling *and* aren't subject to YouTube's `tv`-client DRM
+        //   experiment (yt-dlp #12563, which wraps all `tv` formats in DRM for
+        //   some sessions and is undownloadable). `tv` follows only as a backup.
+        //   This avoids wasting a client attempt on a DRM/EJS-gated `tv` resolve.
+        // - **Video**: quality matters, so `tv` leads — it serves the highest-
+        //   resolution H.264 (up to 1080p) with no nsig — and when its DRM
+        //   experiment is active for the session it fails fast, falling to `ios`.
+        //
+        // `android`'s renditions are often capped low (360p) when SABR strips its
+        // formats — fine for audio, which is why it sits behind `ios` there. The
+        // web-family clients (`web_safari`/`mweb`/`web`) come last in both: on
+        // device they almost always fail the n-challenge (no JS runtime), so
+        // they're a last resort. We accept the first client that yields a usable
+        // stream, so this order is what decides quality and which client wins.
+        let clientSets: [[String]] = mode == .video
+            ? [["tv"], ["ios"], ["android"], ["web_safari"], ["mweb"], ["web"]]
+            : [["ios"], ["android"], ["tv"], ["web_safari"], ["mweb"], ["web"]]
 
         for clients in clientSets {
             let label = clients.joined(separator: ",")

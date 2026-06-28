@@ -241,10 +241,14 @@ straight to yt-dlp, instead of logging a guaranteed failure:
    descrambling through the slow pure-Python JS interpreter on device; easy
    videos resolve in a few seconds, but a video that needs descrambling would
    otherwise stall the whole 90s. The short window lets easy videos (and the
-   Python bootstrap) through, then **falls to the forced fast player clients**
-   (`tv`, `ios`, `android`, `web_safari`, `mweb`, `web`, one at a time) — whose
-   stream URLs need no descrambling, the same renditions Safari plays — so the
-   videos that hang the web path download quickly. Non-YouTube sites (Vimeo,
+   Python bootstrap) through, then **falls to the forced fast player clients**,
+   one at a time, whose stream URLs need no descrambling — the same renditions
+   Safari plays — so the videos that hang the web path download quickly. The
+   client order is **mode-aware**: **audio** leads with the pre-signed
+   `ios`/`android` clients (resolution is irrelevant and they dodge YouTube's
+   `tv`-client DRM experiment, [yt-dlp #12563](https://github.com/yt-dlp/yt-dlp/issues/12563)),
+   while **video** leads with `tv` for its higher-resolution H.264; the
+   web-family clients (`web_safari`/`mweb`/`web`) come last in both. Non-YouTube sites (Vimeo,
    SoundCloud, …) have no such fast fallback and can legitimately be slow, so
    they keep the full 90s timeout and only **retry with the forced clients** if
    the default extraction stalls or fails. This forced-client recovery handles
