@@ -230,21 +230,25 @@ straight to yt-dlp, instead of logging a guaranteed failure:
    stripped, since a parameterised mobile URL can push on-device extraction down
    a slower path.
 
-   **For YouTube, the fast player clients come first.** yt-dlp's default *web*
-   client has to run YouTube's nsig descrambling through the slow pure-Python JS
-   interpreter on device, which routinely hangs past the 90s timeout (and leaves
-   an orphaned extraction competing for CPU during recovery). Since the native
-   extractor has already failed by the time we're here, the yt-dlp path skips
-   that doomed step for YouTube links and goes **straight to the forced fast
-   player clients** (`tv`, `ios`, `android`, `web_safari`, `mweb`, `web`, one at
-   a time) — whose stream URLs need no descrambling, the same renditions Safari
-   plays — turning a multi-minute timeout-then-recover sequence into a sub-10s
-   resolve. The slow web-client path is kept as a **last-resort fallback** only
-   if no fast client yields a usable stream. Non-YouTube sites (Vimeo,
-   SoundCloud, …) can't use `player_client` args, so they still take the default
-   extraction directly, and **retry with the forced clients** only if it stalls
-   or times out. This forced-client path handles **both audio and video**
-   downloads (see below).
+   The default `extractInfo` call runs first — it's also what bootstraps the
+   embedded Python runtime (PYTHONHOME, the unpacked stdlib, PythonKit's module
+   search path), so the forced-client recovery, which drives Python directly,
+   **must** run after it (calling it first crashes with `No module named
+   'encodings'`).
+
+   **For YouTube, that first attempt gets only a short grace period (15s), not
+   the full 90s.** yt-dlp's default *web* client has to run YouTube's nsig
+   descrambling through the slow pure-Python JS interpreter on device; easy
+   videos resolve in a few seconds, but a video that needs descrambling would
+   otherwise stall the whole 90s. The short window lets easy videos (and the
+   Python bootstrap) through, then **falls to the forced fast player clients**
+   (`tv`, `ios`, `android`, `web_safari`, `mweb`, `web`, one at a time) — whose
+   stream URLs need no descrambling, the same renditions Safari plays — so the
+   videos that hang the web path download quickly. Non-YouTube sites (Vimeo,
+   SoundCloud, …) have no such fast fallback and can legitimately be slow, so
+   they keep the full 90s timeout and only **retry with the forced clients** if
+   the default extraction stalls or fails. This forced-client recovery handles
+   **both audio and video** downloads (see below).
 
 If a video exposes **no dedicated audio-only stream**, both extractors fall back
 to downloading the smallest muxed (video+audio) **MP4** and extracting its audio
