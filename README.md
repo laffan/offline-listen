@@ -193,14 +193,16 @@ whose controls call `next()` / `previous()` / `skipForward()` directly.
   placeholder with no picture or sound. When *only* such codecs are on offer (it
   happens when the on-device player JS can't be resolved and every H.264 URL,
   which needs nsig descrambling, gets dropped), the yt-dlp path runs a
-  **recovery**: it re-resolves forcing alternate **player clients** (`ios`,
-  `tv`, `android`, `web_safari`, `mweb`, `web`) one at a time, whose H.264 URLs
+  **recovery**: it re-resolves forcing alternate **player clients** (`tv`,
+  `ios`, `android`, `web_safari`, `mweb`, `web`) one at a time, whose H.264 URLs
   need no descrambling — the same renditions Safari plays — and takes the first
   that yields a decodable stream. The order matters for quality: it accepts the
   first client that works, so the no-token, **higher-resolution** source (`tv`,
-  up to 1080p H.264) is tried before `android`, whose formats YouTube's SABR
-  experiment frequently caps low (360p); the web-family clients come last
-  because on device they usually fail the n-challenge (no JS runtime). When the
+  up to 1080p H.264) leads — it's also the most reliable on device under
+  YouTube's 2024–25 SABR / PO-token tightening, whereas `ios` is increasingly
+  gated or slow — and `android`, whose formats SABR frequently caps low (360p),
+  follows; the web-family clients come last because on device they usually fail
+  the n-challenge (no JS runtime). When the
   recovered H.264 is much lower than what was offered, the log says so — a 360p
   save from a 2160p AV1-only source reads as a codec ceiling, not a bug. Only if
   every client still yields nothing decodable does the download fail with a clear
@@ -228,14 +230,21 @@ straight to yt-dlp, instead of logging a guaranteed failure:
    stripped, since a parameterised mobile URL can push on-device extraction down
    a slower path.
 
-   If that default extraction **stalls or times out** (90s) — which happens when
-   yt-dlp's default *web* client has to run YouTube's nsig descrambling through
-   the slow pure-Python JS interpreter on device — the extractor automatically
-   **retries with forced fast player clients** (`ios`, `tv`, `android`,
-   `web_safari`, `mweb`, `web`, one at a time). Those clients return stream URLs that
-   need no descrambling — the same renditions Safari plays, so they succeed for
-   videos that play fine in the browser but hang the default path. This forced-
-   client recovery handles **both audio and video** downloads (see below).
+   **For YouTube, the fast player clients come first.** yt-dlp's default *web*
+   client has to run YouTube's nsig descrambling through the slow pure-Python JS
+   interpreter on device, which routinely hangs past the 90s timeout (and leaves
+   an orphaned extraction competing for CPU during recovery). Since the native
+   extractor has already failed by the time we're here, the yt-dlp path skips
+   that doomed step for YouTube links and goes **straight to the forced fast
+   player clients** (`tv`, `ios`, `android`, `web_safari`, `mweb`, `web`, one at
+   a time) — whose stream URLs need no descrambling, the same renditions Safari
+   plays — turning a multi-minute timeout-then-recover sequence into a sub-10s
+   resolve. The slow web-client path is kept as a **last-resort fallback** only
+   if no fast client yields a usable stream. Non-YouTube sites (Vimeo,
+   SoundCloud, …) can't use `player_client` args, so they still take the default
+   extraction directly, and **retry with the forced clients** only if it stalls
+   or times out. This forced-client path handles **both audio and video**
+   downloads (see below).
 
 If a video exposes **no dedicated audio-only stream**, both extractors fall back
 to downloading the smallest muxed (video+audio) **MP4** and extracting its audio

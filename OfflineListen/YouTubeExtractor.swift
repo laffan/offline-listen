@@ -189,6 +189,20 @@ final class YoutubeDLExtractor: MediaExtractor {
         return canonical
     }
 
+    /// Whether `url` is a YouTube link the forced player-client path applies to.
+    /// yt-dlp's `extractor_args: youtube → player_client` only affect YouTube, so
+    /// for any other site (Vimeo, SoundCloud, …) the default extraction is the
+    /// only path. We use this to skip the slow on-device web-client nsig
+    /// descrambling for YouTube and go straight to the fast clients, which need no
+    /// descrambling — the web path then becomes a last-resort fallback.
+    static func isYouTubeURL(_ url: URL) -> Bool {
+        let host = (url.host ?? "").lowercased()
+        let isYouTubeHost = host == "youtu.be"
+            || host.hasSuffix("youtube.com")
+            || host.hasSuffix("youtube-nocookie.com")
+        return isYouTubeHost && YouTubeKitExtractor.videoID(from: url) != nil
+    }
+
     /// Container/codecs AVFoundation can decode for a *direct audio save* (no
     /// extraction step). Anything outside this — opus, webm, ogg, flac — routes
     /// to the muxed-video + audio-extraction fallback instead of being saved raw.
@@ -432,15 +446,17 @@ final class YoutubeDLExtractor: MediaExtractor {
         // Try clients one at a time with fallback: an unsupported client name
         // (older on-device yt-dlp) or a PO-token-gated client fails only its own
         // attempt instead of the whole recovery. Ordered so the clients whose
-        // URLs need *no* nsig descrambling come first — and among those, the one
-        // that serves the highest-resolution H.264 (`tv`, up to 1080p) is tried
-        // ahead of `android`, whose renditions are frequently capped low (360p)
-        // when YouTube's SABR experiment strips its formats. We accept the first
+        // URLs need *no* nsig descrambling come first — and among those, `tv`
+        // leads: it's the no-token, no-nsig client that serves the highest-
+        // resolution H.264 (up to 1080p) and, as of YouTube's 2024–25 SABR / PO-
+        // token tightening, is the most reliable on device, whereas `ios` is now
+        // frequently gated or slow. `android`'s renditions are often capped low
+        // (360p) when SABR strips its formats, so it follows. We accept the first
         // client that yields a playable stream, so this order is what decides the
         // saved video quality. The web-family clients (`web_safari`/`mweb`/`web`)
         // come last: on device they almost always fail the n-challenge (no JS
         // runtime), so they're a last resort, not a quality source.
-        let clientSets: [[String]] = [["ios"], ["tv"], ["android"], ["web_safari"], ["mweb"], ["web"]]
+        let clientSets: [[String]] = [["tv"], ["ios"], ["android"], ["web_safari"], ["mweb"], ["web"]]
 
         for clients in clientSets {
             let label = clients.joined(separator: ",")
@@ -744,6 +760,31 @@ final class YoutubeDLExtractor: MediaExtractor {
                 appLog("yt-dlp Python module downloaded.", level: .success, category: category)
             }
 
+            // For YouTube we go straight to the fast player clients (tv/ios/…),
+            // whose stream URLs need *no* nsig descrambling. The default web
+            // client would have to run YouTube's nsig challenge through the slow
+            // on-device pure-Python JS interpreter, which routinely hangs past the
+            // 90s timeout (and leaves an orphaned extraction competing for CPU).
+            // Skipping it here turns a multi-minute timeout-then-recover sequence
+            // into a sub-10s resolve. The web path is kept below as a last-resort
+            // fallback if no fast client yields a usable stream. (Other sites can't
+            // use player_client args, so they take the default path as before.)
+            #if canImport(PythonKit)
+            var forcedClientsAttempted = false
+            if Self.isYouTubeURL(url) {
+                appLog("YouTube URL — trying fast player clients first (skipping the slow on-device web-client nsig path)…",
+                       category: category)
+                forcedClientsAttempted = true
+                if let media = try await extractViaForcedClients(
+                    url: url, mode: mode, category: category,
+                    onDownloadStart: onDownloadStart, onProgress: onProgress) {
+                    return media
+                }
+                appLog("Fast player clients yielded no usable stream — falling back to the default web-client extraction…",
+                       level: .warning, category: category)
+            }
+            #endif
+
             appLog("Initializing yt-dlp…", level: .debug, category: category)
             let youtubeDL = YoutubeDL()
 
@@ -763,13 +804,17 @@ final class YoutubeDLExtractor: MediaExtractor {
                     throw error
                 }
                 #if canImport(PythonKit)
-                appLog("Default extraction failed (\(error.localizedDescription)) — retrying with forced fast player clients…",
-                       level: .warning, category: category)
-                await waitForOrphanedExtraction(category: category)
-                if let media = try await extractViaForcedClients(
-                    url: url, mode: mode, category: category,
-                    onDownloadStart: onDownloadStart, onProgress: onProgress) {
-                    return media
+                // For YouTube we already tried the fast clients above; don't run
+                // them a second time — go straight to surfacing the error.
+                if !forcedClientsAttempted {
+                    appLog("Default extraction failed (\(error.localizedDescription)) — retrying with forced fast player clients…",
+                           level: .warning, category: category)
+                    await waitForOrphanedExtraction(category: category)
+                    if let media = try await extractViaForcedClients(
+                        url: url, mode: mode, category: category,
+                        onDownloadStart: onDownloadStart, onProgress: onProgress) {
+                        return media
+                    }
                 }
                 #endif
                 throw error
@@ -843,9 +888,11 @@ final class YoutubeDLExtractor: MediaExtractor {
                     appLog("Default extraction offered no device-playable video (need H.264/HEVC) — offered: \(list)\(offeredHeight.map { " up to \($0)p" } ?? "")",
                            level: .warning, category: category)
                     // Recovery: re-resolve forcing a player client that returns
-                    // H.264. Bypasses the rest of this method on success.
+                    // H.264. Bypasses the rest of this method on success. Skipped
+                    // if we already exhausted the fast clients above (YouTube) — a
+                    // second run would re-fail the same way.
                     #if canImport(PythonKit)
-                    if let recovered = try await extractViaForcedClients(
+                    if !forcedClientsAttempted, let recovered = try await extractViaForcedClients(
                         url: url, mode: .video, category: category, offeredVideoHeight: offeredHeight,
                         onDownloadStart: onDownloadStart, onProgress: onProgress) {
                         return recovered
