@@ -6,8 +6,43 @@ import Foundation
 final class LibraryStore: ObservableObject {
     @Published private(set) var tracks: [Track] = []
     @Published private(set) var folders: [Folder] = []
+    /// How the library's folder list is ordered. Persisted so the choice sticks
+    /// across launches.
+    @Published var folderSort: FolderSort = .userOrder {
+        didSet {
+            guard folderSort != oldValue else { return }
+            UserDefaults.standard.set(folderSort.rawValue, forKey: Self.folderSortKey)
+        }
+    }
 
-    var activeTracks: [Track] { tracks.filter { !$0.isArchived } }
+    private static let folderSortKey = "folderSort"
+
+    /// Folders the user has archived are hidden from the main library.
+    var activeFolders: [Folder] { folders.filter { !$0.isArchived } }
+    /// Archived folders, surfaced inside the Archive.
+    var archivedFolders: [Folder] { folders.filter { $0.isArchived } }
+
+    /// Active folders in the order the library should display them: the user's
+    /// hand-set drag order, or alphabetically by name.
+    var displayedFolders: [Folder] {
+        switch folderSort {
+        case .userOrder:
+            return activeFolders
+        case .name:
+            return activeFolders.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        }
+    }
+
+    /// True when a track's folder has itself been archived (so the track is
+    /// effectively archived along with it).
+    private func folderArchived(_ folderID: UUID?) -> Bool {
+        guard let folderID else { return false }
+        return folders.first(where: { $0.id == folderID })?.isArchived ?? false
+    }
+
+    var activeTracks: [Track] { tracks.filter { !$0.isArchived && !folderArchived($0.folderID) } }
+    /// Individually-archived loose tracks (not those merely living in an
+    /// archived folder, which are reached by opening the folder in the Archive).
     var archivedTracks: [Track] { tracks.filter { $0.isArchived } }
     /// Active tracks not assigned to any folder — the main library list.
     var unfiledActiveTracks: [Track] { activeTracks.filter { $0.folderID == nil } }
@@ -21,6 +56,10 @@ final class LibraryStore: ObservableObject {
     }
 
     init() {
+        if let raw = UserDefaults.standard.string(forKey: Self.folderSortKey),
+           let sort = FolderSort(rawValue: raw) {
+            folderSort = sort
+        }
         load()
     }
 
@@ -101,6 +140,27 @@ final class LibraryStore: ObservableObject {
             changed = true
         }
         if changed { save() }
+    }
+
+    /// Archives or unarchives a folder. The folder's tracks ride along — they
+    /// stay assigned to it and reappear in the library when it's unarchived.
+    func setFolderArchived(_ folder: Folder, _ archived: Bool) {
+        guard let index = folders.firstIndex(where: { $0.id == folder.id }) else { return }
+        folders[index].isArchived = archived
+        saveFolders()
+    }
+
+    /// Reorders the active folders, setting the persisted "User Order". The
+    /// active folders are permuted among the slots they occupy in the full
+    /// folders array, so archived folders keep their positions.
+    func moveFolders(fromOffsets source: IndexSet, toOffset destination: Int) {
+        let slots = folders.indices.filter { !folders[$0].isArchived }
+        var active = slots.map { folders[$0] }
+        active.move(fromOffsets: source, toOffset: destination)
+        for (slot, folder) in zip(slots, active) {
+            folders[slot] = folder
+        }
+        saveFolders()
     }
 
     /// Moves a track into a folder (or out of all folders with nil).

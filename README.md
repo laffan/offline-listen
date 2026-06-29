@@ -19,12 +19,14 @@ Three screens (tabs):
    just YouTube. Swipe a row for **Cancel** (active/queued), **Restart**, or
    **Clear**; tap a finished row to play it.
 2. **Library** — downloaded tracks; tap to play. A **filter** (All / Music /
-   Podcasts / Video) is at the top. Swipe **left** for Delete/Share/Archive (and
-   bulk versions via **Select**); swipe **right** on an audio track to classify
-   it **Song** or **Podcast**. Songs start from the beginning; podcasts (mic
-   icon) and videos (film icon) resume where you left off and show a progress
-   bar. Video tracks play with picture on the Player screen. Archived tracks live
-   in an **Archived** folder (toolbar).
+   Podcasts / Video) sits directly beneath the **Tracks** header. Swipe **left**
+   for Delete/Share/Archive (and bulk versions via **Select**); swipe **right**
+   on an audio track to classify it **Song** or **Podcast**. Songs start from the
+   beginning; podcasts (mic icon) and videos (film icon) resume where you left
+   off and show a progress bar. A track you haven't listened to yet shows a
+   **green** icon. Video tracks play with picture on the Player screen. Archived
+   tracks (and archived folders) live in the **Archive**, pinned to the bottom of
+   the folder list.
 
    **Autoplay by type.** When a track finishes, playback advances to the next
    track in the same list (a folder, the Inbox, or the unfiled root) and keeps
@@ -42,17 +44,24 @@ Three screens (tabs):
    original — turning a chaptered recording into a proper playlist. The
    chapter list also highlights the chapter currently playing.
 
-   **Folders** organize the library: an **Inbox** pinned to the top collects
-   every track you haven't listened to yet (starting playback — or a
-   **Mark Played** swipe — clears it from the Inbox), and user folders sit
-   below it, above the unfiled tracks. Create folders with the toolbar's
-   folder button; move tracks in via touch-and-hold → **Move to Folder** (or
-   the bulk Select menu). The Inbox is itself a move target — moving a track
-   there returns it to unlistened. Touch-and-hold also offers **Rename**, whose
-   modal includes **Reset to Original** to restore the download title. Swipe a
-   folder row for its slide menu: **Delete**
-   (the folder only — its tracks return to the library), **Rename**, and
-   **Reorder** (drag-reorder the tracks inside it). Folders persist to
+   **Folders** organize the library, under a **Folders** header (mirroring the
+   Tracks one): an **Inbox** pinned to the top collects every track you haven't
+   listened to yet (starting playback — or a **Mark Played** swipe — clears it
+   from the Inbox), user folders sit below it, and the **Archive** is pinned to
+   the bottom. Create folders with the toolbar's folder button; move tracks in
+   via touch-and-hold → **Move to Folder** (or the bulk Select menu). The Inbox
+   is itself a move target — moving a track there returns it to unlistened.
+   Touch-and-hold also offers **Rename**, whose modal includes **Reset to
+   Original** to restore the download title. Swipe a folder row for its slide
+   menu: **Delete** (the folder only — its tracks return to the library),
+   **Rename**, and **Archive** (move the whole folder, tracks and all, into the
+   Archive). To **reorder** the tracks inside a folder, use the **Reorder**
+   button in the folder's own screen.
+
+   The folder list itself sorts two ways, chosen with the toggle on the right of
+   the **Folders** header: **Name** (alphabetical) or **User Order**. In User
+   Order you set the sequence by hand — **touch and hold a folder and drag** it
+   into place; the order persists to `folders.json`. Folders persist to
    `Documents/folders.json`.
 3. **Player** — artwork, scrubber, play/pause, skip, next/previous — the same
    control suite for audio and video. Video is edge-to-edge in portrait and
@@ -77,7 +86,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | File | Role |
 |------|------|
 | `OfflineListenApp.swift` | App entry; wires up the shared stores. |
-| `Models.swift` | `Track`, `Folder`, `DownloadMode`, `LibraryFilter`, paths, helpers. |
+| `Models.swift` | `Track`, `Folder`, `DownloadMode`, `LibraryFilter`, `FolderSort`, paths, helpers. |
 | `LibraryStore.swift` | Persists the library to `Documents/library.json` and folders to `Documents/folders.json`. |
 | `DownloadManager.swift` | Serial download queue + `DownloadJob`. |
 | `YouTubeExtractor.swift` | `MediaExtractor` protocol + YoutubeDL-iOS impl + a mock. |

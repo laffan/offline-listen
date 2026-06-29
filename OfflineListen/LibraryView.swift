@@ -102,8 +102,7 @@ extension View {
 enum LibraryRoute: Hashable {
     case inbox
     case folder(UUID)
-    /// Same destination as `.folder`, but lands with reordering already active.
-    case folderReorder(UUID)
+    case archived
 }
 
 struct LibraryView: View {
@@ -117,7 +116,6 @@ struct LibraryView: View {
     @State private var editMode: EditMode = .inactive
     @State private var selection = Set<Track.ID>()
     @State private var share: SharePayload?
-    @State private var showArchived = false
     @State private var filter: LibraryFilter = .all
     @State private var path: [LibraryRoute] = []
 
@@ -136,24 +134,11 @@ struct LibraryView: View {
     var body: some View {
         NavigationStack(path: $path) {
             VStack(spacing: 0) {
-                if !library.activeTracks.isEmpty {
-                    Picker("Filter", selection: $filter) {
-                        ForEach(LibraryFilter.allCases) { f in
-                            Text(f.displayName).tag(f)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.horizontal)
-                    .padding(.bottom, 4)
-                }
-
-                if library.activeTracks.isEmpty && library.folders.isEmpty {
+                if library.tracks.isEmpty && library.folders.isEmpty {
                     ContentUnavailableViewCompat(
-                        title: library.tracks.isEmpty ? "Your library is empty" : "No active tracks",
+                        title: "Your library is empty",
                         systemImage: "music.note.list",
-                        description: library.tracks.isEmpty
-                            ? "Downloaded tracks appear here, ready to play offline."
-                            : "Everything is archived — open the Archived folder above."
+                        description: "Downloaded tracks appear here, ready to play offline."
                     )
                     .frame(maxHeight: .infinity)
                 } else {
@@ -169,17 +154,14 @@ struct LibraryView: View {
             .sheet(item: $chapterContext) { context in
                 ChapterListView(track: context.track, queue: context.queue, onPlay: onPlay)
             }
-            .navigationDestination(isPresented: $showArchived) {
-                ArchivedTracksView(onPlay: onPlay, share: $share)
-            }
             .navigationDestination(for: LibraryRoute.self) { route in
                 switch route {
                 case .inbox:
                     InboxView(onPlay: onPlay, share: $share)
                 case .folder(let id):
-                    FolderDetailView(folderID: id, startReordering: false, onPlay: onPlay, share: $share)
-                case .folderReorder(let id):
-                    FolderDetailView(folderID: id, startReordering: true, onPlay: onPlay, share: $share)
+                    FolderDetailView(folderID: id, onPlay: onPlay, share: $share)
+                case .archived:
+                    ArchivedTracksView(onPlay: onPlay, share: $share)
                 }
             }
             .alert("New Folder", isPresented: $showNewFolder) {
@@ -213,9 +195,25 @@ struct LibraryView: View {
             if !editMode.isEditing {
                 Section {
                     inboxRow
-                    ForEach(library.folders) { folder in
-                        folderRow(folder)
+                    // Drag-to-reorder (touch and hold a row) only makes sense in
+                    // User Order; by-name order is computed and can't be permuted.
+                    if library.folderSort == .userOrder {
+                        ForEach(library.displayedFolders) { folder in
+                            folderRow(folder)
+                        }
+                        .onMove { source, destination in
+                            library.moveFolders(fromOffsets: source, toOffset: destination)
+                        }
+                    } else {
+                        ForEach(library.displayedFolders) { folder in
+                            folderRow(folder)
+                        }
                     }
+                    if !library.archivedTracks.isEmpty || !library.archivedFolders.isEmpty {
+                        archiveRow
+                    }
+                } header: {
+                    foldersHeader
                 }
             }
 
@@ -230,11 +228,71 @@ struct LibraryView: View {
                 }
             } header: {
                 if !editMode.isEditing {
-                    Text("Tracks")
+                    tracksHeader
                 }
             }
         }
         .listStyle(.plain)
+    }
+
+    /// "Folders" label with a trailing toggle to sort by name or User Order.
+    private var foldersHeader: some View {
+        HStack {
+            Text("Folders")
+            Spacer()
+            Menu {
+                Picker("Sort Folders", selection: $library.folderSort) {
+                    ForEach(FolderSort.allCases) { sort in
+                        Text(sort.displayName).tag(sort)
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.up.arrow.down")
+                    Text(library.folderSort.displayName)
+                }
+                .font(.caption)
+                .textCase(nil)
+            }
+        }
+    }
+
+    /// "Tracks" label with the media-type filter directly beneath it.
+    private var tracksHeader: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Tracks")
+            if !library.activeTracks.isEmpty {
+                Picker("Filter", selection: $filter) {
+                    ForEach(LibraryFilter.allCases) { f in
+                        Text(f.displayName).tag(f)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .textCase(nil)
+                .padding(.bottom, 4)
+            }
+        }
+    }
+
+    /// The Archive: pinned to the bottom of the folder list, with its own icon.
+    /// Holds both individually-archived tracks and archived folders.
+    private var archiveRow: some View {
+        let count = library.archivedTracks.count + library.archivedFolders.count
+        return NavigationLink(value: LibraryRoute.archived) {
+            HStack(spacing: 12) {
+                Image(systemName: "archivebox.fill")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24)
+                Text("Archive")
+                    .font(.body)
+                Spacer()
+                Text("\(count)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            .padding(.vertical, 4)
+        }
     }
 
     // MARK: - Folder rows
@@ -300,11 +358,11 @@ struct LibraryView: View {
             }
             .tint(.orange)
             Button {
-                path.append(.folderReorder(folder.id))
+                library.setFolderArchived(folder, true)
             } label: {
-                Label("Reorder", systemImage: "arrow.up.arrow.down")
+                Label("Archive", systemImage: "archivebox")
             }
-            .tint(.blue)
+            .tint(.indigo)
         }
     }
 
@@ -366,7 +424,7 @@ struct LibraryView: View {
                     } label: {
                         Label("Inbox", systemImage: "tray")
                     }
-                    ForEach(library.folders) { folder in
+                    ForEach(library.activeFolders) { folder in
                         Button {
                             library.setFolder(track, folder.id)
                         } label: {
@@ -423,7 +481,7 @@ struct LibraryView: View {
                         } label: {
                             Label("Inbox", systemImage: "tray")
                         }
-                        ForEach(library.folders) { folder in
+                        ForEach(library.activeFolders) { folder in
                             Button(folder.name) {
                                 moveSelected(to: folder.id)
                             }
@@ -440,14 +498,6 @@ struct LibraryView: View {
                     Label("Actions", systemImage: "ellipsis.circle")
                 }
                 .disabled(selection.isEmpty)
-            }
-        } else if !library.archivedTracks.isEmpty {
-            ToolbarItem(placement: .navigationBarLeading) {
-                Button {
-                    showArchived = true
-                } label: {
-                    Label("Archived (\(library.archivedTracks.count))", systemImage: "archivebox")
-                }
             }
         }
 
@@ -518,8 +568,8 @@ struct LibraryView: View {
     }
 }
 
-/// The "Archived" folder: a simple list of archived tracks with swipe actions to
-/// unarchive, share, or delete. Tapping plays within the archived set.
+/// The Archive: archived folders (each openable to play its tracks) above
+/// individually-archived tracks. Swipe to unarchive, share, or delete.
 struct ArchivedTracksView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var playback: PlaybackManager
@@ -529,56 +579,107 @@ struct ArchivedTracksView: View {
 
     @State private var chapterContext: ChapterContext?
 
+    private var isEmpty: Bool {
+        library.archivedTracks.isEmpty && library.archivedFolders.isEmpty
+    }
+
     var body: some View {
         Group {
-            if library.archivedTracks.isEmpty {
+            if isEmpty {
                 ContentUnavailableViewCompat(
-                    title: "No archived tracks",
+                    title: "Nothing archived",
                     systemImage: "archivebox",
-                    description: "Swipe a track in your library and tap Archive to move it here."
+                    description: "Swipe a track or folder in your library and tap Archive to move it here."
                 )
             } else {
                 List {
-                    ForEach(library.archivedTracks) { track in
-                        TrackRow(
-                            track: track,
-                            isCurrent: playback.currentTrack?.id == track.id,
-                            onShowChapters: { chapterContext = ChapterContext(track: track, queue: library.archivedTracks) }
-                        )
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                playback.play(track, in: library.archivedTracks)
-                                onPlay()
+                    if !library.archivedFolders.isEmpty {
+                        Section("Folders") {
+                            ForEach(library.archivedFolders) { folder in
+                                archivedFolderRow(folder)
                             }
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                Button(role: .destructive) {
-                                    library.delete(track)
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
-                                }
-                                Button {
-                                    share = SharePayload(urls: [track.fileURL])
-                                } label: {
-                                    Label("Share", systemImage: "square.and.arrow.up")
-                                }
-                                .tint(.blue)
-                                Button {
-                                    library.setArchived(track, false)
-                                } label: {
-                                    Label("Unarchive", systemImage: "tray.and.arrow.up")
-                                }
-                                .tint(.indigo)
+                        }
+                    }
+                    if !library.archivedTracks.isEmpty {
+                        Section("Tracks") {
+                            ForEach(library.archivedTracks) { track in
+                                trackRow(track)
                             }
+                        }
                     }
                 }
                 .listStyle(.plain)
             }
         }
-        .navigationTitle("Archived")
+        .navigationTitle("Archive")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(item: $chapterContext) { context in
             ChapterListView(track: context.track, queue: context.queue, onPlay: onPlay)
         }
+    }
+
+    private func archivedFolderRow(_ folder: Folder) -> some View {
+        NavigationLink(value: LibraryRoute.folder(folder.id)) {
+            HStack(spacing: 12) {
+                Image(systemName: "folder.fill")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24)
+                Text(folder.name)
+                    .font(.body)
+                    .lineLimit(1)
+                Spacer()
+                Text("\(library.tracks(in: folder.id).count)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            .padding(.vertical, 4)
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) {
+                library.deleteFolder(folder)
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+            Button {
+                library.setFolderArchived(folder, false)
+            } label: {
+                Label("Unarchive", systemImage: "tray.and.arrow.up")
+            }
+            .tint(.indigo)
+        }
+    }
+
+    private func trackRow(_ track: Track) -> some View {
+        TrackRow(
+            track: track,
+            isCurrent: playback.currentTrack?.id == track.id,
+            onShowChapters: { chapterContext = ChapterContext(track: track, queue: library.archivedTracks) }
+        )
+            .contentShape(Rectangle())
+            .onTapGesture {
+                playback.play(track, in: library.archivedTracks)
+                onPlay()
+            }
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(role: .destructive) {
+                    library.delete(track)
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+                Button {
+                    share = SharePayload(urls: [track.fileURL])
+                } label: {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+                .tint(.blue)
+                Button {
+                    library.setArchived(track, false)
+                } label: {
+                    Label("Unarchive", systemImage: "tray.and.arrow.up")
+                }
+                .tint(.indigo)
+            }
     }
 }
 
@@ -602,6 +703,14 @@ struct TrackRow: View {
         return track.kind == .podcast ? "mic.fill" : "music.note"
     }
 
+    /// Red marks the currently-playing track; green flags a track that hasn't
+    /// been listened to yet (the Inbox set); everything else is neutral.
+    private var iconColor: Color {
+        if isCurrent { return .accentColor }
+        if !track.hasBeenPlayed { return .green }
+        return .secondary
+    }
+
     /// Podcasts and videos resume, so they show a progress bar; songs don't.
     private var showsProgress: Bool {
         track.remembersPosition
@@ -610,7 +719,7 @@ struct TrackRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: iconName)
-                .foregroundStyle(isCurrent ? Color.accentColor : .secondary)
+                .foregroundStyle(iconColor)
                 .frame(width: 24)
 
             VStack(alignment: .leading, spacing: 3) {

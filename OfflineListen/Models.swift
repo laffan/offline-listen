@@ -78,6 +78,21 @@ enum LibraryFilter: String, CaseIterable, Identifiable {
     }
 }
 
+/// How the folder list is ordered: the user's hand-set drag order, or
+/// alphabetically by name.
+enum FolderSort: String, CaseIterable, Identifiable {
+    case userOrder
+    case name
+
+    var id: String { rawValue }
+    var displayName: String {
+        switch self {
+        case .userOrder: return "User Order"
+        case .name: return "Name"
+        }
+    }
+}
+
 /// How a track behaves on playback. Songs always start from the beginning;
 /// podcasts resume from their saved playhead.
 enum TrackKind: String, Codable {
@@ -136,11 +151,29 @@ struct Folder: Identifiable, Codable, Hashable {
     let id: UUID
     var name: String
     var dateCreated: Date
+    /// True when the folder (and everything inside it) has been archived. Like a
+    /// track's `isArchived`, this hides the folder from the main library and
+    /// surfaces it in the Archive instead.
+    var isArchived: Bool
 
-    init(id: UUID = UUID(), name: String, dateCreated: Date = Date()) {
+    init(id: UUID = UUID(), name: String, dateCreated: Date = Date(), isArchived: Bool = false) {
         self.id = id
         self.name = name
         self.dateCreated = dateCreated
+        self.isArchived = isArchived
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, dateCreated, isArchived
+    }
+
+    // Custom decode so folders.json saved before `isArchived` existed still load.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        dateCreated = try c.decode(Date.self, forKey: .dateCreated)
+        isArchived = try c.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
     }
 }
 

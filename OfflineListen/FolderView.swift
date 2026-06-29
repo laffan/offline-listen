@@ -1,15 +1,13 @@
 import SwiftUI
 
 /// A user folder: its tracks with tap-to-play and swipe actions, plus
-/// drag-to-reorder via the Reorder toolbar toggle (entered automatically when
-/// opened from the folder's "Reorder" swipe action in the library list).
+/// drag-to-reorder via the Reorder toolbar toggle.
 struct FolderDetailView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var playback: PlaybackManager
     @Environment(\.openURL) private var openURL
 
     let folderID: UUID
-    let startReordering: Bool
     let onPlay: () -> Void
     @Binding var share: SharePayload?
 
@@ -62,11 +60,6 @@ struct FolderDetailView: View {
                     }
                 }
                 .disabled(tracks.count < 2 && !editMode.isEditing)
-            }
-        }
-        .onAppear {
-            if startReordering && tracks.count > 1 {
-                editMode = .active
             }
         }
     }
@@ -127,7 +120,7 @@ struct FolderDetailView: View {
                     } label: {
                         Label("Inbox", systemImage: "tray")
                     }
-                    ForEach(library.folders.filter { $0.id != folderID }) { other in
+                    ForEach(library.activeFolders.filter { $0.id != folderID }) { other in
                         Button {
                             library.setFolder(track, other.id)
                         } label: {
@@ -233,9 +226,9 @@ struct InboxView: View {
                                 } label: {
                                     Label("Rename", systemImage: "pencil")
                                 }
-                                if !library.folders.isEmpty {
+                                if !library.activeFolders.isEmpty {
                                     Menu {
-                                        ForEach(library.folders) { folder in
+                                        ForEach(library.activeFolders) { folder in
                                             Button {
                                                 // Leaving the Inbox for a folder also
                                                 // clears the unlistened flag — the track
