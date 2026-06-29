@@ -35,9 +35,6 @@ struct SettingsView: View {
                     Text(model.displayName).tag(model)
                 }
             }
-            Text(ai.model.subtitle)
-                .font(.caption)
-                .foregroundStyle(.secondary)
 
             if ai.isAuthenticated {
                 authenticatedControls

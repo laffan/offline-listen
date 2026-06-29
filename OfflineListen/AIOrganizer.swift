@@ -95,11 +95,16 @@ final class AIOrganizer: ObservableObject {
     Rules:
     - For podcasts (interviews, talks, lectures, audiobooks, long spoken episodes), \
     set "artist" and "track" to null.
-    - For music, "artist" is the performer and "track" is the song name with junk \
-    removed: channel names, "Official Video", "(Lyrics)", "[HD]", remaster/year \
-    tags, view counts, and emoji.
-    - If genuinely unsure, lean on duration: songs are usually under ~10 minutes, \
-    podcasts longer.
+    - For music, "artist" is the performer and "track" is the song name. Remove \
+    only noise: channel names, "Official Video"/"Official Audio"/"Lyrics"/"Audio"/"MV", \
+    "[HD]"/quality tags, upload or remaster years, view counts, and emoji.
+    - KEEP meaningful descriptors that are genuinely part of the track's identity: \
+    "(Live)", "Live at <venue/show>", "Acoustic", "Remix", "Demo", "Edit", \
+    "Remastered" when it names a distinct release, version names, and \
+    feat./featuring credits. When unsure whether a phrase is noise or identity, \
+    keep it.
+    - If genuinely unsure about music vs. podcast, lean on duration: songs are \
+    usually under ~10 minutes, podcasts longer.
     """
 
     private static func userPrompt(title: String, duration: Double) -> String {

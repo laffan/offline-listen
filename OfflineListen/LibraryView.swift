@@ -19,43 +19,79 @@ struct ActivityView: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
-/// Shared rename-track alert: prefills the current title and, once a track has
-/// ever been renamed, offers "Reset to Original" to restore the download title.
-struct RenameTrackAlert: ViewModifier {
+/// Manual metadata editor: edit the track title and artist by hand (handy when
+/// AI Organize doesn't get it quite right), with a Reset that restores the
+/// original download title.
+struct EditMetadataView: View {
     @EnvironmentObject private var library: LibraryStore
-    @Binding var track: Track?
-    @State private var title = ""
+    @Environment(\.dismiss) private var dismiss
 
-    func body(content: Content) -> some View {
-        content
-            .onChange(of: track) { newValue in
-                if let newValue { title = newValue.title }
-            }
-            .alert("Rename Track", isPresented: isPresented, presenting: track) { track in
-                TextField("Title", text: $title)
-                Button("Rename") { library.rename(track, to: title) }
-                if let original = track.originalTitle, original != track.title {
-                    Button("Reset to Original") { library.resetTitle(track) }
+    let track: Track
+    @State private var title: String
+    @State private var artist: String
+
+    init(track: Track) {
+        self.track = track
+        _title = State(initialValue: track.title)
+        // "Unknown" is the placeholder default; show it as empty so the field
+        // invites a real artist rather than reading like a value.
+        let current = track.artist
+        _artist = State(initialValue: current.lowercased() == "unknown" ? "" : current)
+    }
+
+    /// The title to reset to: the recorded download title, or the current one if
+    /// it was never changed.
+    private var original: String { track.originalTitle ?? track.title }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Title") {
+                    TextField("Title", text: $title, axis: .vertical)
                 }
-                Button("Cancel", role: .cancel) {}
-            } message: { track in
-                if let original = track.originalTitle, original != track.title {
+                Section("Artist") {
+                    TextField("Artist", text: $artist)
+                        .textInputAutocapitalization(.words)
+                }
+                Section {
+                    Button("Reset to Original Title") { title = original }
+                        .disabled(title == original)
+                } footer: {
                     Text("Original: \(original)")
                 }
             }
+            .navigationTitle("Edit Metadata")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        library.editMetadata(track, title: title, artist: artist)
+                        dismiss()
+                    }
+                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
     }
+}
 
-    private var isPresented: Binding<Bool> {
-        Binding(
-            get: { track != nil },
-            set: { if !$0 { track = nil } }
-        )
+/// Presents the metadata editor for the bound track via `.sheet(item:)`.
+struct EditMetadataSheet: ViewModifier {
+    @Binding var track: Track?
+
+    func body(content: Content) -> some View {
+        content.sheet(item: $track) { track in
+            EditMetadataView(track: track)
+        }
     }
 }
 
 extension View {
-    func renameTrackAlert(for track: Binding<Track?>) -> some View {
-        modifier(RenameTrackAlert(track: track))
+    func editMetadataSheet(for track: Binding<Track?>) -> some View {
+        modifier(EditMetadataSheet(track: track))
     }
 }
 
@@ -123,7 +159,7 @@ struct LibraryView: View {
     @State private var newFolderName = ""
     @State private var renamingFolder: Folder?
     @State private var renameText = ""
-    @State private var renamingTrack: Track?
+    @State private var editingTrack: Track?
     @State private var chapterContext: ChapterContext?
     @State private var splittingTrack: Track?
 
@@ -177,7 +213,7 @@ struct LibraryView: View {
                 Button("Rename") { library.renameFolder(folder, to: renameText) }
                 Button("Cancel", role: .cancel) {}
             }
-            .renameTrackAlert(for: $renamingTrack)
+            .editMetadataSheet(for: $editingTrack)
             .breakChaptersConfirm(for: $splittingTrack)
         }
     }
@@ -414,9 +450,9 @@ struct LibraryView: View {
             }
             .contextMenu {
                 Button {
-                    renamingTrack = track
+                    editingTrack = track
                 } label: {
-                    Label("Rename", systemImage: "pencil")
+                    Label("Edit Metadata", systemImage: "pencil")
                 }
                 Menu {
                     Button {

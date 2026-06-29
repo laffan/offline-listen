@@ -329,6 +329,29 @@ final class LibraryStore: ObservableObject {
         save()
     }
 
+    /// Manual metadata edit (title + artist) from the "Edit Metadata" sheet. A
+    /// title change records `originalTitle` on first edit (like a rename) so it
+    /// can still be reset to the download title; an empty artist falls back to
+    /// "Unknown". A blank title is ignored so a track can't lose its name.
+    func editMetadata(_ track: Track, title: String, artist: String) {
+        guard let index = tracks.firstIndex(where: { $0.id == track.id }) else { return }
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedArtist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if !trimmedTitle.isEmpty, tracks[index].title != trimmedTitle {
+            if tracks[index].originalTitle == nil {
+                tracks[index].originalTitle = tracks[index].title
+            }
+            tracks[index].title = trimmedTitle
+        }
+
+        let newArtist = trimmedArtist.isEmpty ? "Unknown" : trimmedArtist
+        if tracks[index].artist != newArtist {
+            tracks[index].artist = newArtist
+        }
+        save()
+    }
+
     /// Archives or unarchives a track.
     func setArchived(_ track: Track, _ archived: Bool) {
         guard let index = tracks.firstIndex(where: { $0.id == track.id }) else { return }

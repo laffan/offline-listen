@@ -60,14 +60,18 @@ final class PlaybackManager: NSObject, ObservableObject {
 
     // MARK: - Public control
 
-    /// Starts `track`, building the autoplay queue from `tracks`. The queue is
-    /// restricted to tracks of the **same category** (song / podcast / video) as
-    /// the selected one and kept in list order, so when one finishes the next of
-    /// the same type plays and the others are skipped (see `handleTrackFinished`).
+    /// Starts `track`, building the autoplay queue from `tracks`.
+    ///
+    /// `restrictToCategory` controls how the next track is chosen when one
+    /// finishes. In the **auto-aggregated** lists (the unfiled library root, the
+    /// Inbox) types are mixed together, so autoplay stays within the media
+    /// category you started — songs play on, podcasts/videos are skipped. A
+    /// **folder/playlist is deliberately curated**, though, so it plays straight
+    /// through in list order regardless of type; pass `false` there.
     /// `startAt` overrides the natural start position — used to jump to a chapter.
-    func play(_ track: Track, in tracks: [Track], startAt: Double? = nil) {
+    func play(_ track: Track, in tracks: [Track], startAt: Double? = nil, restrictToCategory: Bool = true) {
         let pool = tracks.isEmpty ? [track] : tracks
-        queue = pool.filter { $0.playbackCategory == track.playbackCategory }
+        queue = restrictToCategory ? pool.filter { $0.playbackCategory == track.playbackCategory } : pool
         if queue.isEmpty { queue = [track] }
         index = queue.firstIndex(where: { $0.id == track.id }) ?? 0
         loadCurrent(autoPlay: true, startAt: startAt ?? startPosition(for: track))

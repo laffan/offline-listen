@@ -12,7 +12,7 @@ struct FolderDetailView: View {
     @Binding var share: SharePayload?
 
     @State private var editMode: EditMode = .inactive
-    @State private var renamingTrack: Track?
+    @State private var editingTrack: Track?
     @State private var chapterContext: ChapterContext?
     @State private var splittingTrack: Track?
 
@@ -47,7 +47,7 @@ struct FolderDetailView: View {
         .navigationTitle(folder?.name ?? "Folder")
         .navigationBarTitleDisplayMode(.inline)
         .environment(\.editMode, $editMode)
-        .renameTrackAlert(for: $renamingTrack)
+        .editMetadataSheet(for: $editingTrack)
         .breakChaptersConfirm(for: $splittingTrack)
         .sheet(item: $chapterContext) { context in
             ChapterListView(track: context.track, queue: context.queue, onPlay: onPlay)
@@ -110,9 +110,9 @@ struct FolderDetailView: View {
             }
             .contextMenu {
                 Button {
-                    renamingTrack = track
+                    editingTrack = track
                 } label: {
-                    Label("Rename", systemImage: "pencil")
+                    Label("Edit Metadata", systemImage: "pencil")
                 }
                 Menu {
                     Button {
@@ -156,7 +156,9 @@ struct FolderDetailView: View {
             base
         } else {
             base.onTapGesture {
-                playback.play(track, in: tracks)
+                // A folder is a curated playlist: play straight through in list
+                // order, not restricted to the first track's media type.
+                playback.play(track, in: tracks, restrictToCategory: false)
                 onPlay()
             }
         }
@@ -173,7 +175,7 @@ struct InboxView: View {
     let onPlay: () -> Void
     @Binding var share: SharePayload?
 
-    @State private var renamingTrack: Track?
+    @State private var editingTrack: Track?
     @State private var chapterContext: ChapterContext?
     @State private var splittingTrack: Track?
 
@@ -223,9 +225,9 @@ struct InboxView: View {
                             }
                             .contextMenu {
                                 Button {
-                                    renamingTrack = track
+                                    editingTrack = track
                                 } label: {
-                                    Label("Rename", systemImage: "pencil")
+                                    Label("Edit Metadata", systemImage: "pencil")
                                 }
                                 if !library.activeFolders.isEmpty {
                                     Menu {
@@ -268,7 +270,7 @@ struct InboxView: View {
         }
         .navigationTitle("Inbox")
         .navigationBarTitleDisplayMode(.inline)
-        .renameTrackAlert(for: $renamingTrack)
+        .editMetadataSheet(for: $editingTrack)
         .breakChaptersConfirm(for: $splittingTrack)
         .sheet(item: $chapterContext) { context in
             ChapterListView(track: context.track, queue: context.queue, onPlay: onPlay)

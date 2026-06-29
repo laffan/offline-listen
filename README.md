@@ -28,12 +28,14 @@ Three screens (tabs):
    tracks (and archived folders) live in the **Archive**, pinned to the bottom of
    the folder list.
 
-   **Autoplay by type.** When a track finishes, playback advances to the next
-   track in the same list (a folder, the Inbox, or the unfiled root) and keeps
-   going to the end — it doesn't loop. It also stays within the **media type**
-   you started: pick a song and only songs play on (podcasts and videos are
-   skipped over until the next song or the list ends); the same holds for
-   podcasts and for videos.
+   **Autoplay.** When a track finishes, playback advances to the next track in
+   the same list and keeps going to the end — it doesn't loop. In the
+   **auto-aggregated** lists (the unfiled root and the Inbox), where media types
+   are mixed together, autoplay **stays within the media type** you started: pick
+   a song and only songs play on (podcasts and videos are skipped until the next
+   song or the list ends), and likewise for podcasts and videos. A **folder is a
+   curated playlist**, though, so it **plays straight through in list order**
+   regardless of type — tap any track and the whole folder plays in sequence.
 
    **Chapters.** Tracks that carry YouTube chapter markers show an **arrow**
    after the title, set off by a left border so it reads as a button distinct
@@ -51,9 +53,11 @@ Three screens (tabs):
    the bottom. Create folders with the toolbar's folder button; move tracks in
    via touch-and-hold → **Move to Folder** (or the bulk Select menu). The Inbox
    is itself a move target — moving a track there returns it to unlistened.
-   Touch-and-hold also offers **Rename**, whose modal includes **Reset to
-   Original** to restore the download title. Swipe a folder row for its slide
-   menu: **Delete** (the folder only — its tracks return to the library),
+   Touch-and-hold also offers **Edit Metadata**, a modal for hand-editing the
+   track **title and artist** (handy when AI Organize doesn't get it quite
+   right), with **Reset to Original Title** to restore the download title. Swipe
+   a folder row for its slide menu: **Delete** (the folder only — its tracks
+   return to the library),
    **Rename**, and **Archive** (move the whole folder, tracks and all, into the
    Archive). To **reorder** the tracks inside a folder, use the **Reorder**
    button in the folder's own screen.
@@ -96,8 +100,8 @@ your library via Anthropic's Messages API:
   in its touch-and-hold menu (shown only when a key is configured), so older
   tracks can be tidied up too.
 
-A title the AI rewrites records the original, so **Rename → Reset to Original**
-still restores the download title. AI work is best-effort and runs off the
+A title the AI rewrites records the original, so **Edit Metadata → Reset to
+Original Title** still restores the download title. AI work is best-effort and runs off the
 download queue — failures are logged, never fatal. No key, no AI: everything else
 is unchanged.
 

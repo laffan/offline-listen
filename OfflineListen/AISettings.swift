@@ -24,13 +24,6 @@ enum AIModel: String, CaseIterable, Identifiable, Codable {
         case .sonnet: return "claude-sonnet-4-6"
         }
     }
-
-    var subtitle: String {
-        switch self {
-        case .haiku: return "Fast and economical"
-        case .sonnet: return "More capable, costs a little more"
-        }
-    }
 }
 
 /// Persists the user's AI configuration: which model to use, the API key (stored
