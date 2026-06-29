@@ -19,6 +19,14 @@ struct OfflineListenApp: App {
         _aiOrganizer = StateObject(wrappedValue: aiOrganizer)
         _downloads = StateObject(wrappedValue: DownloadManager(library: library, aiOrganizer: aiOrganizer))
         _playback = StateObject(wrappedValue: PlaybackManager(library: library))
+
+        // The watch's "Clear all Tracks" empties the phone's Watch folder to match.
+        WatchSync.shared.onClearAll = { [weak library] in library?.clearAllFromWatch() }
+        // Once the WC session is ready (and whenever the watch state changes),
+        // re-push the current set so the watch reconciles.
+        WatchSync.shared.onReady = { [weak library] in library?.syncWatch() }
+        // Best-effort immediate push (no-ops until the session activates).
+        library.syncWatch()
     }
 
     var body: some Scene {

@@ -48,6 +48,10 @@ final class LibraryStore: ObservableObject {
     var unfiledActiveTracks: [Track] { activeTracks.filter { $0.folderID == nil } }
     /// Active tracks that haven't been listened to yet — the Inbox.
     var inboxTracks: [Track] { activeTracks.filter { !$0.hasBeenPlayed } }
+    /// Tracks pushed to the Apple Watch — the "Watch" virtual folder. Like the
+    /// Inbox, these still live wherever they normally do in the library; this is
+    /// just a filtered view for managing what's on the watch.
+    var watchTracks: [Track] { activeTracks.filter { $0.sentToWatch } }
 
     /// Active tracks in a folder, in library order (which doubles as the
     /// folder's user-set order; see `moveTracks(in:fromOffsets:toOffset:)`).
@@ -191,6 +195,70 @@ final class LibraryStore: ObservableObject {
         save()
     }
 
+    // MARK: - Apple Watch
+
+    /// Whether a track is currently pushed to the watch.
+    func isOnWatch(_ track: Track) -> Bool {
+        tracks.first(where: { $0.id == track.id })?.sentToWatch ?? false
+    }
+
+    /// Pushes a single track to the watch. Video isn't supported on the watch, so
+    /// it's a no-op for video tracks. Sending never changes the track's place in
+    /// the library — only the `sentToWatch` flag.
+    func sendToWatch(_ track: Track) {
+        guard let index = tracks.firstIndex(where: { $0.id == track.id }),
+              !tracks[index].isVideo,
+              !tracks[index].sentToWatch else { return }
+        tracks[index].sentToWatch = true
+        save()
+        syncWatch()
+    }
+
+    /// Pushes every audio track in a folder to the watch, tagged (via the
+    /// manifest) with the folder's name so they group as a playlist on the watch.
+    func sendFolderToWatch(_ folder: Folder) {
+        var changed = false
+        for index in tracks.indices
+        where tracks[index].folderID == folder.id && !tracks[index].isVideo && !tracks[index].sentToWatch {
+            tracks[index].sentToWatch = true
+            changed = true
+        }
+        if changed {
+            save()
+            syncWatch()
+        }
+    }
+
+    /// Removes a single track from the watch (the file is deleted on the watch by
+    /// the next manifest prune). The track itself is untouched in the library.
+    func removeFromWatch(_ track: Track) {
+        guard let index = tracks.firstIndex(where: { $0.id == track.id }),
+              tracks[index].sentToWatch else { return }
+        tracks[index].sentToWatch = false
+        save()
+        syncWatch()
+    }
+
+    /// Clears the whole Watch folder — used both by the phone and in response to
+    /// the watch's "Clear all Tracks".
+    func clearAllFromWatch() {
+        var changed = false
+        for index in tracks.indices where tracks[index].sentToWatch {
+            tracks[index].sentToWatch = false
+            changed = true
+        }
+        if changed {
+            save()
+            syncWatch()
+        }
+    }
+
+    /// Pushes the current watch set over to the paired watch.
+    func syncWatch() {
+        let folderNames = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0.name) })
+        WatchSync.shared.push(tracks: watchTracks, folderNames: folderNames)
+    }
+
     // MARK: - Played state (Inbox)
 
     /// Marks a track as listened-to (or not), moving it out of (or into) the Inbox.
@@ -319,6 +387,7 @@ final class LibraryStore: ObservableObject {
         }
         tracks[index].title = trimmed
         save()
+        if tracks[index].sentToWatch { syncWatch() }
     }
 
     /// Restores a renamed track's original (download) title.
@@ -350,6 +419,7 @@ final class LibraryStore: ObservableObject {
             tracks[index].artist = newArtist
         }
         save()
+        if tracks[index].sentToWatch { syncWatch() }
     }
 
     /// Archives or unarchives a track.
@@ -402,16 +472,20 @@ final class LibraryStore: ObservableObject {
 
     /// Removes a track from the library and deletes its audio file from disk.
     func delete(_ track: Track) {
+        let wasOnWatch = tracks.first(where: { $0.id == track.id })?.sentToWatch ?? false
         try? FileManager.default.removeItem(at: track.fileURL)
         tracks.removeAll { $0.id == track.id }
         save()
+        if wasOnWatch { syncWatch() }
     }
 
     func delete(at offsets: IndexSet) {
+        let wasOnWatch = offsets.contains { tracks[$0].sentToWatch }
         for index in offsets {
             try? FileManager.default.removeItem(at: tracks[index].fileURL)
         }
         tracks.remove(atOffsets: offsets)
         save()
+        if wasOnWatch { syncWatch() }
     }
 }

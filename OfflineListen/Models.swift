@@ -204,6 +204,10 @@ struct Track: Identifiable, Codable, Hashable {
     var originalTitle: String?
     /// YouTube/yt-dlp chapter markers, in order. Empty when the source had none.
     var chapters: [Chapter]
+    /// True when this track has been pushed to the Apple Watch for offline
+    /// listening. The phone is the source of truth; the "Watch" virtual folder
+    /// lists every track where this is set (see `LibraryStore.watchTracks`).
+    var sentToWatch: Bool
 
     init(id: UUID = UUID(),
          title: String,
@@ -219,7 +223,8 @@ struct Track: Identifiable, Codable, Hashable {
          folderID: UUID? = nil,
          hasBeenPlayed: Bool = false,
          originalTitle: String? = nil,
-         chapters: [Chapter] = []) {
+         chapters: [Chapter] = [],
+         sentToWatch: Bool = false) {
         self.id = id
         self.title = title
         self.artist = artist
@@ -235,10 +240,11 @@ struct Track: Identifiable, Codable, Hashable {
         self.hasBeenPlayed = hasBeenPlayed
         self.originalTitle = originalTitle
         self.chapters = chapters
+        self.sentToWatch = sentToWatch
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, artist, fileName, sourceURL, duration, dateAdded, isArchived, kind, lastPosition, isVideo, folderID, hasBeenPlayed, originalTitle, chapters
+        case id, title, artist, fileName, sourceURL, duration, dateAdded, isArchived, kind, lastPosition, isVideo, folderID, hasBeenPlayed, originalTitle, chapters, sentToWatch
     }
 
     // Custom decode so libraries saved before these fields existed still load.
@@ -259,6 +265,7 @@ struct Track: Identifiable, Codable, Hashable {
         hasBeenPlayed = try c.decodeIfPresent(Bool.self, forKey: .hasBeenPlayed) ?? false
         originalTitle = try c.decodeIfPresent(String.self, forKey: .originalTitle)
         chapters = try c.decodeIfPresent([Chapter].self, forKey: .chapters) ?? []
+        sentToWatch = try c.decodeIfPresent(Bool.self, forKey: .sentToWatch) ?? false
     }
 
     /// Absolute on-disk location resolved at access time.

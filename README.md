@@ -136,10 +136,76 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `AIOrganizer.swift` | Builds the prompt, calls the API, writes music/podcast + clean metadata back to the library. |
 | `*View.swift` | The four SwiftUI screens (Download, Library, Player, Settings — which embeds the Log). |
 | `FolderView.swift` | Folder detail (tap-to-play, reorder) and Inbox screens. |
+| `WatchFolderView.swift` | The phone's **Watch** virtual-folder screen (manage what's been sent to the watch). |
+| `WatchManifest.swift` | Wire format shared by the iPhone and watch targets (the sync manifest + WC keys). |
+| `WatchSync.swift` | Phone-side WatchConnectivity bridge: pushes the manifest + audio files, handles the watch's "Clear all". |
+
+The companion watch app lives under `OfflineListenWatch/` (see
+[Companion Apple Watch app](#companion-apple-watch-app)).
 
 The extraction step is isolated behind a `MediaExtractor` seam (a mock
 implementation is included), so adapting to a library API change touches one
 file and the UI can be exercised with no native dependency.
+
+## Companion Apple Watch app
+
+A bundled **watchOS app** (`OfflineListenWatch/`) lets you push Music and Podcast
+tracks to your Apple Watch and listen **offline** — on a run, away from the phone.
+It's **audio only** (video isn't sent to the watch).
+
+**Three panes** (swipe between them):
+
+1. **List** — the tracks and playlists that have been pushed to the watch.
+   Playlists you sent as a folder stay grouped; loose tracks sit below. A row
+   shows **Syncing…** until its audio file has finished transferring, then
+   becomes tappable. Tap a track to play it (and jump to Listen).
+2. **Listen** — a media player with the same core transport as the iPhone:
+   title/artist, a scrubber, play/pause, skip **±30/15s**, and next/previous
+   within the list. Podcasts resume where you left off; the watch's Now Playing
+   surfaces the system controls.
+3. **Settings** — an **Output** preference (**Bluetooth** / **Speaker**) and a
+   **Clear all Tracks** button (with a confirmation step) that deletes every
+   saved file on the watch. (watchOS routes audio at the system level — Bluetooth
+   when connected, otherwise the built-in speaker — so the preference steers the
+   system route rather than forcing a port.)
+
+### Sending from the phone
+
+Touch-and-hold a **track** (or a **playlist/folder**) in the library and choose
+**Send to Watch**. Sending **never changes the item's place** in your phone
+library — it only flags it for the watch. A **Watch** folder appears directly
+below the **Inbox**: a *virtual* folder (its tracks really live wherever they
+normally do) for managing what's on the watch. There it's deliberately spare —
+tap to play, and a single swipe-left action, **Remove from Watch** (no
+song/podcast swipe). Touch-and-hold a track already on the watch and the menu
+shows **Remove from Watch** instead.
+
+The phone is the **source of truth**, and the link runs both ways: tapping
+**Clear all Tracks** on the watch empties the phone's **Watch** folder to match,
+and removing a track from the Watch folder deletes it from the watch on the next
+sync.
+
+### How the sync works
+
+Transport is **WatchConnectivity** (`WCSession`). The phone pushes the
+authoritative set as a JSON **manifest** via `updateApplicationContext` (the watch
+renders its List from it and **prunes** any local file no longer listed), and
+sends the audio files themselves with `transferFile`. The watch sends a small
+`clearAll` message back when you clear it. The wire format
+(`WatchManifest.swift`) is compiled into **both** targets so encode and decode
+can't drift — the same trick the Share Extension uses with `SharedInbox.swift`.
+
+### Watch source layout (`OfflineListenWatch/`)
+
+| File | Role |
+|------|------|
+| `OfflineListenWatchApp.swift` | App entry; wires up the watch stores. |
+| `WatchModels.swift` | `WatchTrack` + paths (the watch's own lightweight library). |
+| `WatchLibraryStore.swift` | Persists `watch-library.json`; applies the manifest, prunes/ingests files. |
+| `WatchConnectivityManager.swift` | Watch-side WC delegate: receives the manifest + files, sends "Clear all". |
+| `WatchPlaybackManager.swift` | `AVPlayer` audio engine + Now Playing (the iPhone player's core, audio only). |
+| `WatchRootView.swift` | The three swipeable panes. |
+| `WatchListView.swift` / `WatchListenView.swift` / `WatchSettingsView.swift` | The List / Listen / Settings panes. |
 
 ## Share from other apps
 
@@ -170,6 +236,23 @@ from source alone):
 3. Bundle IDs default to `com.offlinelisten.app` and
    `com.offlinelisten.app.ShareExtension` — change both (keep the extension a
    child of the app id) if those are taken.
+
+### Required Xcode setup for the watch app
+
+The project wires up the **OfflineListenWatch** target, embeds it in the iOS app,
+and sets `WKCompanionAppBundleIdentifier`, but **signing must be set in Xcode**:
+
+1. Select the **OfflineListenWatch** target → *Signing & Capabilities* → set your
+   **Team** (a watch app needs its own provisioning).
+2. The watch bundle id defaults to `com.offlinelisten.app.watchkitapp` (a child
+   of the app id). If you changed the app's bundle id, update the watch's to
+   match and keep `WKCompanionAppBundleIdentifier` (in `OfflineListenWatch/Info.plist`)
+   equal to the **iOS app's** id.
+3. The watch target declares the same **App Group** (`group.com.offlinelisten.app`)
+   for parity; let Xcode register/provision it. (WatchConnectivity itself needs no
+   entitlement.)
+4. Run the **OfflineListenWatch** scheme on a paired watch (or a paired
+   iPhone + Watch Simulator pair) to test the sync end-to-end.
 
 ## Setup
 
@@ -406,4 +489,8 @@ original (Split & Delete vs. Split & Keep).
 Built as a complete, ready-to-open Xcode project, authored on Linux without an
 Xcode toolchain. The YoutubeDL-iOS integration is written against the library's
 verified public API. Playback (offline, background, lock-screen) uses
-AVFoundation only.
+AVFoundation only. The companion **watchOS app** and its phone↔watch sync are
+likewise written against the documented **WatchConnectivity** / AVFoundation
+APIs; its target is wired into `project.pbxproj` by hand (set the watch **Team**
+in Xcode before building — see
+[Required Xcode setup for the watch app](#required-xcode-setup-for-the-watch-app)).

@@ -137,6 +137,7 @@ extension View {
 /// Navigation targets reachable from the library list.
 enum LibraryRoute: Hashable {
     case inbox
+    case watch
     case folder(UUID)
     case archived
 }
@@ -194,6 +195,8 @@ struct LibraryView: View {
                 switch route {
                 case .inbox:
                     InboxView(onPlay: onPlay, share: $share)
+                case .watch:
+                    WatchFolderView(onPlay: onPlay)
                 case .folder(let id):
                     FolderDetailView(folderID: id, onPlay: onPlay, share: $share)
                 case .archived:
@@ -231,6 +234,10 @@ struct LibraryView: View {
             if !editMode.isEditing {
                 Section {
                     inboxRow
+                    // The Watch folder sits directly below the Inbox, always
+                    // present like the Inbox. It's a virtual folder (its tracks
+                    // live elsewhere) for managing what's pushed to the Apple Watch.
+                    watchRow
                     // Drag-to-reorder (touch and hold a row) only makes sense in
                     // User Order; by-name order is computed and can't be permuted.
                     if library.folderSort == .userOrder {
@@ -355,6 +362,26 @@ struct LibraryView: View {
         }
     }
 
+    /// The Watch folder: a virtual folder pinned just under the Inbox, listing
+    /// every track pushed to the Apple Watch (wherever it otherwise lives).
+    private var watchRow: some View {
+        NavigationLink(value: LibraryRoute.watch) {
+            HStack(spacing: 12) {
+                Image(systemName: "applewatch")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24)
+                Text("Watch")
+                    .font(.body)
+                Spacer()
+                Text("\(library.watchTracks.count)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
     /// True when the currently-playing track lives in this folder, so its row
     /// can light up red like the playing track itself.
     private func isPlaying(in folder: Folder) -> Bool {
@@ -399,6 +426,13 @@ struct LibraryView: View {
                 Label("Archive", systemImage: "archivebox")
             }
             .tint(.indigo)
+        }
+        .contextMenu {
+            Button {
+                library.sendFolderToWatch(folder)
+            } label: {
+                Label("Send to Watch", systemImage: "applewatch")
+            }
         }
     }
 
@@ -470,6 +504,7 @@ struct LibraryView: View {
                 } label: {
                     Label("Move to Folder", systemImage: "folder")
                 }
+                SendToWatchButton(track: track)
                 AIOrganizeButton(track: track)
                 if track.hasChapters {
                     Button {
@@ -906,6 +941,32 @@ struct ChapterContext: Identifiable {
     let id = UUID()
     let track: Track
     let queue: [Track]
+}
+
+/// A context-menu button that pushes a track to (or pulls it from) the Apple
+/// Watch. Audio only — video isn't supported on the watch. The label toggles
+/// with the track's current state. Safe to drop into any track's `contextMenu`.
+struct SendToWatchButton: View {
+    @EnvironmentObject private var library: LibraryStore
+    let track: Track
+
+    var body: some View {
+        if !track.isVideo {
+            if library.isOnWatch(track) {
+                Button {
+                    library.removeFromWatch(track)
+                } label: {
+                    Label("Remove from Watch", systemImage: "applewatch.slash")
+                }
+            } else {
+                Button {
+                    library.sendToWatch(track)
+                } label: {
+                    Label("Send to Watch", systemImage: "applewatch")
+                }
+            }
+        }
+    }
 }
 
 /// A context-menu button that re-runs AI organization on a single track. Shows
