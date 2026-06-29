@@ -67,6 +67,9 @@ final class DownloadManager: ObservableObject {
 
     private let library: LibraryStore
     private let extractor: MediaExtractor
+    /// Optional AI organizer; when present and the user has opted in, finished
+    /// downloads are classified/cleaned automatically.
+    private let aiOrganizer: AIOrganizer?
     private var isProcessing = false
 
     /// The job currently being processed and the task running it, so an active
@@ -75,10 +78,12 @@ final class DownloadManager: ObservableObject {
     private var activeTask: Task<Void, Never>?
 
     init(library: LibraryStore,
+         aiOrganizer: AIOrganizer? = nil,
          extractor: MediaExtractor = CompositeExtractor(
             primary: YouTubeKitExtractor(), named: "YouTubeKit",
             fallback: YoutubeDLExtractor(), named: "yt-dlp")) {
         self.library = library
+        self.aiOrganizer = aiOrganizer
         self.extractor = extractor
     }
 
@@ -243,6 +248,14 @@ final class DownloadManager: ObservableObject {
             job.state = .finished
             appLog("Added to library: \"\(track.title)\" (\(track.duration.asPlaybackTime))",
                    level: .success, category: "Queue")
+
+            // Best-effort AI organization (music/podcast + clean metadata), only
+            // when the user has set up and opted into AI assist. Runs detached so
+            // it never holds up the queue.
+            if let aiOrganizer {
+                let id = track.id
+                Task { await aiOrganizer.organizeIfEnabled(id) }
+            }
         } catch {
             if error is CancellationError || (error as? URLError)?.code == .cancelled || Task.isCancelled {
                 job.state = .cancelled

@@ -7,53 +7,52 @@ struct LogView: View {
     @State private var sharing = false
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if log.entries.isEmpty {
-                    ContentUnavailableViewCompat(
-                        title: "No activity yet",
-                        systemImage: "doc.plaintext",
-                        description: "Start a download and the steps, statuses, and errors will stream in here."
-                    )
-                } else {
-                    logScroll
-                }
+        Group {
+            if log.entries.isEmpty {
+                ContentUnavailableViewCompat(
+                    title: "No activity yet",
+                    systemImage: "doc.plaintext",
+                    description: "Start a download and the steps, statuses, and errors will stream in here."
+                )
+            } else {
+                logScroll
             }
-            .navigationTitle("Log")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button(role: .destructive) {
-                        log.clear()
-                    } label: {
-                        Image(systemName: "trash")
-                    }
-                    .disabled(log.entries.isEmpty)
+        }
+        .navigationTitle("Log")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(role: .destructive) {
+                    log.clear()
+                } label: {
+                    Image(systemName: "trash")
                 }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        UIPasteboard.general.string = log.plainText
-                        copied = true
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
-                    } label: {
-                        Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
-                    }
-                    .disabled(log.entries.isEmpty)
-                }
-                // Shares the crash-durable on-disk log files — including the
-                // previous session's, which survives a hard crash that the
-                // in-memory log (and so Copy) loses.
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        sharing = true
-                    } label: {
-                        Image(systemName: "square.and.arrow.up")
-                    }
-                    .disabled(log.persistedLogURLs.isEmpty)
-                }
+                .disabled(log.entries.isEmpty)
             }
-            .sheet(isPresented: $sharing) {
-                ActivityView(items: log.persistedLogURLs)
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    UIPasteboard.general.string = log.plainText
+                    copied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+                } label: {
+                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                }
+                .disabled(log.entries.isEmpty)
             }
+            // Shares the crash-durable on-disk log files — including the
+            // previous session's, which survives a hard crash that the
+            // in-memory log (and so Copy) loses.
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    sharing = true
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .disabled(log.persistedLogURLs.isEmpty)
+            }
+        }
+        .sheet(isPresented: $sharing) {
+            ActivityView(items: log.persistedLogURLs)
         }
     }
 

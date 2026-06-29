@@ -434,6 +434,7 @@ struct LibraryView: View {
                 } label: {
                     Label("Move to Folder", systemImage: "folder")
                 }
+                AIOrganizeButton(track: track)
                 if track.hasChapters {
                     Button {
                         splittingTrack = track
@@ -869,4 +870,24 @@ struct ChapterContext: Identifiable {
     let id = UUID()
     let track: Track
     let queue: [Track]
+}
+
+/// A context-menu button that re-runs AI organization on a single track. Shows
+/// itself only when AI has been set up in Settings; for audio tracks only
+/// (videos aren't music/podcasts). Safe to drop into any track's `contextMenu`.
+struct AIOrganizeButton: View {
+    @EnvironmentObject private var ai: AIOrganizer
+    let track: Track
+
+    var body: some View {
+        if ai.isAvailable, !track.isVideo {
+            Button {
+                let id = track.id
+                Task { await ai.organize(id) }
+            } label: {
+                Label("AI Organize", systemImage: "sparkles")
+            }
+            .disabled(ai.inFlight.contains(track.id))
+        }
+    }
 }

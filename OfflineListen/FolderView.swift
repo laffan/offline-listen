@@ -135,6 +135,7 @@ struct FolderDetailView: View {
                 } label: {
                     Label("Move to Folder", systemImage: "folder")
                 }
+                AIOrganizeButton(track: track)
                 if track.hasChapters {
                     Button {
                         splittingTrack = track
@@ -244,6 +245,7 @@ struct InboxView: View {
                                         Label("Move to Folder", systemImage: "folder")
                                     }
                                 }
+                                AIOrganizeButton(track: track)
                                 if track.hasChapters {
                                     Button {
                                         splittingTrack = track

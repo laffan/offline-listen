@@ -4,7 +4,7 @@ enum Tab: Hashable {
     case download
     case library
     case player
-    case log
+    case settings
 }
 
 struct RootView: View {
@@ -24,9 +24,9 @@ struct RootView: View {
                 .tabItem { Label("Player", systemImage: "play.circle") }
                 .tag(Tab.player)
 
-            LogView()
-                .tabItem { Label("Log", systemImage: "doc.plaintext") }
-                .tag(Tab.log)
+            SettingsView()
+                .tabItem { Label("Settings", systemImage: "gearshape") }
+                .tag(Tab.settings)
         }
     }
 }

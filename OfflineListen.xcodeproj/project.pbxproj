@@ -30,6 +30,10 @@
 		1B00000000000000000000C8 /* FolderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B6 /* FolderView.swift */; };
 		1B00000000000000000000C9 /* ChapterFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B7 /* ChapterFetcher.swift */; };
 		1B00000000000000000000CA /* ChapterSplitter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B8 /* ChapterSplitter.swift */; };
+		1B00000000000000000000CB /* AISettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B9 /* AISettings.swift */; };
+		1B00000000000000000000CC /* AnthropicClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BA /* AnthropicClient.swift */; };
+		1B00000000000000000000CD /* AIOrganizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BB /* AIOrganizer.swift */; };
+		1B00000000000000000000CE /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BC /* SettingsView.swift */; };
 		3B00000000000000000000A3 /* SharedInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A00000000000000000000A5 /* SharedInbox.swift */; };
 		3B00000000000000000000A1 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A00000000000000000000A1 /* ShareViewController.swift */; };
 		3B00000000000000000000A2 /* SharedInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A00000000000000000000A5 /* SharedInbox.swift */; };
@@ -67,6 +71,10 @@
 		1A00000000000000000000B6 /* FolderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderView.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B7 /* ChapterFetcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChapterFetcher.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B8 /* ChapterSplitter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChapterSplitter.swift; sourceTree = "<group>"; };
+		1A00000000000000000000B9 /* AISettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISettings.swift; sourceTree = "<group>"; };
+		1A00000000000000000000BA /* AnthropicClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnthropicClient.swift; sourceTree = "<group>"; };
+		1A00000000000000000000BB /* AIOrganizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIOrganizer.swift; sourceTree = "<group>"; };
+		1A00000000000000000000BC /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		1A00000000000000000000AC /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		1A00000000000000000000AD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		1A00000000000000000000AE /* OfflineListen.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OfflineListen.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -123,6 +131,10 @@
 				1A00000000000000000000B7 /* ChapterFetcher.swift */,
 				1A00000000000000000000B8 /* ChapterSplitter.swift */,
 				1A00000000000000000000AB /* PlayerView.swift */,
+				1A00000000000000000000BC /* SettingsView.swift */,
+				1A00000000000000000000B9 /* AISettings.swift */,
+				1A00000000000000000000BA /* AnthropicClient.swift */,
+				1A00000000000000000000BB /* AIOrganizer.swift */,
 				1A00000000000000000000AF /* Logger.swift */,
 				1A00000000000000000000B0 /* LogView.swift */,
 				1A00000000000000000000B1 /* AudioStreamDownloader.swift */,
@@ -293,6 +305,10 @@
 				1B00000000000000000000BB /* PlayerView.swift in Sources */,
 				1B00000000000000000000BF /* Logger.swift in Sources */,
 				1B00000000000000000000C0 /* LogView.swift in Sources */,
+				1B00000000000000000000CB /* AISettings.swift in Sources */,
+				1B00000000000000000000CC /* AnthropicClient.swift in Sources */,
+				1B00000000000000000000CD /* AIOrganizer.swift in Sources */,
+				1B00000000000000000000CE /* SettingsView.swift in Sources */,
 				1B00000000000000000000C2 /* AudioStreamDownloader.swift in Sources */,
 				1B00000000000000000000C3 /* CompositeExtractor.swift in Sources */,
 				1B00000000000000000000C4 /* YouTubeKitExtractor.swift in Sources */,

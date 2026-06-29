@@ -70,8 +70,36 @@ Three screens (tabs):
    Control Center. For a chaptered track, small **dots** sit along the scrubber
    at each chapter's start and the **current chapter title** shows on its own
    line beneath the title/artist, updating as playback crosses a marker.
-4. **Log** — timestamped, copyable stream of every pipeline step (queue,
-   yt-dlp, conversion) with light colour coding, for diagnosing downloads.
+4. **Settings** — AI configuration on top, the **Log** as a section beneath it.
+   - **AI model & API key.** Pick **Haiku** (fast/cheap) or **Sonnet** (more
+     capable), paste an Anthropic API key, and **Verify & Save** — the key is
+     checked against the API and, on success, stored in the device **Keychain**
+     so it persists between sessions. Once a key is saved, an **AI assist with
+     organization** toggle appears.
+   - **Log** — a row that opens the timestamped, copyable stream of every
+     pipeline step (queue, yt-dlp, conversion, AI) with light colour coding, for
+     diagnosing downloads.
+
+### AI-assisted organization
+
+With a verified key and **AI assist** turned on, the AI lightweight-organizes
+your library via Anthropic's Messages API:
+
+- **On download**, each finished audio track is sent to the chosen model with its
+  **title and duration**. The model decides **music vs. podcast** (auto-setting
+  the track's kind, so the Library filter and resume/lock-screen behaviour follow
+  suit) and, for music, extracts a **clean track title and artist** from the noisy
+  YouTube title (dropping "Official Video", channel names, brackets, view counts,
+  …). Library rows already show the title prominently with the artist in smaller,
+  lower-opacity text beneath it — now that line is populated.
+- **On demand**, any already-downloaded audio track gets an **AI Organize** entry
+  in its touch-and-hold menu (shown only when a key is configured), so older
+  tracks can be tidied up too.
+
+A title the AI rewrites records the original, so **Rename → Reset to Original**
+still restores the download title. AI work is best-effort and runs off the
+download queue — failures are logged, never fatal. No key, no AI: everything else
+is unchanged.
 
 ### Pipeline
 
@@ -99,7 +127,10 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `VideoMerger.swift` | Muxes a video-only + audio-only stream into one MP4. |
 | `PlaybackManager.swift` | `AVPlayer` engine (audio + video), audio session, lock screen. |
 | `Logger.swift` | `LogStore` — thread-safe, app-wide log sink. |
-| `*View.swift` | The four SwiftUI screens (Download, Library, Player, Log). |
+| `AISettings.swift` | `AISettingsStore` (model/key/assist, Keychain-backed), `AIModel`, `Keychain` helper. |
+| `AnthropicClient.swift` | Minimal Anthropic Messages API client (verify + single-shot completion) over URLSession. |
+| `AIOrganizer.swift` | Builds the prompt, calls the API, writes music/podcast + clean metadata back to the library. |
+| `*View.swift` | The four SwiftUI screens (Download, Library, Player, Settings — which embeds the Log). |
 | `FolderView.swift` | Folder detail (tap-to-play, reorder) and Inbox screens. |
 
 The extraction step is isolated behind a `MediaExtractor` seam (a mock

@@ -345,6 +345,30 @@ final class LibraryStore: ObservableObject {
         save()
     }
 
+    /// Applies an AI organization result to a track in one save: sets the
+    /// music/podcast kind and, for music, a clean title and artist when the model
+    /// supplied them. A title change records `originalTitle` (like a manual
+    /// rename) so "Reset to Original" can still restore the download title.
+    func applyAIOrganization(to id: UUID, kind: TrackKind, cleanTitle: String?, artist: String?) {
+        guard let index = tracks.firstIndex(where: { $0.id == id }) else { return }
+
+        tracks[index].kind = kind
+        if kind == .song { tracks[index].lastPosition = 0 }
+
+        if let cleanTitle, !cleanTitle.isEmpty, tracks[index].title != cleanTitle {
+            if tracks[index].originalTitle == nil {
+                tracks[index].originalTitle = tracks[index].title
+            }
+            tracks[index].title = cleanTitle
+        }
+
+        if let artist, !artist.isEmpty {
+            tracks[index].artist = artist
+        }
+
+        save()
+    }
+
     /// Records a podcast's playhead. No-ops for tiny changes to limit churn.
     func updatePosition(for id: UUID, to position: Double) {
         guard let index = tracks.firstIndex(where: { $0.id == id }) else { return }
