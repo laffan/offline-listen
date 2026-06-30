@@ -17,6 +17,9 @@ final class WatchPlaybackManager: NSObject, ObservableObject {
     private let player = AVPlayer()
     private let store: WatchLibraryStore
 
+    /// App playback volume (0...1), driven by the Digital Crown on the Listen pane.
+    private(set) var currentVolume: Float = 1.0
+
     private var queue: [WatchTrack] = []
     private var index = 0
     private var ticker: Timer?
@@ -53,6 +56,13 @@ final class WatchPlaybackManager: NSObject, ObservableObject {
     func togglePlayPause() {
         guard currentTrack != nil else { return }
         if isPlaying { pause() } else { resume() }
+    }
+
+    /// Sets the app's playback volume (0...1) — wired to the Digital Crown.
+    func setVolume(_ volume: Float) {
+        let clamped = max(0, min(1, volume))
+        currentVolume = clamped
+        player.volume = clamped
     }
 
     func next() {

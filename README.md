@@ -159,9 +159,9 @@ It's **audio only** (video isn't sent to the watch).
    Playlists you sent as a folder stay grouped; loose tracks sit below. A row
    shows **Syncing…** until its audio file has finished transferring, then
    becomes tappable. Tap a track to play it (and jump to Listen).
-2. **Listen** — a media player with the same core transport as the iPhone:
-   title/artist, a scrubber, play/pause, skip **±30/15s**, and next/previous
-   within the list. Podcasts resume where you left off; the watch's Now Playing
+2. **Listen** — now-playing title/artist, a progress bar, and
+   previous / play-pause / next. The **Digital Crown adjusts volume** while this
+   pane is showing. Podcasts resume where you left off; the watch's Now Playing
    surfaces the system controls.
 3. **Settings** — an **Output** preference (**Bluetooth** / **Speaker**) and a
    **Clear all Tracks** button (with a confirmation step) that deletes every
