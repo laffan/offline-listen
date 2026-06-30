@@ -7,6 +7,12 @@ final class DownloadJob: ObservableObject, Identifiable {
     let id = UUID()
     let url: String
     let mode: DownloadMode
+    /// When true this job doesn't download a file: it resolves a playlist URL
+    /// into a folder and enqueues one child job per entry.
+    let isPlaylist: Bool
+    /// The folder a finished track should be filed into, or nil for the main
+    /// library list. Set on the child jobs a playlist expands into.
+    let folderID: UUID?
 
     @Published var title: String
     @Published var state: State
@@ -14,10 +20,12 @@ final class DownloadJob: ObservableObject, Identifiable {
     /// The library track produced by this job, once finished (for tap-to-play).
     @Published var trackID: UUID?
 
-    init(url: String, mode: DownloadMode) {
+    init(url: String, mode: DownloadMode, isPlaylist: Bool = false, folderID: UUID? = nil) {
         self.url = url
         self.mode = mode
-        self.title = url
+        self.isPlaylist = isPlaylist
+        self.folderID = folderID
+        self.title = isPlaylist ? "Playlist" : url
         self.state = .queued
     }
 
@@ -99,7 +107,11 @@ final class DownloadManager: ObservableObject {
         for token in tokens {
             let link = String(token)
             if Self.isQueueableURL(link) {
-                enqueue(urlString: link, mode: mode)
+                if PlaylistURL.isPlaylistURL(link) {
+                    enqueuePlaylist(urlString: link, mode: mode)
+                } else {
+                    enqueue(urlString: link, mode: mode)
+                }
                 added += 1
             } else {
                 skipped += 1
@@ -129,9 +141,11 @@ final class DownloadManager: ObservableObject {
     }
 
     /// Adds a URL to the queue. Newest jobs show at the top; processing is FIFO.
-    func enqueue(urlString: String, mode: DownloadMode) {
+    /// A `folderID` files the finished track into that folder (used for the child
+    /// jobs a playlist expands into).
+    func enqueue(urlString: String, mode: DownloadMode, folderID: UUID? = nil) {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        let job = DownloadJob(url: trimmed, mode: mode)
+        let job = DownloadJob(url: trimmed, mode: mode, folderID: folderID)
         if URL(string: trimmed) == nil || !trimmed.lowercased().hasPrefix("http") {
             job.state = .failed(ExtractorError.invalidURL.localizedDescription)
             jobs.insert(job, at: 0)
@@ -140,6 +154,17 @@ final class DownloadManager: ObservableObject {
         }
         jobs.insert(job, at: 0)
         appLog("Queued \(job.mode.displayName) download: \(trimmed)", category: "Queue")
+        Task { await processNext() }
+    }
+
+    /// Adds a playlist URL to the queue. The job runs in the serial queue (so its
+    /// yt-dlp resolution never overlaps another download's extraction), creates a
+    /// folder named after the playlist, and enqueues one download per entry.
+    func enqueuePlaylist(urlString: String, mode: DownloadMode) {
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        let job = DownloadJob(url: trimmed, mode: mode, isPlaylist: true)
+        jobs.insert(job, at: 0)
+        appLog("Queued playlist: \(trimmed)", category: "Queue")
         Task { await processNext() }
     }
 
@@ -171,9 +196,14 @@ final class DownloadManager: ObservableObject {
     func restart(_ job: DownloadJob) {
         let url = job.url
         let mode = job.mode
+        let wasPlaylist = job.isPlaylist
         remove(job)
         appLog("Restarting: \(url)", category: "Queue")
-        enqueue(urlString: url, mode: mode)
+        if wasPlaylist {
+            enqueuePlaylist(urlString: url, mode: mode)
+        } else {
+            enqueue(urlString: url, mode: mode)
+        }
     }
 
     private func processNext() async {
@@ -196,6 +226,11 @@ final class DownloadManager: ObservableObject {
     private func run(_ job: DownloadJob) async {
         guard let url = URL(string: job.url) else {
             job.state = .failed(ExtractorError.invalidURL.localizedDescription)
+            return
+        }
+
+        if job.isPlaylist {
+            await runPlaylist(job, url: url)
             return
         }
 
@@ -241,6 +276,7 @@ final class DownloadManager: ObservableObject {
                 sourceURL: job.url,
                 duration: extracted.duration,
                 isVideo: extracted.isVideo,
+                folderID: job.folderID,
                 chapters: chapters
             )
             library.add(track)
@@ -265,5 +301,51 @@ final class DownloadManager: ObservableObject {
                 appLog("Job failed: \(error.localizedDescription)", level: .error, category: "Queue")
             }
         }
+    }
+
+    /// Expands a playlist job: resolves the entries (running serially in the
+    /// queue so its yt-dlp call never overlaps another extraction), creates or
+    /// reuses a folder named after the playlist, and enqueues one download per
+    /// entry filed into that folder. If resolution yields nothing usable, the
+    /// link falls back to a single ordinary download.
+    private func runPlaylist(_ job: DownloadJob, url: URL) async {
+        appLog("Resolving playlist: \(job.url)", category: "Queue")
+        job.state = .extracting
+
+        guard let playlist = await PlaylistResolver.resolve(url: url) else {
+            // Couldn't resolve as a playlist — treat the link as a single video.
+            appLog("Couldn't resolve as a playlist — downloading as a single item.",
+                   level: .warning, category: "Queue")
+            job.state = .finished
+            enqueue(urlString: job.url, mode: job.mode)
+            return
+        }
+
+        if Task.isCancelled {
+            job.state = .cancelled
+            return
+        }
+
+        let folder = folderForPlaylist(named: playlist.title)
+        job.title = playlist.title
+        for entry in playlist.entryURLs {
+            enqueue(urlString: entry, mode: job.mode, folderID: folder.id)
+        }
+        job.state = .finished
+        appLog("Playlist \"\(playlist.title)\" → queued \(playlist.entryURLs.count) download(s) into a folder.",
+               level: .success, category: "Queue")
+    }
+
+    /// Returns an existing active folder with this name (so re-downloading a
+    /// playlist doesn't spawn duplicates), creating one if none matches.
+    private func folderForPlaylist(named name: String) -> Folder {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let wanted = trimmed.isEmpty ? "Playlist" : trimmed
+        if let existing = library.folders.first(where: {
+            !$0.isArchived && $0.name.localizedCaseInsensitiveCompare(wanted) == .orderedSame
+        }) {
+            return existing
+        }
+        return library.createFolder(named: wanted) ?? Folder(name: wanted)
     }
 }

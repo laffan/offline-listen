@@ -29,6 +29,7 @@
 		1B00000000000000000000C7 /* VideoMerger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B5 /* VideoMerger.swift */; };
 		1B00000000000000000000C8 /* FolderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B6 /* FolderView.swift */; };
 		1B00000000000000000000C9 /* ChapterFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B7 /* ChapterFetcher.swift */; };
+		1B00000000000000000000CF /* PlaylistResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BD /* PlaylistResolver.swift */; };
 		1B00000000000000000000CA /* ChapterSplitter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B8 /* ChapterSplitter.swift */; };
 		1B00000000000000000000CB /* AISettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B9 /* AISettings.swift */; };
 		1B00000000000000000000CC /* AnthropicClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BA /* AnthropicClient.swift */; };
@@ -92,6 +93,7 @@
 		1A00000000000000000000B5 /* VideoMerger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoMerger.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B6 /* FolderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderView.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B7 /* ChapterFetcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChapterFetcher.swift; sourceTree = "<group>"; };
+		1A00000000000000000000BD /* PlaylistResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaylistResolver.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B8 /* ChapterSplitter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChapterSplitter.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B9 /* AISettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISettings.swift; sourceTree = "<group>"; };
 		1A00000000000000000000BA /* AnthropicClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnthropicClient.swift; sourceTree = "<group>"; };
@@ -175,6 +177,7 @@
 				1A00000000000000000000AA /* LibraryView.swift */,
 				1A00000000000000000000B6 /* FolderView.swift */,
 				1A00000000000000000000B7 /* ChapterFetcher.swift */,
+				1A00000000000000000000BD /* PlaylistResolver.swift */,
 				1A00000000000000000000B8 /* ChapterSplitter.swift */,
 				1A00000000000000000000AB /* PlayerView.swift */,
 				1A00000000000000000000BC /* SettingsView.swift */,
@@ -412,6 +415,7 @@
 				1B00000000000000000000BA /* LibraryView.swift in Sources */,
 				1B00000000000000000000C8 /* FolderView.swift in Sources */,
 				1B00000000000000000000C9 /* ChapterFetcher.swift in Sources */,
+				1B00000000000000000000CF /* PlaylistResolver.swift in Sources */,
 				1B00000000000000000000CA /* ChapterSplitter.swift in Sources */,
 				1B00000000000000000000BB /* PlayerView.swift in Sources */,
 				1B00000000000000000000BF /* Logger.swift in Sources */,

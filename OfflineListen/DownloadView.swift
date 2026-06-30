@@ -22,7 +22,7 @@ struct DownloadView: View {
                     ContentUnavailableViewCompat(
                         title: "No downloads yet",
                         systemImage: "arrow.down.circle",
-                        description: "Paste a video URL above to start downloading audio."
+                        description: "Paste a video or playlist URL above to start downloading. A playlist downloads into its own folder."
                     )
                     .frame(maxHeight: .infinity)
                 } else {
