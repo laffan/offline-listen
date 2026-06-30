@@ -17,7 +17,7 @@ struct WatchSettingsView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("Output") {
+                Section {
                     Picker("Output", selection: outputBinding) {
                         ForEach(WatchAudioOutput.allCases) { output in
                             Label(output.displayName, systemImage: output.systemImage)
@@ -25,6 +25,8 @@ struct WatchSettingsView: View {
                         }
                     }
                     .pickerStyle(.navigationLink)
+                } header: {
+                    Text("Output")
                 } footer: {
                     Text("Apple Watch routes audio to Bluetooth headphones when connected, otherwise the built-in speaker.")
                 }
