@@ -174,10 +174,11 @@ final class WatchSync: NSObject, ObservableObject {
     }
 
     // Stall detection: if the queue's total byte progress doesn't advance for a
-    // while, say so — on the Simulator `transferFile` frequently never delivers.
+    // while, say so.
     private var lastProgressBytes: Int64 = -1
     private var lastProgressAt = Date()
     private var stallWarned = false
+    private var tickCount = 0
 
     /// Polls the system's outstanding transfers for live progress while any run.
     private func startProgressTicker() {
@@ -185,6 +186,7 @@ final class WatchSync: NSObject, ObservableObject {
         lastProgressBytes = -1
         lastProgressAt = Date()
         stallWarned = false
+        tickCount = 0
         progressTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.updateProgress() }
         }
@@ -207,6 +209,13 @@ final class WatchSync: NSObject, ObservableObject {
         }
         activeTransfers = map
 
+        // Heartbeat every ~8s so the queue's evolution is visible in the log even
+        // when nothing finishes.
+        tickCount += 1
+        if tickCount % 8 == 0 {
+            logOutstanding("Heartbeat (hasContentPending=\(session.hasContentPending))")
+        }
+
         if totalBytes != lastProgressBytes {
             if lastProgressBytes >= 0, totalBytes > lastProgressBytes {
                 appLog("Transfer progress: \(totalBytes) bytes delivered across \(outstanding.count) transfer(s).",
@@ -218,7 +227,7 @@ final class WatchSync: NSObject, ObservableObject {
         } else if !stallWarned, Date().timeIntervalSince(lastProgressAt) > 20 {
             stallWarned = true
             logOutstanding("Stalled (no byte progress in 20s)")
-            appLog("Transfers are queued but not progressing. `transferFile` often never delivers on the watchOS Simulator — try a real iPhone+Watch pair.",
+            appLog("Transfers are queued but not progressing — the head-of-queue transfer may be wedged. Check the watch isn't in Low Power Mode and has free storage; toggling Bluetooth or rebooting both devices can unstick WatchConnectivity.",
                    level: .warning, category: "Watch")
         }
     }
