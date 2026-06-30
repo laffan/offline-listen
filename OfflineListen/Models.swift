@@ -273,6 +273,12 @@ struct Track: Identifiable, Codable, Hashable {
         AppPaths.documents.appendingPathComponent(fileName)
     }
 
+    /// On-disk size in KB (0 when the file is missing/unreadable); for logs/UI.
+    var fileSizeKB: Int {
+        let size = (try? FileManager.default.attributesOfItem(atPath: fileURL.path))?[.size] as? Int ?? 0
+        return size / 1024
+    }
+
     /// True when the track carries chapter markers worth surfacing.
     var hasChapters: Bool { chapters.count > 1 }
 

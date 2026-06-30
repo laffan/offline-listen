@@ -50,17 +50,6 @@ enum WatchSyncKeys {
     /// its Log tab, so the whole sync is debuggable from one place.
     static let log = "log"
 
-    // Chunked file-over-message keys. `transferFile` doesn't deliver on the
-    // watchOS Simulator (and only runs in the background on device), so when the
-    // watch is reachable the phone streams each audio file as a sequence of
-    // `sendMessage` chunks the watch reassembles to disk.
-    static let fxName = "fxName"
-    static let fxIndex = "fxIndex"
-    static let fxTotal = "fxTotal"
-    static let fxData = "fxData"
-    /// Per-message audio chunk size (bytes); kept well under the WC message limit.
-    static let fxChunkSize = 48_000
-
     // Per-file `transferFile` metadata keys (a self-describing copy of the
     // manifest fields, so a file can be ingested even before/without a manifest).
     static let metaID = "id"

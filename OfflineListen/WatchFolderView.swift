@@ -40,6 +40,14 @@ struct WatchFolderView: View {
         tracks.filter { sync.deliveredFileNames.contains($0.fileName) }.count
     }
 
+    /// Overall sync fraction: delivered files plus the in-flight transfers'
+    /// real byte progress, over the total.
+    private var syncFraction: Double {
+        guard !tracks.isEmpty else { return 1 }
+        let inFlight = tracks.reduce(0.0) { $0 + (sync.activeTransfers[$1.fileName] ?? 0) }
+        return (Double(syncedCount) + inFlight) / Double(tracks.count)
+    }
+
     var body: some View {
         Group {
             if tracks.isEmpty {
@@ -84,8 +92,11 @@ struct WatchFolderView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Syncing \(synced) of \(total) to Watch…")
                             .font(.callout)
-                        ProgressView(value: Double(synced), total: Double(max(total, 1)))
+                        ProgressView(value: syncFraction)
                             .tint(.accentColor)
+                        Text("Transfers continue in the background.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 .padding(.vertical, 2)

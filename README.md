@@ -189,17 +189,23 @@ sync.
 
 Transport is **WatchConnectivity** (`WCSession`). The phone pushes the
 authoritative set as a JSON **manifest** via `updateApplicationContext` (the watch
-renders its List from it and **prunes** any local file no longer listed). Audio
-files travel one of two ways: when the watch is **reachable** (both apps active —
-including on the Simulator) the phone **streams** each file as a sequence of
-`sendMessage` chunks the watch reassembles to disk; when it isn't, the phone
-falls back to `transferFile` for background delivery on a real device. (Plain
-`transferFile` doesn't deliver on the watchOS Simulator, which is why the chunked
-path exists.) The watch sends a small `clearAll` message back when you clear it,
-and mirrors each sync step to the phone's **Log** tab (`⌚`-prefixed) so the whole
-exchange is debuggable from one place. The wire format (`WatchManifest.swift`) is
-compiled into **both** targets so encode and decode can't drift — the same trick
-the Share Extension uses with `SharedInbox.swift`.
+renders its List from it and **prunes** any local file no longer listed), and
+sends each audio file with **`transferFile`** — the system's background
+file-transfer API for a watch and its companion. `transferFile` does **not**
+require the apps to be reachable or foregrounded: the OS queues each transfer and
+delivers it opportunistically, surviving the watch app being backgrounded or
+suspended, and resumes large files on its own. The Watch folder shows real
+byte-level progress from each transfer's `progress`. The watch sends a small
+`clearAll` message back when you clear it, and mirrors each sync step to the
+phone's **Log** tab (`⌚`-prefixed) so the whole exchange is debuggable from one
+place. The wire format (`WatchManifest.swift`) is compiled into **both** targets
+so encode and decode can't drift — the same trick the Share Extension uses with
+`SharedInbox.swift`.
+
+> **Simulator note:** `transferFile` is reliable on a real iPhone + Apple Watch
+> pair, but background file transfers are flaky on paired **Simulators** (the
+> manifest still arrives, so tracks list but their files may never land). Test
+> file delivery on real hardware.
 
 ### Watch source layout (`OfflineListenWatch/`)
 

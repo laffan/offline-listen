@@ -10,8 +10,6 @@ import WatchConnectivity
 @MainActor
 final class WatchConnectivityManager: NSObject, ObservableObject {
     private let store: WatchLibraryStore
-    /// Open handles for files currently arriving as chunk streams, keyed by name.
-    private var partials: [String: FileHandle] = [:]
 
     init(store: WatchLibraryStore) {
         self.store = store
@@ -64,46 +62,6 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
         let playlists = Set(manifest.tracks.compactMap { $0.folderName }).count
         forwardLog("Applied manifest: \(manifest.tracks.count) track(s), \(present) file(s) present, \(playlists) playlist(s).")
     }
-
-    /// Reassembles a chunk of a streamed audio file to a `.part` file, moving it
-    /// into place on the final chunk. Replies so the phone sends the next chunk.
-    fileprivate func receiveChunk(_ message: [String: Any], reply: ([String: Any]) -> Void) {
-        guard let name = message[WatchSyncKeys.fxName] as? String,
-              let index = message[WatchSyncKeys.fxIndex] as? Int,
-              let total = message[WatchSyncKeys.fxTotal] as? Int,
-              let data = message[WatchSyncKeys.fxData] as? Data else {
-            reply(["ok": false])
-            return
-        }
-
-        let partURL = WatchPaths.documents.appendingPathComponent(name + ".part")
-        if index == 0 {
-            try? partials[name]?.close()
-            try? FileManager.default.removeItem(at: partURL)
-            FileManager.default.createFile(atPath: partURL.path, contents: nil)
-            partials[name] = try? FileHandle(forWritingTo: partURL)
-        }
-
-        if let handle = partials[name] {
-            do {
-                try handle.seekToEnd()
-                try handle.write(contentsOf: data)
-            } catch {
-                forwardLog("Error writing \(name) chunk \(index + 1)/\(total): \(error.localizedDescription)")
-            }
-        }
-
-        if index == total - 1 {
-            try? partials[name]?.close()
-            partials[name] = nil
-            let destination = WatchPaths.documents.appendingPathComponent(name)
-            try? FileManager.default.removeItem(at: destination)
-            try? FileManager.default.moveItem(at: partURL, to: destination)
-            forwardLog("Received \(name) (\(total) chunk(s)).")
-            store.objectWillChange.send()
-        }
-        reply(["ok": true])
-    }
 }
 
 extension WatchConnectivityManager: WCSessionDelegate {
@@ -124,12 +82,6 @@ extension WatchConnectivityManager: WCSessionDelegate {
     nonisolated func session(_ session: WCSession,
                              didReceiveApplicationContext applicationContext: [String: Any]) {
         Task { @MainActor in self.applyManifest(from: applicationContext) }
-    }
-
-    nonisolated func session(_ session: WCSession,
-                             didReceiveMessage message: [String: Any],
-                             replyHandler: @escaping ([String: Any]) -> Void) {
-        Task { @MainActor in self.receiveChunk(message, reply: replyHandler) }
     }
 
     nonisolated func session(_ session: WCSession, didReceive file: WCSessionFile) {
