@@ -21,14 +21,19 @@ Three screens (tabs):
 
    **Playlists.** Paste a **YouTube playlist** link — either the dedicated
    `…/playlist?list=…` page or a `watch?v=…&list=…` link opened from inside a
-   playlist — and the app resolves its entries, creates a **folder named after
-   the playlist**, and queues every entry into it (in playlist order, using the
-   same Audio/Video mode). A playlist row sits in the queue while it resolves,
-   then reports how many downloads it spawned. Auto-generated **mixes/radios**
-   (`RD…` list ids) and the auth-only **Watch Later** / **Liked** lists are
-   treated as ordinary single-video links, not playlists. Resolving the entry
-   list uses the on-device yt-dlp module, so — like chapter capture — it works
-   only once that module has been fetched by a prior download.
+   playlist — and the app resolves its entries and shows a **selection popup**
+   listing every video. Everything is checked by default, so **Download** grabs
+   the whole list in one tap; or check off just the ones you want (a
+   **Select All / Deselect All** toggle is in the header). Confirming creates a
+   **folder named after the playlist** and queues the chosen entries into it (in
+   playlist order, using the same Audio/Video mode); cancelling — or dismissing
+   the popup — downloads nothing. A playlist row sits in the queue while it
+   resolves and while the popup is open, then reports how many downloads it
+   spawned. Auto-generated **mixes/radios** (`RD…` list ids) and the auth-only
+   **Watch Later** / **Liked** lists are treated as ordinary single-video links,
+   not playlists. Resolving the entry list uses the on-device yt-dlp module, so —
+   like chapter capture — it works only once that module has been fetched by a
+   prior download.
 2. **Library** — downloaded tracks; tap to play. A **filter** (All / Music /
    Podcasts / Video) sits directly beneath the **Tracks** header. Swipe **left**
    for Delete/Share/Archive (and bulk versions via **Select**); swipe **right**

@@ -8,12 +8,22 @@ import YoutubeDL
 import PythonKit
 #endif
 
+/// One entry of a resolved playlist, shown in the selection popup before
+/// downloading.
+struct PlaylistEntry: Identifiable, Hashable {
+    let id = UUID()
+    /// The entry's title (falls back to a numbered placeholder when missing).
+    let title: String
+    /// The downloadable URL for this entry.
+    let url: String
+}
+
 /// A playlist resolved into the individual entries we can download.
 struct ResolvedPlaylist {
     /// The playlist's own title — used to name the folder its tracks land in.
     let title: String
-    /// One downloadable URL per entry, in playlist order.
-    let entryURLs: [String]
+    /// The entries, in playlist order.
+    let entries: [PlaylistEntry]
 }
 
 /// Decides whether a pasted link points at a playlist (so we should expand it
@@ -89,18 +99,20 @@ enum PlaylistResolver {
             let rawTitle = String(info.get("title")) ?? ""
             let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
 
-            var urls: [String] = []
+            var entries: [PlaylistEntry] = []
             for entry in entriesObj {
                 if entry == Python.None { continue }
                 guard let entryURL = entryURL(from: entry) else { continue }
-                urls.append(entryURL)
+                let rawEntryTitle = (String(entry.get("title")) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let entryTitle = rawEntryTitle.isEmpty ? "Item \(entries.count + 1)" : rawEntryTitle
+                entries.append(PlaylistEntry(title: entryTitle, url: entryURL))
             }
-            guard !urls.isEmpty else {
+            guard !entries.isEmpty else {
                 appLog("Playlist resolved to no playable entries.", level: .warning, category: category)
                 return nil
             }
-            appLog("Resolved playlist \"\(title)\" → \(urls.count) entries.", level: .success, category: category)
-            return ResolvedPlaylist(title: title.isEmpty ? "Playlist" : title, entryURLs: urls)
+            appLog("Resolved playlist \"\(title)\" → \(entries.count) entries.", level: .success, category: category)
+            return ResolvedPlaylist(title: title.isEmpty ? "Playlist" : title, entries: entries)
         } catch {
             appLog("Playlist resolution failed: \(error.localizedDescription)", level: .error, category: category)
             return nil

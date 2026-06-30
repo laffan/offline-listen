@@ -67,11 +67,61 @@ final class DownloadJob: ObservableObject, Identifiable {
     }
 }
 
+/// A resolved playlist awaiting the user's pick of which entries to download.
+/// Presented as a popup via `.sheet(item:)`; `decide` delivers the chosen
+/// entries back to the waiting download job (nil/empty means cancel).
+struct PendingPlaylist: Identifiable {
+    let id = UUID()
+    /// The playlist job this selection belongs to (so a cancel can match it up).
+    let jobID: UUID
+    let title: String
+    let entries: [PlaylistEntry]
+    let mode: DownloadMode
+    let decide: ([PlaylistEntry]?) -> Void
+}
+
+/// Thread-safe one-shot bridge between the playlist popup and the suspended
+/// download job: whichever of the popup's answer or the job's cancellation
+/// arrives first resumes the continuation; later calls are ignored.
+final class PlaylistDecisionBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<[PlaylistEntry]?, Never>?
+    private var resumed = false
+    private var pending: [PlaylistEntry]??
+
+    func attach(_ continuation: CheckedContinuation<[PlaylistEntry]?, Never>) {
+        lock.lock(); defer { lock.unlock() }
+        if resumed { return }
+        if let pending {
+            resumed = true
+            continuation.resume(returning: pending)
+        } else {
+            self.continuation = continuation
+        }
+    }
+
+    func resume(_ value: [PlaylistEntry]?) {
+        lock.lock(); defer { lock.unlock() }
+        guard !resumed else { return }
+        if let continuation {
+            resumed = true
+            continuation.resume(returning: value)
+            self.continuation = nil
+        } else {
+            // Answer arrived before `attach`; hand it over when attach runs.
+            pending = .some(value)
+        }
+    }
+}
+
 /// Owns the download queue and runs jobs one at a time:
 /// URL → extract audio (yt-dlp) → convert/save → add to library.
 @MainActor
 final class DownloadManager: ObservableObject {
     @Published private(set) var jobs: [DownloadJob] = []
+    /// A resolved playlist waiting for the user to choose entries (drives the
+    /// selection popup). Settable so the popup binding can clear it on dismiss.
+    @Published var pendingPlaylist: PendingPlaylist?
 
     private let library: LibraryStore
     private let extractor: MediaExtractor
@@ -304,10 +354,11 @@ final class DownloadManager: ObservableObject {
     }
 
     /// Expands a playlist job: resolves the entries (running serially in the
-    /// queue so its yt-dlp call never overlaps another extraction), creates or
-    /// reuses a folder named after the playlist, and enqueues one download per
-    /// entry filed into that folder. If resolution yields nothing usable, the
-    /// link falls back to a single ordinary download.
+    /// queue so its yt-dlp call never overlaps another extraction), asks the user
+    /// which entries to download via a selection popup, then creates or reuses a
+    /// folder named after the playlist and enqueues one download per chosen entry
+    /// filed into that folder. If resolution yields nothing usable, the link
+    /// falls back to a single ordinary download.
     private func runPlaylist(_ job: DownloadJob, url: URL) async {
         appLog("Resolving playlist: \(job.url)", category: "Queue")
         job.state = .extracting
@@ -326,14 +377,52 @@ final class DownloadManager: ObservableObject {
             return
         }
 
-        let folder = folderForPlaylist(named: playlist.title)
         job.title = playlist.title
-        for entry in playlist.entryURLs {
-            enqueue(urlString: entry, mode: job.mode, folderID: folder.id)
+
+        // Ask the user which entries to grab. Blocks the queue while the popup is
+        // open — intentional, since concurrent yt-dlp work risks a crash and the
+        // user is right there having just pasted the link.
+        let chosen = await requestPlaylistSelection(playlist, mode: job.mode, jobID: job.id)
+        if pendingPlaylist?.jobID == job.id { pendingPlaylist = nil }
+
+        guard let chosen, !chosen.isEmpty else {
+            job.state = .cancelled
+            appLog("Playlist selection cancelled — nothing downloaded.", level: .warning, category: "Queue")
+            return
+        }
+
+        let folder = folderForPlaylist(named: playlist.title)
+        for entry in chosen {
+            enqueue(urlString: entry.url, mode: job.mode, folderID: folder.id)
         }
         job.state = .finished
-        appLog("Playlist \"\(playlist.title)\" → queued \(playlist.entryURLs.count) download(s) into a folder.",
+        appLog("Playlist \"\(playlist.title)\" → queued \(chosen.count) of \(playlist.entries.count) download(s) into a folder.",
                level: .success, category: "Queue")
+    }
+
+    /// Publishes the resolved playlist for the UI to present as a selection popup
+    /// and suspends until the user decides. Returns the chosen entries, or nil
+    /// when cancelled (popup dismissed, or the job itself cancelled). The
+    /// continuation is resumed exactly once via `PlaylistDecisionBox`, whether the
+    /// answer arrives from the popup or from task cancellation.
+    private func requestPlaylistSelection(_ playlist: ResolvedPlaylist,
+                                          mode: DownloadMode,
+                                          jobID: UUID) async -> [PlaylistEntry]? {
+        let box = PlaylistDecisionBox()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (cont: CheckedContinuation<[PlaylistEntry]?, Never>) in
+                box.attach(cont)
+                pendingPlaylist = PendingPlaylist(
+                    jobID: jobID,
+                    title: playlist.title,
+                    entries: playlist.entries,
+                    mode: mode
+                ) { decision in box.resume(decision) }
+                if Task.isCancelled { box.resume(nil) }
+            }
+        } onCancel: {
+            box.resume(nil)
+        }
     }
 
     /// Returns an existing active folder with this name (so re-downloading a
