@@ -18,7 +18,8 @@ struct OfflineListenApp: App {
         _aiSettings = StateObject(wrappedValue: aiSettings)
         _aiOrganizer = StateObject(wrappedValue: aiOrganizer)
         _downloads = StateObject(wrappedValue: DownloadManager(library: library, aiOrganizer: aiOrganizer))
-        _playback = StateObject(wrappedValue: PlaybackManager(library: library))
+        let playback = PlaybackManager(library: library)
+        _playback = StateObject(wrappedValue: playback)
 
         // The watch's "Clear all Tracks" empties the phone's Watch folder to match.
         WatchSync.shared.onClearAll = { [weak library] in library?.clearAllFromWatch() }
@@ -27,6 +28,19 @@ struct OfflineListenApp: App {
         WatchSync.shared.onReady = { [weak library] in library?.syncWatch() }
         // A podcast playhead update from the watch keeps the phone in sync.
         WatchSync.shared.onPosition = { [weak library] id, pos in library?.applyWatchPosition(id, pos) }
+        // The watch acting as a remote: mirror the phone's now-playing to it, and
+        // run the transport commands it sends back.
+        playback.onNowPlayingChange = { state in WatchSync.shared.sendNowPlaying(state) }
+        WatchSync.shared.onRemoteCommand = { [weak playback] command in
+            switch command {
+            case RemoteCommand.togglePlayPause: playback?.togglePlayPause()
+            case RemoteCommand.next: playback?.next()
+            case RemoteCommand.previous: playback?.previous()
+            case RemoteCommand.skipForward: playback?.skipForward()
+            case RemoteCommand.skipBackward: playback?.skipBackward()
+            default: break
+            }
+        }
         // Best-effort immediate push (no-ops until the session activates).
         library.syncWatch()
     }

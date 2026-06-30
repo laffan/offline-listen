@@ -14,8 +14,20 @@ final class WatchPlaybackManager: NSObject, ObservableObject {
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
 
+    /// What the **phone** is currently playing, when it's playing. Drives the
+    /// Listen pane's "Controlling iPhone" remote mode.
+    @Published var remote: RemoteNowPlaying?
+
+    /// Sends a `RemoteCommand` to the phone; wired to the connectivity bridge.
+    var sendRemoteCommand: ((String) -> Void)?
+
+    /// Show the remote control when the phone is playing and the watch isn't
+    /// playing its own audio. Local playback always takes precedence.
+    var showsRemote: Bool { remote != nil && !isPlaying }
+
     private let player = AVPlayer()
     private let store: WatchLibraryStore
+    private var remoteTicker: Timer?
 
     /// App playback volume (0...1), driven by the Digital Crown on the Listen pane.
     private(set) var currentVolume: Float = 1.0
@@ -83,6 +95,53 @@ final class WatchPlaybackManager: NSObject, ObservableObject {
 
     func skipForward(_ seconds: Double = 30) { seek(to: currentTime + seconds) }
     func skipBackward(_ seconds: Double = 15) { seek(to: currentTime - seconds) }
+
+    // MARK: - Remote control (phone now-playing)
+
+    /// Applies a now-playing snapshot from the phone (or `nil` when it stops). The
+    /// watch advances the playhead locally between snapshots while it's playing.
+    func applyRemote(_ state: RemoteNowPlaying?) {
+        remote = state
+        if let state, state.isPlaying {
+            startRemoteTicker()
+        } else {
+            stopRemoteTicker()
+        }
+    }
+
+    /// Sends a transport command to the phone, optimistically flipping play/pause
+    /// so the button responds instantly (the phone's next snapshot confirms it).
+    func remoteTogglePlayPause() {
+        if var state = remote {
+            state.isPlaying.toggle()
+            applyRemote(state)
+        }
+        sendRemoteCommand?(RemoteCommand.togglePlayPause)
+    }
+
+    func remoteNext() { sendRemoteCommand?(RemoteCommand.next) }
+    func remotePrevious() { sendRemoteCommand?(RemoteCommand.previous) }
+    func remoteSkipForward() { sendRemoteCommand?(RemoteCommand.skipForward) }
+    func remoteSkipBackward() { sendRemoteCommand?(RemoteCommand.skipBackward) }
+
+    private func startRemoteTicker() {
+        remoteTicker?.invalidate()
+        remoteTicker = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                // Don't churn published state while local playback is on screen.
+                guard let self, !self.isPlaying,
+                      var state = self.remote, state.isPlaying else { return }
+                let cap = state.duration > 0 ? state.duration : state.elapsed + 0.5
+                state.elapsed = min(state.elapsed + 0.5, cap)
+                self.remote = state
+            }
+        }
+    }
+
+    private func stopRemoteTicker() {
+        remoteTicker?.invalidate()
+        remoteTicker = nil
+    }
 
     func seek(to time: Double) {
         let upperBound = duration > 0 ? duration : time

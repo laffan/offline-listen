@@ -74,6 +74,34 @@ struct WatchManifest: Codable {
     var tracks: [WatchManifestTrack]
 }
 
+/// A snapshot of what the **phone** is currently playing, pushed to the watch so
+/// the watch's Listen pane can repurpose itself into a remote control
+/// ("Controlling iPhone"). Sent on every meaningful phone-side transition (start,
+/// pause/resume, seek, track change); the watch interpolates the playhead locally
+/// between snapshots. A `nil` snapshot (signalled by `WatchSyncKeys.remoteStop`)
+/// means the phone isn't playing anything, so the watch drops out of remote mode.
+struct RemoteNowPlaying: Codable, Equatable {
+    var trackID: UUID
+    var title: String
+    var artist: String
+    var duration: Double
+    var elapsed: Double
+    var isPlaying: Bool
+    /// True for a podcast — the watch then shows the 15s/30s jump transport
+    /// (mirroring the phone's lock screen) instead of previous/next.
+    var isPodcast: Bool
+}
+
+/// Transport commands the watch sends back to the phone while acting as its
+/// remote. String-valued so the watch target needn't share any phone types.
+enum RemoteCommand {
+    static let togglePlayPause = "togglePlayPause"
+    static let next = "next"
+    static let previous = "previous"
+    static let skipForward = "skipForward"
+    static let skipBackward = "skipBackward"
+}
+
 /// Keys and command values used across the WatchConnectivity channel.
 enum WatchSyncKeys {
     /// Application-context key whose value is a JSON-encoded `WatchManifest`.
@@ -92,6 +120,13 @@ enum WatchSyncKeys {
     /// Position-sync userInfo keys (either direction): a podcast playhead update.
     static let positionID = "posID"     // track id (UUID string)
     static let positionValue = "posValue" // seconds (Double)
+
+    // Remote-control keys. While the phone is playing, it pushes its now-playing
+    // snapshot to the watch, which repurposes its Listen pane into a remote and
+    // sends transport commands back.
+    static let remoteState = "remoteState"   // phone → watch: JSON-encoded RemoteNowPlaying
+    static let remoteStop = "remoteStop"     // phone → watch: phone playback ended (value: true)
+    static let remoteCommand = "remoteCmd"   // watch → phone: a RemoteCommand string
 
     // Resumable chunked-stream keys. `transferFile` is the primary path, but on
     // device pairs where the system file-transfer channel never establishes

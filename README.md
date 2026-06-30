@@ -137,7 +137,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `*View.swift` | The four SwiftUI screens (Download, Library, Player, Settings — which embeds the Log). |
 | `FolderView.swift` | Folder detail (tap-to-play, reorder) and Inbox screens. |
 | `WatchFolderView.swift` | The phone's **Watch** virtual-folder screen (manage what's been sent to the watch). |
-| `WatchManifest.swift` | Wire format shared by the iPhone and watch targets (the sync manifest + WC keys). |
+| `WatchManifest.swift` | Wire format shared by the iPhone and watch targets (the sync manifest, the remote-control `RemoteNowPlaying`/`RemoteCommand` types, + WC keys). |
 | `WatchSync.swift` | Phone-side WatchConnectivity bridge: pushes the manifest + audio files, handles the watch's "Clear all". |
 
 The companion watch app lives under `OfflineListenWatch/` (see
@@ -166,6 +166,15 @@ It's **audio only** (video isn't sent to the watch).
    adjusts volume** while this pane is showing. Podcasts resume where you left
    off, and their playhead **syncs both ways** with the phone — listen on one,
    pick up where you stopped on the other.
+
+   **Remote for the phone.** When the **phone** is playing a track and the watch
+   isn't playing its own audio, this same pane repurposes itself into a remote
+   control: a **"Controlling iPhone"** banner above the phone's now-playing
+   title/artist and progress, with the identical transport buttons now driving
+   the phone instead of the watch. The progress bar advances on the watch between
+   updates, play/pause responds instantly, and podcasts get the 15s/30s jumps
+   just as on the lock screen. The moment you start a track from the watch's own
+   List, local playback takes over and the remote steps aside.
 3. **Settings** — an **Output** preference (**Bluetooth** / **Speaker**) and a
    **Clear all Tracks** button (with a confirmation step) that deletes every
    saved file on the watch. (watchOS routes audio at the system level — Bluetooth
@@ -206,7 +215,16 @@ files travel one of two ways:
   the resumable stream delivers regardless, as long as the watch app is open.
 
 Whichever path lands the whole file first wins; the other is cancelled. The Watch
-folder shows real byte-level progress. The watch sends a small `clearAll` message
+folder shows real byte-level progress.
+
+The same channel carries the **remote-control** traffic: while the phone is
+playing, it pushes a small now-playing snapshot (`RemoteNowPlaying`) to the watch
+on every transition (start / pause / resume / seek / track change), throttling
+the playhead-only updates since the watch interpolates locally; the watch sends
+back a transport command (`RemoteCommand`) when you tap a button on the remote.
+Both ride the live message channel and require no extra setup.
+
+The watch sends a small `clearAll` message
 back when you clear it, and mirrors each sync step to the phone's **Log** tab
 (`⌚`-prefixed) so the whole exchange is debuggable from one place. The wire format
 (`WatchManifest.swift`) is compiled into **both** targets so encode and decode
@@ -224,9 +242,9 @@ can't drift — the same trick the Share Extension uses with `SharedInbox.swift`
 | `WatchModels.swift` | `WatchTrack` + paths (the watch's own lightweight library). |
 | `WatchLibraryStore.swift` | Persists `watch-library.json`; applies the manifest, prunes/ingests files. |
 | `WatchConnectivityManager.swift` | Watch-side WC delegate: receives the manifest + files, sends "Clear all". |
-| `WatchPlaybackManager.swift` | `AVPlayer` audio engine + Now Playing (the iPhone player's core, audio only). |
+| `WatchPlaybackManager.swift` | `AVPlayer` audio engine + Now Playing (the iPhone player's core, audio only); also holds the phone's now-playing for remote mode. |
 | `WatchRootView.swift` | The three swipeable panes. |
-| `WatchListView.swift` / `WatchListenView.swift` / `WatchSettingsView.swift` | The List / Listen / Settings panes. |
+| `WatchListView.swift` / `WatchListenView.swift` / `WatchSettingsView.swift` | The List / Listen / Settings panes. The Listen pane doubles as the phone **remote** when the phone is playing. |
 
 ## Share from other apps
 

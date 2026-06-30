@@ -36,6 +36,11 @@ final class PlaybackManager: NSObject, ObservableObject {
     /// Exposed so the player screen can render video for video tracks.
     let player = AVPlayer()
 
+    /// Called whenever now-playing state changes, with a snapshot the watch can
+    /// mirror as a remote control (or `nil` when nothing is playing). Wired to
+    /// `WatchSync` in the app entry; throttling lives there.
+    var onNowPlayingChange: ((RemoteNowPlaying?) -> Void)?
+
     private var queue: [Track] = []
     private var index = 0
     private var ticker: Timer?
@@ -370,5 +375,24 @@ final class PlaybackManager: NSObject, ObservableObject {
         // present the Now Playing controls on the lock screen; without it the
         // controls can fail to surface or get stuck out of sync with playback.
         center.playbackState = isPlaying ? .playing : .paused
+        broadcastRemoteState()
+    }
+
+    /// Pushes the current now-playing snapshot to the watch (so it can act as a
+    /// remote). Driven off `updateNowPlaying`, which fires on every transition and
+    /// on the ticker; `WatchSync` throttles the actual sends.
+    private func broadcastRemoteState() {
+        guard let track = currentTrack else {
+            onNowPlayingChange?(nil)
+            return
+        }
+        onNowPlayingChange?(RemoteNowPlaying(
+            trackID: track.id,
+            title: track.title,
+            artist: track.artist,
+            duration: duration,
+            elapsed: currentTime,
+            isPlaying: isPlaying,
+            isPodcast: track.playbackCategory == .podcast))
     }
 }

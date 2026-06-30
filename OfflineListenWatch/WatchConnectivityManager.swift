@@ -11,10 +11,23 @@ import WatchConnectivity
 final class WatchConnectivityManager: NSObject, ObservableObject {
     private let store: WatchLibraryStore
 
+    /// Invoked with the phone's now-playing snapshot (or `nil` when the phone
+    /// stops), so the Listen pane can act as a remote. Wired in the app entry.
+    var onRemoteState: ((RemoteNowPlaying?) -> Void)?
+
     init(store: WatchLibraryStore) {
         self.store = store
         super.init()
         activate()
+    }
+
+    /// Sends a transport command to the phone while the watch is its remote. Only
+    /// when reachable — a queued command would fire confusingly late.
+    func sendRemoteCommand(_ command: String) {
+        guard WCSession.isSupported() else { return }
+        let session = WCSession.default
+        guard session.isReachable else { return }
+        session.sendMessage([WatchSyncKeys.remoteCommand: command], replyHandler: nil, errorHandler: nil)
     }
 
     private func activate() {
@@ -72,6 +85,22 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
         }.count
         let playlists = Set(manifest.tracks.compactMap { $0.folderName }).count
         forwardLog("Applied manifest: \(manifest.tracks.count) track(s), \(present) file(s) present, \(playlists) playlist(s).")
+    }
+
+    /// Decodes a phone now-playing payload (remote-control state) and forwards it.
+    /// Returns true if the payload was a remote-state message.
+    @discardableResult
+    fileprivate func applyRemotePayload(_ payload: [String: Any]) -> Bool {
+        if payload[WatchSyncKeys.remoteStop] as? Bool == true {
+            onRemoteState?(nil)
+            return true
+        }
+        if let data = payload[WatchSyncKeys.remoteState] as? Data,
+           let state = try? JSONDecoder().decode(RemoteNowPlaying.self, from: data) {
+            onRemoteState?(state)
+            return true
+        }
+        return false
     }
 
     private func byteSize(of url: URL) -> Int {
@@ -175,11 +204,21 @@ extension WatchConnectivityManager: WCSessionDelegate {
         Task { @MainActor in self.handleStreamMessage(message, reply: replyHandler) }
     }
 
+    // Remote-control snapshots arrive without a reply handler (live channel).
+    nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
+        Task { @MainActor in self.applyRemotePayload(message) }
+    }
+
     nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any]) {
-        guard let idString = userInfo[WatchSyncKeys.positionID] as? String,
-              let id = UUID(uuidString: idString),
-              let pos = userInfo[WatchSyncKeys.positionValue] as? Double else { return }
-        Task { @MainActor in self.store.applyRemotePosition(id, pos) }
+        Task { @MainActor in
+            // A queued remote snapshot (sent while the watch was unreachable).
+            if self.applyRemotePayload(userInfo) { return }
+            if let idString = userInfo[WatchSyncKeys.positionID] as? String,
+               let id = UUID(uuidString: idString),
+               let pos = userInfo[WatchSyncKeys.positionValue] as? Double {
+                self.store.applyRemotePosition(id, pos)
+            }
+        }
     }
 
     nonisolated func session(_ session: WCSession, didReceive file: WCSessionFile) {

@@ -27,6 +27,9 @@ final class WatchSync: NSObject, ObservableObject {
     /// Invoked with a podcast playhead update received from the watch; wired to
     /// `LibraryStore.applyWatchPosition`.
     var onPosition: ((UUID, Double) -> Void)?
+    /// Invoked with a `RemoteCommand` string sent by the watch while it acts as a
+    /// remote; wired to `PlaybackManager` transport in the app entry.
+    var onRemoteCommand: ((String) -> Void)?
 
     /// File names confirmed present on the watch (persisted across launches).
     @Published private(set) var deliveredFileNames: Set<String> = []
@@ -77,7 +80,54 @@ final class WatchSync: NSObject, ObservableObject {
         #endif
     }
 
+    // MARK: - Remote now-playing broadcast
+
+    /// The last snapshot we sent, so we can detect material changes (vs. a
+    /// playhead-only drift) and re-send it when the watch becomes reachable.
+    private var lastRemoteState: RemoteNowPlaying?
+    private var lastRemoteSentAt = Date.distantPast
+
+    /// Pushes the phone's now-playing snapshot to the watch so it can act as a
+    /// remote. Material changes (track, play/pause, start/stop) always go out;
+    /// playhead-only drift is throttled, since the watch interpolates locally.
+    func sendNowPlaying(_ state: RemoteNowPlaying?) {
+        #if canImport(WatchConnectivity)
+        guard isOperational else { return }
+        let material = state?.trackID != lastRemoteState?.trackID
+            || state?.isPlaying != lastRemoteState?.isPlaying
+            || (state == nil) != (lastRemoteState == nil)
+        guard material || Date().timeIntervalSince(lastRemoteSentAt) > 8 else { return }
+        lastRemoteState = state
+        lastRemoteSentAt = Date()
+        deliverRemoteState(state, material: material)
+        #endif
+    }
+
     #if canImport(WatchConnectivity)
+    /// Sends the snapshot over the live channel when reachable, otherwise queues
+    /// material changes so the watch still learns of a play/pause/stop it missed.
+    private func deliverRemoteState(_ state: RemoteNowPlaying?, material: Bool) {
+        let payload: [String: Any]
+        if let state, let data = try? JSONEncoder().encode(state) {
+            payload = [WatchSyncKeys.remoteState: data]
+        } else {
+            payload = [WatchSyncKeys.remoteStop: true]
+        }
+        if session.isReachable {
+            session.sendMessage(payload, replyHandler: nil, errorHandler: { _ in })
+        } else if material {
+            session.transferUserInfo(payload)
+        }
+    }
+
+    /// Re-sends the latest snapshot (ignoring the throttle) when the watch comes
+    /// back into range, so a freshly-opened watch app reflects current playback.
+    private func resendNowPlaying() {
+        guard isOperational, session.isReachable else { return }
+        lastRemoteSentAt = Date()
+        deliverRemoteState(lastRemoteState, material: true)
+    }
+
     private var session: WCSession { WCSession.default }
 
     private var stateDescription: String {
@@ -345,7 +395,10 @@ extension WatchSync: WCSessionDelegate {
 
     nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
         appLog("Watch reachability changed (reachable=\(session.isReachable)).", category: "Watch")
-        Task { @MainActor in self.onReady?() }
+        Task { @MainActor in
+            self.onReady?()
+            self.resendNowPlaying()
+        }
     }
 
     nonisolated func session(_ session: WCSession, didFinish fileTransfer: WCSessionFileTransfer, error: Error?) {
@@ -381,6 +434,9 @@ extension WatchSync: WCSessionDelegate {
            let id = UUID(uuidString: idString),
            let pos = payload[WatchSyncKeys.positionValue] as? Double {
             Task { @MainActor in self.onPosition?(id, pos) }
+        }
+        if let command = payload[WatchSyncKeys.remoteCommand] as? String {
+            Task { @MainActor in self.onRemoteCommand?(command) }
         }
     }
 }
