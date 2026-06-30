@@ -8,6 +8,11 @@ struct WatchListView: View {
 
     let onPlay: () -> Void
 
+    /// Flipped once just after the pane appears to force a fresh layout pass:
+    /// in a paged TabView the List's first render can tuck the top row under the
+    /// nav title until it's re-laid-out (what swiping away and back did by hand).
+    @State private var laidOut = false
+
     var body: some View {
         NavigationStack {
             // Always a List (with the title attached to it), rather than swapping
@@ -56,6 +61,12 @@ struct WatchListView: View {
                     )
                 }
             }
+            .id(laidOut)
+        }
+        .task {
+            guard !laidOut else { return }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            laidOut = true
         }
     }
 }
@@ -87,8 +98,8 @@ struct WatchPlaylistView: View {
     }
 }
 
-/// A tappable track row. While the audio file is still transferring it shows a
-/// "Syncing…" state and isn't playable yet.
+/// A tappable track row. While the audio file is still transferring it shows its
+/// sync percent on the right and isn't playable yet.
 struct WatchTrackRow: View {
     let track: WatchTrack
     let isCurrent: Bool
@@ -113,12 +124,7 @@ struct WatchTrackRow: View {
                     Text(track.title)
                         .font(.body)
                         .lineLimit(2)
-                    if !track.isAvailable {
-                        Text("Syncing… \(syncPercent)%")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    } else if hasArtist {
+                    if hasArtist {
                         Text(track.artist)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
