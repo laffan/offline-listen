@@ -23,7 +23,7 @@ struct WatchListView: View {
                             Section("Playlists") {
                                 ForEach(library.folders) { folder in
                                     NavigationLink {
-                                        WatchPlaylistView(folder: folder, onPlay: onPlay)
+                                        WatchPlaylistView(folderName: folder.name, onPlay: onPlay)
                                     } label: {
                                         HStack {
                                             Image(systemName: "folder.fill")
@@ -57,23 +57,30 @@ struct WatchListView: View {
     }
 }
 
-/// A playlist's tracks on the watch. Plays straight through in order.
+/// A playlist's tracks on the watch. Reads from the store by folder name (rather
+/// than a captured snapshot) so it refreshes live as files arrive or the phone
+/// removes tracks. Plays straight through in order.
 struct WatchPlaylistView: View {
+    @EnvironmentObject private var library: WatchLibraryStore
     @EnvironmentObject private var playback: WatchPlaybackManager
-    let folder: WatchLibraryStore.WatchFolder
+    let folderName: String
     let onPlay: () -> Void
+
+    private var tracks: [WatchTrack] {
+        library.folders.first { $0.name == folderName }?.tracks ?? []
+    }
 
     var body: some View {
         List {
-            ForEach(folder.tracks) { track in
+            ForEach(tracks) { track in
                 WatchTrackRow(track: track,
                               isCurrent: playback.currentTrack?.id == track.id) {
-                    playback.play(track, in: folder.tracks)
+                    playback.play(track, in: tracks)
                     onPlay()
                 }
             }
         }
-        .navigationTitle(folder.name)
+        .navigationTitle(folderName)
     }
 }
 

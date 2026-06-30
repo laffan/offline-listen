@@ -46,6 +46,10 @@ enum WatchSyncKeys {
     /// phone empties its Watch folder to match.
     static let clearAllCommand = "clearAll"
 
+    /// userInfo key carrying a watch-side log line for the phone to surface in
+    /// its Log tab, so the whole sync is debuggable from one place.
+    static let log = "log"
+
     // Per-file `transferFile` metadata keys (a self-describing copy of the
     // manifest fields, so a file can be ingested even before/without a manifest).
     static let metaID = "id"
