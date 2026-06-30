@@ -119,6 +119,13 @@ final class WatchSync: NSObject, ObservableObject {
             appLog("Failed to send manifest: \(error.localizedDescription)", level: .error, category: "Watch")
         }
 
+        // Cancel stale transfers left over from earlier runs (files no longer on
+        // the watch). These otherwise pile up in the queue and clog it.
+        for transfer in session.outstandingFileTransfers where !wantedNames.contains(fileName(of: transfer)) {
+            appLog("Cancelling stale transfer \(fileName(of: transfer)).", level: .warning, category: "Watch")
+            transfer.cancel()
+        }
+
         // Don't re-queue a file that's already mid-transfer.
         let outstanding = Set(session.outstandingFileTransfers.map { fileName(of: $0) })
         for track in tracks {
@@ -134,21 +141,51 @@ final class WatchSync: NSObject, ObservableObject {
             appLog("Queued transfer of \"\(track.title)\" (\(track.fileSizeKB) KB) to watch.", category: "Watch")
         }
 
-        let pending = session.outstandingFileTransfers.count
-        if pending > 0 {
-            appLog("\(pending) transfer(s) in progress; the system delivers them in the background.", category: "Watch")
+        if session.outstandingFileTransfers.isEmpty {
+            if wantedNames.subtracting(deliveredFileNames).isEmpty, !tracks.isEmpty {
+                appLog("Watch is up to date — \(tracks.count) track(s) delivered.", level: .success, category: "Watch")
+            }
+        } else {
+            logOutstanding("After queueing")
             startProgressTicker()
-        } else if wantedNames.subtracting(deliveredFileNames).isEmpty, !tracks.isEmpty {
-            appLog("Watch is up to date — \(tracks.count) track(s) delivered.", level: .success, category: "Watch")
         }
         #endif
     }
 
     #if canImport(WatchConnectivity)
+    /// One-line description of a transfer's live state.
+    private func describe(_ transfer: WCSessionFileTransfer) -> String {
+        let p = transfer.progress
+        let pct = p.fractionCompleted.isFinite ? Int(p.fractionCompleted * 100) : 0
+        return "\(fileName(of: transfer)) — transferring=\(transfer.isTransferring), \(pct)% (\(p.completedUnitCount)/\(p.totalUnitCount) bytes)"
+    }
+
+    /// Logs the full outstanding-transfer queue with per-file byte progress.
+    private func logOutstanding(_ context: String) {
+        let xs = session.outstandingFileTransfers
+        guard !xs.isEmpty else {
+            appLog("\(context): no outstanding transfers.", category: "Watch")
+            return
+        }
+        appLog("\(context): \(xs.count) outstanding transfer(s):", category: "Watch")
+        for transfer in xs {
+            appLog("  • \(describe(transfer))", category: "Watch")
+        }
+    }
+
+    // Stall detection: if the queue's total byte progress doesn't advance for a
+    // while, say so — on the Simulator `transferFile` frequently never delivers.
+    private var lastProgressBytes: Int64 = -1
+    private var lastProgressAt = Date()
+    private var stallWarned = false
+
     /// Polls the system's outstanding transfers for live progress while any run.
     private func startProgressTicker() {
         guard progressTimer == nil else { return }
-        progressTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+        lastProgressBytes = -1
+        lastProgressAt = Date()
+        stallWarned = false
+        progressTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.updateProgress() }
         }
         updateProgress()
@@ -163,10 +200,27 @@ final class WatchSync: NSObject, ObservableObject {
             return
         }
         var map: [String: Double] = [:]
+        var totalBytes: Int64 = 0
         for transfer in outstanding {
             map[fileName(of: transfer)] = transfer.progress.fractionCompleted
+            totalBytes += transfer.progress.completedUnitCount
         }
         activeTransfers = map
+
+        if totalBytes != lastProgressBytes {
+            if lastProgressBytes >= 0, totalBytes > lastProgressBytes {
+                appLog("Transfer progress: \(totalBytes) bytes delivered across \(outstanding.count) transfer(s).",
+                       level: .debug, category: "Watch")
+            }
+            lastProgressBytes = totalBytes
+            lastProgressAt = Date()
+            stallWarned = false
+        } else if !stallWarned, Date().timeIntervalSince(lastProgressAt) > 20 {
+            stallWarned = true
+            logOutstanding("Stalled (no byte progress in 20s)")
+            appLog("Transfers are queued but not progressing. `transferFile` often never delivers on the watchOS Simulator — try a real iPhone+Watch pair.",
+                   level: .warning, category: "Watch")
+        }
     }
     #endif
 }
@@ -179,10 +233,17 @@ extension WatchSync: WCSessionDelegate {
         if let error {
             appLog("Watch session activation error: \(error.localizedDescription)", level: .error, category: "Watch")
         } else {
-            appLog("Watch session activated (state \(activationState.rawValue)).", category: "Watch")
+            let pending = session.hasContentPending
+            let files = session.outstandingFileTransfers.count
+            appLog("Watch session activated (state \(activationState.rawValue), hasContentPending=\(pending), outstandingFiles=\(files)).",
+                   category: "Watch")
         }
         if activationState == .activated {
-            Task { @MainActor in self.onReady?() }
+            Task { @MainActor in
+                self.logOutstanding("At activation")
+                if !WCSession.default.outstandingFileTransfers.isEmpty { self.startProgressTicker() }
+                self.onReady?()
+            }
         }
     }
 
