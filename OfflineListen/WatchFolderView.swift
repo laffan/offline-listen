@@ -127,7 +127,7 @@ private struct WatchSyncBanner: View {
             if synced < total {
                 HStack(spacing: 10) {
                     Image(systemName: "applewatch.radiowaves.left.and.right")
-                        .foregroundStyle(.accentColor)
+                        .foregroundStyle(Color.accentColor)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Syncing \(synced) of \(total) to Watch…")
                             .font(.callout)
