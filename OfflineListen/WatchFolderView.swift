@@ -12,7 +12,6 @@ import SwiftUI
 struct WatchFolderView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var playback: PlaybackManager
-    @ObservedObject private var sync = WatchSync.shared
 
     let onPlay: () -> Void
 
@@ -35,6 +34,68 @@ struct WatchFolderView: View {
         let known = Set(library.folders.map { $0.id })
         return tracks.filter { $0.folderID == nil || !known.contains($0.folderID!) }
     }
+
+    var body: some View {
+        Group {
+            if tracks.isEmpty {
+                ContentUnavailableViewCompat(
+                    title: "Nothing on your Watch",
+                    systemImage: "applewatch",
+                    description: "Touch and hold a track or playlist and choose Send to Watch to listen offline on your Apple Watch."
+                )
+            } else {
+                List {
+                    WatchSyncBanner(tracks: tracks)
+                    ForEach(folderedTracks, id: \.folder.id) { entry in
+                        Section(entry.folder.name) {
+                            ForEach(entry.tracks) { track in
+                                row(for: track, queue: entry.tracks)
+                            }
+                        }
+                    }
+                    if !looseTracks.isEmpty {
+                        Section(folderedTracks.isEmpty ? "" : "Tracks") {
+                            ForEach(looseTracks) { track in
+                                row(for: track, queue: looseTracks)
+                            }
+                        }
+                    }
+                }
+                .listStyle(.plain)
+            }
+        }
+        .navigationTitle("Watch")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func row(for track: Track, queue: [Track]) -> some View {
+        TrackRow(
+            track: track,
+            isCurrent: playback.currentTrack?.id == track.id
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            playback.play(track, in: queue)
+            onPlay()
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Button {
+                library.removeFromWatch(track)
+            } label: {
+                Label("Remove from Watch", systemImage: "applewatch.slash")
+            }
+            .tint(.indigo)
+        }
+    }
+}
+
+/// The sync-progress banner at the top of the Watch folder. Observing
+/// `WatchSync` is isolated here so its frequent updates (every transfer chunk)
+/// re-render only this small row — not the parent `WatchFolderView`, whose
+/// re-rendering mid-navigation could double-push the screen.
+private struct WatchSyncBanner: View {
+    @ObservedObject private var sync = WatchSync.shared
+    let tracks: [Track]
 
     private var syncedCount: Int {
         tracks.filter { sync.deliveredFileNames.contains($0.fileName) }.count
@@ -60,40 +121,6 @@ struct WatchFolderView: View {
     }
 
     var body: some View {
-        Group {
-            if tracks.isEmpty {
-                ContentUnavailableViewCompat(
-                    title: "Nothing on your Watch",
-                    systemImage: "applewatch",
-                    description: "Touch and hold a track or playlist and choose Send to Watch to listen offline on your Apple Watch."
-                )
-            } else {
-                List {
-                    syncStatusSection
-                    ForEach(folderedTracks, id: \.folder.id) { entry in
-                        Section(entry.folder.name) {
-                            ForEach(entry.tracks) { track in
-                                row(for: track, queue: entry.tracks)
-                            }
-                        }
-                    }
-                    if !looseTracks.isEmpty {
-                        Section(folderedTracks.isEmpty ? "" : "Tracks") {
-                            ForEach(looseTracks) { track in
-                                row(for: track, queue: looseTracks)
-                            }
-                        }
-                    }
-                }
-                .listStyle(.plain)
-            }
-        }
-        .navigationTitle("Watch")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-
-    @ViewBuilder
-    private var syncStatusSection: some View {
         let total = tracks.count
         let synced = syncedCount
         Section {
@@ -120,26 +147,6 @@ struct WatchFolderView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
-        }
-    }
-
-    private func row(for track: Track, queue: [Track]) -> some View {
-        TrackRow(
-            track: track,
-            isCurrent: playback.currentTrack?.id == track.id
-        )
-        .contentShape(Rectangle())
-        .onTapGesture {
-            playback.play(track, in: queue)
-            onPlay()
-        }
-        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            Button {
-                library.removeFromWatch(track)
-            } label: {
-                Label("Remove from Watch", systemImage: "applewatch.slash")
-            }
-            .tint(.indigo)
         }
     }
 }
