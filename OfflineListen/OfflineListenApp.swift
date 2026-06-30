@@ -25,6 +25,8 @@ struct OfflineListenApp: App {
         // Once the WC session is ready (and whenever the watch state changes),
         // re-push the current set so the watch reconciles.
         WatchSync.shared.onReady = { [weak library] in library?.syncWatch() }
+        // A podcast playhead update from the watch keeps the phone in sync.
+        WatchSync.shared.onPosition = { [weak library] id, pos in library?.applyWatchPosition(id, pos) }
         // Best-effort immediate push (no-ops until the session activates).
         library.syncWatch()
     }

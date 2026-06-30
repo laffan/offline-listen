@@ -28,6 +28,45 @@ struct WatchManifestTrack: Codable, Identifiable, Hashable {
     var folderName: String?
     /// Position in the phone's watch set, so the watch can preserve order.
     var order: Int
+    /// Total audio file size in bytes, so the watch can show sync % from the size
+    /// of its in-progress `.part` file. 0 when unknown (older phone build).
+    var byteSize: Int
+    /// Saved podcast playhead (seconds) at sync time, for cold-start resume. Live
+    /// changes flow via position-sync messages. 0 for songs / unknown.
+    var lastPosition: Double
+
+    init(id: UUID, title: String, artist: String, fileName: String, duration: Double,
+         kindRaw: String, folderName: String?, order: Int, byteSize: Int = 0, lastPosition: Double = 0) {
+        self.id = id
+        self.title = title
+        self.artist = artist
+        self.fileName = fileName
+        self.duration = duration
+        self.kindRaw = kindRaw
+        self.folderName = folderName
+        self.order = order
+        self.byteSize = byteSize
+        self.lastPosition = lastPosition
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, artist, fileName, duration, kindRaw, folderName, order, byteSize, lastPosition
+    }
+
+    // Decode tolerant of older payloads missing the newer fields.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        artist = try c.decode(String.self, forKey: .artist)
+        fileName = try c.decode(String.self, forKey: .fileName)
+        duration = try c.decode(Double.self, forKey: .duration)
+        kindRaw = try c.decode(String.self, forKey: .kindRaw)
+        folderName = try c.decodeIfPresent(String.self, forKey: .folderName)
+        order = try c.decode(Int.self, forKey: .order)
+        byteSize = try c.decodeIfPresent(Int.self, forKey: .byteSize) ?? 0
+        lastPosition = try c.decodeIfPresent(Double.self, forKey: .lastPosition) ?? 0
+    }
 }
 
 /// The authoritative set of tracks the phone wants present on the watch.
@@ -49,6 +88,10 @@ enum WatchSyncKeys {
     /// userInfo key carrying a watch-side log line for the phone to surface in
     /// its Log tab, so the whole sync is debuggable from one place.
     static let log = "log"
+
+    /// Position-sync userInfo keys (either direction): a podcast playhead update.
+    static let positionID = "posID"     // track id (UUID string)
+    static let positionValue = "posValue" // seconds (Double)
 
     // Resumable chunked-stream keys. `transferFile` is the primary path, but on
     // device pairs where the system file-transfer channel never establishes

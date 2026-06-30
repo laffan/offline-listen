@@ -10,49 +10,52 @@ struct WatchListView: View {
 
     var body: some View {
         NavigationStack {
-            Group {
-                if library.tracks.isEmpty {
-                    ContentUnavailableCompat(
-                        title: "Nothing here yet",
-                        systemImage: "applewatch",
-                        description: "Send tracks from Offline Listen on your iPhone to listen offline."
-                    )
-                } else {
-                    List {
-                        if !library.folders.isEmpty {
-                            Section("Playlists") {
-                                ForEach(library.folders) { folder in
-                                    NavigationLink {
-                                        WatchPlaylistView(folderName: folder.name, onPlay: onPlay)
-                                    } label: {
-                                        HStack {
-                                            Image(systemName: "folder.fill")
-                                                .foregroundStyle(.secondary)
-                                            Text(folder.name).lineLimit(1)
-                                            Spacer()
-                                            Text("\(folder.tracks.count)")
-                                                .foregroundStyle(.secondary)
-                                                .monospacedDigit()
-                                        }
-                                    }
+            // Always a List (with the title attached to it), rather than swapping
+            // a List in/out of a Group — that swap left the first row tucked under
+            // the title until the pane was re-laid-out. The empty state is an
+            // overlay so the List still owns the scroll/title layout.
+            List {
+                if !library.folders.isEmpty {
+                    Section("Playlists") {
+                        ForEach(library.folders) { folder in
+                            NavigationLink {
+                                WatchPlaylistView(folderName: folder.name, onPlay: onPlay)
+                            } label: {
+                                HStack {
+                                    Image(systemName: "folder.fill")
+                                        .foregroundStyle(.secondary)
+                                    Text(folder.name).lineLimit(1)
+                                    Spacer()
+                                    Text("\(folder.tracks.count)")
+                                        .foregroundStyle(.secondary)
+                                        .monospacedDigit()
                                 }
                             }
                         }
-                        if !library.looseTracks.isEmpty {
-                            Section("Tracks") {
-                                ForEach(library.looseTracks) { track in
-                                    WatchTrackRow(track: track,
-                                                  isCurrent: playback.currentTrack?.id == track.id) {
-                                        playback.play(track, in: library.looseTracks)
-                                        onPlay()
-                                    }
-                                }
+                    }
+                }
+                if !library.looseTracks.isEmpty {
+                    Section("Tracks") {
+                        ForEach(library.looseTracks) { track in
+                            WatchTrackRow(track: track,
+                                          isCurrent: playback.currentTrack?.id == track.id) {
+                                playback.play(track, in: library.looseTracks)
+                                onPlay()
                             }
                         }
                     }
                 }
             }
             .navigationTitle("Library")
+            .overlay {
+                if library.tracks.isEmpty {
+                    ContentUnavailableCompat(
+                        title: "Nothing here yet",
+                        systemImage: "applewatch",
+                        description: "Send tracks from Offline Listen on your iPhone to listen offline."
+                    )
+                }
+            }
         }
     }
 }
@@ -99,6 +102,8 @@ struct WatchTrackRow: View {
         !track.artist.isEmpty && track.artist.lowercased() != "unknown"
     }
 
+    private var syncPercent: Int { Int((track.syncProgress * 100).rounded()) }
+
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 10) {
@@ -109,9 +114,10 @@ struct WatchTrackRow: View {
                         .font(.body)
                         .lineLimit(2)
                     if !track.isAvailable {
-                        Text("Syncing…")
+                        Text("Syncing… \(syncPercent)%")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
+                            .monospacedDigit()
                     } else if hasArtist {
                         Text(track.artist)
                             .font(.caption2)
@@ -121,8 +127,10 @@ struct WatchTrackRow: View {
                 }
                 Spacer()
                 if !track.isAvailable {
-                    Image(systemName: "arrow.down.circle.dotted")
+                    Text("\(syncPercent)%")
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
+                        .monospacedDigit()
                 }
             }
         }

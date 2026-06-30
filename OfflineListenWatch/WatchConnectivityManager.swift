@@ -51,6 +51,17 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
         send([WatchSyncKeys.log: line])
     }
 
+    private var lastPositionSentAt = Date.distantPast
+
+    /// Forwards a podcast playhead change to the phone (throttled to ~12s).
+    func sendPosition(id: UUID, position: Double) {
+        guard WCSession.isSupported() else { return }
+        guard Date().timeIntervalSince(lastPositionSentAt) > 12 else { return }
+        lastPositionSentAt = Date()
+        WCSession.default.transferUserInfo([WatchSyncKeys.positionID: id.uuidString,
+                                            WatchSyncKeys.positionValue: position])
+    }
+
     /// Decodes and applies a manifest payload from the phone.
     fileprivate func applyManifest(from context: [String: Any]) {
         guard let data = context[WatchSyncKeys.manifest] as? Data,
@@ -131,6 +142,8 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
             store.objectWillChange.send()
             reply([WatchSyncKeys.fxOk: true, WatchSyncKeys.fxHave: byteSize(of: finalURL), WatchSyncKeys.fxDone: true])
         } else {
+            // Nudge the List so the row's sync % advances live as bytes arrive.
+            store.objectWillChange.send()
             reply([WatchSyncKeys.fxOk: true, WatchSyncKeys.fxHave: newSize, WatchSyncKeys.fxDone: false])
         }
     }
@@ -160,6 +173,13 @@ extension WatchConnectivityManager: WCSessionDelegate {
                              didReceiveMessage message: [String: Any],
                              replyHandler: @escaping ([String: Any]) -> Void) {
         Task { @MainActor in self.handleStreamMessage(message, reply: replyHandler) }
+    }
+
+    nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any]) {
+        guard let idString = userInfo[WatchSyncKeys.positionID] as? String,
+              let id = UUID(uuidString: idString),
+              let pos = userInfo[WatchSyncKeys.positionValue] as? Double else { return }
+        Task { @MainActor in self.store.applyRemotePosition(id, pos) }
     }
 
     nonisolated func session(_ session: WCSession, didReceive file: WCSessionFile) {

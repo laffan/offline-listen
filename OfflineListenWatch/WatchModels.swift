@@ -30,6 +30,9 @@ struct WatchTrack: Identifiable, Codable, Hashable {
     var order: Int
     /// Locally-saved playhead (seconds) so podcasts resume between sessions.
     var lastPosition: Double
+    /// Total file size in bytes (from the manifest); used to show sync % from the
+    /// in-progress `.part` file. 0 when unknown.
+    var byteSize: Int
 
     init(id: UUID,
          title: String,
@@ -39,7 +42,8 @@ struct WatchTrack: Identifiable, Codable, Hashable {
          kindRaw: String,
          folderName: String?,
          order: Int,
-         lastPosition: Double = 0) {
+         lastPosition: Double = 0,
+         byteSize: Int = 0) {
         self.id = id
         self.title = title
         self.artist = artist
@@ -49,6 +53,7 @@ struct WatchTrack: Identifiable, Codable, Hashable {
         self.folderName = folderName
         self.order = order
         self.lastPosition = lastPosition
+        self.byteSize = byteSize
     }
 
     /// Builds a watch track from a manifest entry, carrying over a previously
@@ -56,7 +61,7 @@ struct WatchTrack: Identifiable, Codable, Hashable {
     init(manifest m: WatchManifestTrack, lastPosition: Double = 0) {
         self.init(id: m.id, title: m.title, artist: m.artist, fileName: m.fileName,
                   duration: m.duration, kindRaw: m.kindRaw, folderName: m.folderName,
-                  order: m.order, lastPosition: lastPosition)
+                  order: m.order, lastPosition: lastPosition, byteSize: m.byteSize)
     }
 
     var isPodcast: Bool { kindRaw == "podcast" }
@@ -72,6 +77,16 @@ struct WatchTrack: Identifiable, Codable, Hashable {
     /// arrive after the manifest, so a row can briefly exist without its file).
     var isAvailable: Bool {
         FileManager.default.fileExists(atPath: fileURL.path)
+    }
+
+    /// Sync progress 0...1: 1 once the file is present, otherwise the fraction of
+    /// the in-progress `.part` file received (needs the manifest's `byteSize`).
+    var syncProgress: Double {
+        if isAvailable { return 1 }
+        guard byteSize > 0 else { return 0 }
+        let partURL = WatchPaths.documents.appendingPathComponent(fileName + ".part")
+        let part = ((try? FileManager.default.attributesOfItem(atPath: partURL.path))?[.size] as? Int) ?? 0
+        return min(Double(part) / Double(byteSize), 1)
     }
 }
 

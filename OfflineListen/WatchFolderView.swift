@@ -48,6 +48,17 @@ struct WatchFolderView: View {
         return (Double(syncedCount) + inFlight) / Double(tracks.count)
     }
 
+    /// The track currently transferring (the undelivered one with the most
+    /// progress), with its percent — for the banner subtitle.
+    private var syncingTrack: (title: String, percent: Int)? {
+        let pending = tracks.filter { !sync.deliveredFileNames.contains($0.fileName) }
+        let best = pending
+            .map { ($0.title, sync.activeTransfers[$0.fileName] ?? 0) }
+            .max { $0.1 < $1.1 }
+        guard let best else { return nil }
+        return (best.0, Int((best.1 * 100).rounded()))
+    }
+
     var body: some View {
         Group {
             if tracks.isEmpty {
@@ -94,9 +105,13 @@ struct WatchFolderView: View {
                             .font(.callout)
                         ProgressView(value: syncFraction)
                             .tint(.accentColor)
-                        Text("Transfers continue in the background.")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                        if let syncing = syncingTrack {
+                            Text("\(syncing.title) — \(syncing.percent)%")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .monospacedDigit()
+                        }
                     }
                 }
                 .padding(.vertical, 2)

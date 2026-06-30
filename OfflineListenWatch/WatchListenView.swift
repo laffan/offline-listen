@@ -41,15 +41,29 @@ struct WatchListenView: View {
                 .monospacedDigit()
 
                 HStack(spacing: 22) {
-                    Button { playback.previous() } label: {
-                        Image(systemName: "backward.fill")
+                    // Mirrors the lock screen: podcasts get jump back/forward,
+                    // songs get previous/next track.
+                    if track.isPodcast {
+                        Button { playback.skipBackward() } label: {
+                            Image(systemName: "gobackward.15")
+                        }
+                    } else {
+                        Button { playback.previous() } label: {
+                            Image(systemName: "backward.fill")
+                        }
                     }
                     Button { playback.togglePlayPause() } label: {
                         Image(systemName: playback.isPlaying ? "pause.circle.fill" : "play.circle.fill")
                             .font(.system(size: 46))
                     }
-                    Button { playback.next() } label: {
-                        Image(systemName: "forward.fill")
+                    if track.isPodcast {
+                        Button { playback.skipForward() } label: {
+                            Image(systemName: "goforward.30")
+                        }
+                    } else {
+                        Button { playback.next() } label: {
+                            Image(systemName: "forward.fill")
+                        }
                     }
                 }
                 .font(.title2)

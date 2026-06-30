@@ -157,12 +157,15 @@ It's **audio only** (video isn't sent to the watch).
 
 1. **List** — the tracks and playlists that have been pushed to the watch.
    Playlists you sent as a folder stay grouped; loose tracks sit below. A row
-   shows **Syncing…** until its audio file has finished transferring, then
-   becomes tappable. Tap a track to play it (and jump to Listen).
-2. **Listen** — now-playing title/artist, a progress bar, and
-   previous / play-pause / next. The **Digital Crown adjusts volume** while this
-   pane is showing. Podcasts resume where you left off; the watch's Now Playing
-   surfaces the system controls.
+   that's still transferring shows its live **Syncing… N%** and isn't tappable
+   yet; once the file lands it becomes playable. Tap a track to play it (and jump
+   to Listen).
+2. **Listen** — now-playing title/artist, a progress bar, and transport buttons:
+   **previous / play-pause / next** for songs, **jump-back-15 / play-pause /
+   jump-forward-30** for podcasts (mirroring the lock screen). The **Digital Crown
+   adjusts volume** while this pane is showing. Podcasts resume where you left
+   off, and their playhead **syncs both ways** with the phone — listen on one,
+   pick up where you stopped on the other.
 3. **Settings** — an **Output** preference (**Bluetooth** / **Speaker**) and a
    **Clear all Tracks** button (with a confirmation step) that deletes every
    saved file on the watch. (watchOS routes audio at the system level — Bluetooth

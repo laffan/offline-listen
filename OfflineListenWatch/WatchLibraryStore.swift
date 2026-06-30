@@ -72,7 +72,11 @@ final class WatchLibraryStore: ObservableObject {
 
         tracks = manifest.tracks
             .sorted { $0.order < $1.order }
-            .map { WatchTrack(manifest: $0, lastPosition: existing[$0.id]?.lastPosition ?? 0) }
+            .map { m in
+                // Keep a position we already have (live updates own it); adopt the
+                // manifest's position only for a track new to the watch.
+                WatchTrack(manifest: m, lastPosition: existing[m.id]?.lastPosition ?? m.lastPosition)
+            }
         save()
     }
 
@@ -85,8 +89,21 @@ final class WatchLibraryStore: ObservableObject {
         save()
     }
 
-    /// Records a podcast's playhead so it resumes next time.
+    /// Called with a podcast playhead change so it can be forwarded to the phone.
+    var onPositionChanged: ((UUID, Double) -> Void)?
+
+    /// Records a podcast's playhead so it resumes next time, and forwards it to
+    /// the phone to keep both in sync.
     func updatePosition(for id: UUID, to position: Double) {
+        guard let index = tracks.firstIndex(where: { $0.id == id }) else { return }
+        guard abs(tracks[index].lastPosition - position) >= 1 else { return }
+        tracks[index].lastPosition = position
+        save()
+        onPositionChanged?(id, position)
+    }
+
+    /// Applies a playhead update received *from* the phone (no echo back).
+    func applyRemotePosition(_ id: UUID, _ position: Double) {
         guard let index = tracks.firstIndex(where: { $0.id == id }) else { return }
         guard abs(tracks[index].lastPosition - position) >= 1 else { return }
         tracks[index].lastPosition = position

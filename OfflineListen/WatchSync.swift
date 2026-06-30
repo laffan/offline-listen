@@ -24,6 +24,9 @@ final class WatchSync: NSObject, ObservableObject {
 
     var onClearAll: (() -> Void)?
     var onReady: (() -> Void)?
+    /// Invoked with a podcast playhead update received from the watch; wired to
+    /// `LibraryStore.applyWatchPosition`.
+    var onPosition: ((UUID, Double) -> Void)?
 
     /// File names confirmed present on the watch (persisted across launches).
     @Published private(set) var deliveredFileNames: Set<String> = []
@@ -58,6 +61,20 @@ final class WatchSync: NSObject, ObservableObject {
 
     private func persistDelivered() {
         UserDefaults.standard.set(Array(deliveredFileNames), forKey: Self.deliveredKey)
+    }
+
+    private var lastPositionSentAt: Date = .distantPast
+
+    /// Sends a podcast playhead update to the watch (best-effort, queued, throttled
+    /// to ~12s so a long episode doesn't flood the channel).
+    func sendPosition(id: UUID, position: Double) {
+        #if canImport(WatchConnectivity)
+        guard WCSession.isSupported(), session.activationState == .activated, session.isWatchAppInstalled else { return }
+        guard Date().timeIntervalSince(lastPositionSentAt) > 12 else { return }
+        lastPositionSentAt = Date()
+        session.transferUserInfo([WatchSyncKeys.positionID: id.uuidString,
+                                  WatchSyncKeys.positionValue: position])
+        #endif
     }
 
     #if canImport(WatchConnectivity)
@@ -96,7 +113,9 @@ final class WatchSync: NSObject, ObservableObject {
                 fileName: track.fileName, duration: track.duration,
                 kindRaw: track.kind.rawValue,
                 folderName: track.folderID.flatMap { folderNames[$0] },
-                order: index)
+                order: index,
+                byteSize: track.fileSizeBytes,
+                lastPosition: track.kind == .podcast ? track.lastPosition : 0)
         }
 
         let wantedNames = Set(tracks.map { $0.fileName })
@@ -357,6 +376,11 @@ extension WatchSync: WCSessionDelegate {
         if payload[WatchSyncKeys.command] as? String == WatchSyncKeys.clearAllCommand {
             appLog("Watch requested Clear All.", level: .warning, category: "Watch")
             Task { @MainActor in self.onClearAll?() }
+        }
+        if let idString = payload[WatchSyncKeys.positionID] as? String,
+           let id = UUID(uuidString: idString),
+           let pos = payload[WatchSyncKeys.positionValue] as? Double {
+            Task { @MainActor in self.onPosition?(id, pos) }
         }
     }
 }

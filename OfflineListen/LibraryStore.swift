@@ -463,7 +463,22 @@ final class LibraryStore: ObservableObject {
     }
 
     /// Records a podcast's playhead. No-ops for tiny changes to limit churn.
+    /// Forwards the new position to the watch when the track is a podcast that's
+    /// been sent there, so the two stay in sync.
     func updatePosition(for id: UUID, to position: Double) {
+        guard let index = tracks.firstIndex(where: { $0.id == id }) else { return }
+        guard abs(tracks[index].lastPosition - position) >= 1 else { return }
+        tracks[index].lastPosition = position
+        save()
+        if tracks[index].kind == .podcast, tracks[index].sentToWatch {
+            WatchSync.shared.sendPosition(id: id, position: position)
+        }
+    }
+
+    /// Applies a podcast playhead update received *from* the watch. Updates the
+    /// saved position only (active phone playback is untouched) and does not echo
+    /// it back to the watch.
+    func applyWatchPosition(_ id: UUID, _ position: Double) {
         guard let index = tracks.firstIndex(where: { $0.id == id }) else { return }
         guard abs(tracks[index].lastPosition - position) >= 1 else { return }
         tracks[index].lastPosition = position
