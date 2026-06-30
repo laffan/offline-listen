@@ -238,10 +238,12 @@ final class WatchPlaybackManager: NSObject, ObservableObject {
     }
 
     private func updateNowPlaying() {
+        // Note: watchOS ignores `MPNowPlayingInfoCenter.playbackState` for
+        // third-party apps (it needs a private entitlement), so we don't set it —
+        // only the now-playing metadata, which the system does surface.
         let center = MPNowPlayingInfoCenter.default()
         guard let track = currentTrack else {
             center.nowPlayingInfo = nil
-            center.playbackState = .stopped
             return
         }
         center.nowPlayingInfo = [
@@ -252,7 +254,6 @@ final class WatchPlaybackManager: NSObject, ObservableObject {
             MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0,
             MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0
         ]
-        center.playbackState = isPlaying ? .playing : .paused
     }
 }
 

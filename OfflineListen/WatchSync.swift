@@ -7,10 +7,16 @@ import WatchConnectivity
 /// belongs on the watch; this pushes the desired state (a `WatchManifest`) and
 /// the audio files, and listens for the watch's commands and log lines.
 ///
-/// Delivery is tracked **per file** and only confirmed once `transferFile`
-/// reports it finished (`didFinish` with no error), so a transfer that fails or
-/// never lands is retried on the next push instead of being lost. `deliveredFileNames`
-/// is published so the Watch folder can show sync progress.
+/// File delivery uses two paths:
+///   - **Reachable** (both apps active, incl. the Simulator): the file is
+///     streamed as a sequence of `sendMessage` chunks the watch reassembles to
+///     disk. `transferFile` does not deliver on the watchOS Simulator, so this
+///     is what actually works while developing.
+///   - **Not reachable**: a best-effort `transferFile` for background delivery on
+///     a real device.
+/// A file is marked delivered only once a path confirms completion (final chunk
+/// acked, or `didFinish` with no error), so a failure is retried on the next
+/// push / ready event. `deliveredFileNames` is published for the progress UI.
 @MainActor
 final class WatchSync: NSObject, ObservableObject {
     static let shared = WatchSync()
@@ -19,18 +25,19 @@ final class WatchSync: NSObject, ObservableObject {
     /// `LibraryStore.clearAllFromWatch` at app startup.
     var onClearAll: (() -> Void)?
 
-    /// Invoked when the session becomes usable (activated, or the watch state
-    /// changes) so the current set can be re-pushed; wired to
-    /// `LibraryStore.syncWatch` at app startup. A push attempted before the
-    /// session is ready no-ops, so this is what actually delivers the first sync.
+    /// Invoked when the session becomes usable (activated / reachable / watch
+    /// state changed) so the current set can be re-pushed; wired to
+    /// `LibraryStore.syncWatch` at app startup.
     var onReady: (() -> Void)?
 
-    /// File names confirmed received by the watch (transfer finished cleanly).
-    /// Published so progress UI updates; persisted so it survives relaunch.
+    /// File names confirmed received by the watch. Published for progress UI;
+    /// persisted so it survives relaunch.
     @Published private(set) var deliveredFileNames: Set<String> = []
 
-    /// Files currently mid-transfer, so a re-push doesn't queue them twice.
-    private var inFlightFileNames: Set<String> = []
+    /// Files currently being chunk-streamed, so a re-push doesn't restart them.
+    private var streamingFileNames: Set<String> = []
+    /// Files handed to the background `transferFile` path (deduped per session).
+    private var backgroundFileNames: Set<String> = []
 
     private static let deliveredKey = "watchDeliveredFileNames"
 
@@ -59,7 +66,6 @@ final class WatchSync: NSObject, ObservableObject {
     #if canImport(WatchConnectivity)
     private var session: WCSession { WCSession.default }
 
-    /// Human-readable session state for the log.
     private var stateDescription: String {
         guard WCSession.isSupported() else { return "unsupported" }
         let s = session
@@ -77,29 +83,25 @@ final class WatchSync: NSObject, ObservableObject {
         #endif
     }
 
-    /// Pushes the desired watch set: updates the manifest and transfers any audio
-    /// file the watch hasn't confirmed yet. `tracks` is `LibraryStore.watchTracks`;
-    /// `folderNames` maps folder ids to display names so each track can carry its
-    /// playlist name.
+    /// Pushes the desired watch set: updates the manifest and sends any audio the
+    /// watch hasn't confirmed yet. `tracks` is `LibraryStore.watchTracks`;
+    /// `folderNames` maps folder ids to display names for the playlist grouping.
     func push(tracks: [Track], folderNames: [UUID: String]) {
         #if canImport(WatchConnectivity)
         let manifestTracks = tracks.enumerated().map { index, track in
             WatchManifestTrack(
-                id: track.id,
-                title: track.title,
-                artist: track.artist,
-                fileName: track.fileName,
-                duration: track.duration,
+                id: track.id, title: track.title, artist: track.artist,
+                fileName: track.fileName, duration: track.duration,
                 kindRaw: track.kind.rawValue,
                 folderName: track.folderID.flatMap { folderNames[$0] },
                 order: index)
         }
 
-        // Forget bookkeeping for files no longer wanted (removed from the watch),
-        // so re-adding one later transfers it again.
+        // Forget bookkeeping for files no longer wanted (removed from the watch).
         let wantedNames = Set(tracks.map { $0.fileName })
         deliveredFileNames.formIntersection(wantedNames)
-        inFlightFileNames.formIntersection(wantedNames)
+        streamingFileNames.formIntersection(wantedNames)
+        backgroundFileNames.formIntersection(wantedNames)
         persistDelivered()
 
         guard isOperational else {
@@ -119,38 +121,80 @@ final class WatchSync: NSObject, ObservableObject {
             appLog("Failed to send manifest: \(error.localizedDescription)", level: .error, category: "Watch")
         }
 
+        let reachable = session.isReachable
         for track in tracks {
             let name = track.fileName
-            if deliveredFileNames.contains(name) || inFlightFileNames.contains(name) { continue }
+            if deliveredFileNames.contains(name) { continue }
             let url = track.fileURL
             guard FileManager.default.fileExists(atPath: url.path) else {
                 appLog("Skipping \"\(track.title)\" — file missing on phone (\(name)).",
                        level: .error, category: "Watch")
                 continue
             }
-            var metadata: [String: Any] = [
-                WatchSyncKeys.metaID: track.id.uuidString,
-                WatchSyncKeys.metaTitle: track.title,
-                WatchSyncKeys.metaArtist: track.artist,
-                WatchSyncKeys.metaFileName: name,
-                WatchSyncKeys.metaDuration: track.duration,
-                WatchSyncKeys.metaKind: track.kind.rawValue,
-                WatchSyncKeys.metaOrder: 0
-            ]
-            if let folderID = track.folderID, let folder = folderNames[folderID] {
-                metadata[WatchSyncKeys.metaFolderName] = folder
+            if reachable {
+                guard !streamingFileNames.contains(name) else { continue }
+                startStream(track)
+            } else if !backgroundFileNames.contains(name) {
+                backgroundFileNames.insert(name)
+                session.transferFile(url, metadata: [WatchSyncKeys.metaFileName: name])
+                appLog("Queued background transfer of \"\(track.title)\" (watch unreachable).", category: "Watch")
             }
-            session.transferFile(url, metadata: metadata)
-            inFlightFileNames.insert(name)
-            appLog("Transferring \"\(track.title)\" → watch (\(name)).", category: "Watch")
         }
 
-        let outstanding = wantedNames.subtracting(deliveredFileNames)
-        if outstanding.isEmpty {
+        if wantedNames.subtracting(deliveredFileNames).isEmpty, !tracks.isEmpty {
             appLog("Watch is up to date — \(tracks.count) track(s) delivered.", level: .success, category: "Watch")
         }
         #endif
     }
+
+    #if canImport(WatchConnectivity)
+    /// Begins streaming a track's audio file to the watch as ordered chunks.
+    private func startStream(_ track: Track) {
+        let name = track.fileName
+        guard let data = try? Data(contentsOf: track.fileURL) else {
+            appLog("Couldn't read \(name) to stream to watch.", level: .error, category: "Watch")
+            return
+        }
+        let total = max(1, (data.count + WatchSyncKeys.fxChunkSize - 1) / WatchSyncKeys.fxChunkSize)
+        streamingFileNames.insert(name)
+        appLog("Streaming \"\(track.title)\" to watch — \(data.count / 1024) KB in \(total) chunk(s).",
+               category: "Watch")
+        sendChunk(0, of: data, name: name, total: total, title: track.title)
+    }
+
+    private func sendChunk(_ index: Int, of data: Data, name: String, total: Int, title: String) {
+        let start = index * WatchSyncKeys.fxChunkSize
+        let end = min(start + WatchSyncKeys.fxChunkSize, data.count)
+        let chunk = start < end ? data.subdata(in: start..<end) : Data()
+        let message: [String: Any] = [
+            WatchSyncKeys.fxName: name,
+            WatchSyncKeys.fxIndex: index,
+            WatchSyncKeys.fxTotal: total,
+            WatchSyncKeys.fxData: chunk
+        ]
+        session.sendMessage(message, replyHandler: { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                if index + 1 < total {
+                    self.sendChunk(index + 1, of: data, name: name, total: total, title: title)
+                } else {
+                    self.streamingFileNames.remove(name)
+                    self.backgroundFileNames.remove(name)
+                    self.deliveredFileNames.insert(name)
+                    self.persistDelivered()
+                    appLog("Watch received \"\(title)\" (\(data.count / 1024) KB).",
+                           level: .success, category: "Watch")
+                }
+            }
+        }, errorHandler: { [weak self] error in
+            Task { @MainActor in
+                self?.streamingFileNames.remove(name)
+                appLog("Streaming \(name) failed at chunk \(index + 1)/\(total): \(error.localizedDescription) — will retry.",
+                       level: .error, category: "Watch")
+            }
+        })
+    }
+    #endif
 }
 
 #if canImport(WatchConnectivity)
@@ -171,7 +215,6 @@ extension WatchSync: WCSessionDelegate {
     nonisolated func sessionDidBecomeInactive(_ session: WCSession) {}
 
     nonisolated func sessionDidDeactivate(_ session: WCSession) {
-        // Re-activate so a switched watch keeps syncing.
         session.activate()
     }
 
@@ -182,6 +225,7 @@ extension WatchSync: WCSessionDelegate {
     }
 
     nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
+        appLog("Watch reachability changed (reachable=\(session.isReachable)).", category: "Watch")
         if session.isReachable {
             Task { @MainActor in self.onReady?() }
         }
@@ -191,14 +235,14 @@ extension WatchSync: WCSessionDelegate {
         let name = (fileTransfer.file.metadata?[WatchSyncKeys.metaFileName] as? String)
             ?? fileTransfer.file.fileURL.lastPathComponent
         Task { @MainActor in
-            self.inFlightFileNames.remove(name)
+            self.backgroundFileNames.remove(name)
             if let error {
-                appLog("Transfer of \(name) failed: \(error.localizedDescription) — will retry.",
+                appLog("Background transfer of \(name) failed: \(error.localizedDescription) — will retry.",
                        level: .error, category: "Watch")
             } else {
                 self.deliveredFileNames.insert(name)
                 self.persistDelivered()
-                appLog("Watch received \(name).", level: .success, category: "Watch")
+                appLog("Watch received \(name) (background).", level: .success, category: "Watch")
             }
         }
     }

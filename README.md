@@ -189,11 +189,17 @@ sync.
 
 Transport is **WatchConnectivity** (`WCSession`). The phone pushes the
 authoritative set as a JSON **manifest** via `updateApplicationContext` (the watch
-renders its List from it and **prunes** any local file no longer listed), and
-sends the audio files themselves with `transferFile`. The watch sends a small
-`clearAll` message back when you clear it. The wire format
-(`WatchManifest.swift`) is compiled into **both** targets so encode and decode
-can't drift — the same trick the Share Extension uses with `SharedInbox.swift`.
+renders its List from it and **prunes** any local file no longer listed). Audio
+files travel one of two ways: when the watch is **reachable** (both apps active —
+including on the Simulator) the phone **streams** each file as a sequence of
+`sendMessage` chunks the watch reassembles to disk; when it isn't, the phone
+falls back to `transferFile` for background delivery on a real device. (Plain
+`transferFile` doesn't deliver on the watchOS Simulator, which is why the chunked
+path exists.) The watch sends a small `clearAll` message back when you clear it,
+and mirrors each sync step to the phone's **Log** tab (`⌚`-prefixed) so the whole
+exchange is debuggable from one place. The wire format (`WatchManifest.swift`) is
+compiled into **both** targets so encode and decode can't drift — the same trick
+the Share Extension uses with `SharedInbox.swift`.
 
 ### Watch source layout (`OfflineListenWatch/`)
 
@@ -248,9 +254,9 @@ and sets `WKCompanionAppBundleIdentifier`, but **signing must be set in Xcode**:
    of the app id). If you changed the app's bundle id, update the watch's to
    match and keep `WKCompanionAppBundleIdentifier` (in `OfflineListenWatch/Info.plist`)
    equal to the **iOS app's** id.
-3. The watch target declares the same **App Group** (`group.com.offlinelisten.app`)
-   for parity; let Xcode register/provision it. (WatchConnectivity itself needs no
-   entitlement.)
+3. The watch target needs **no extra capabilities** — WatchConnectivity requires
+   no entitlement, and the watch keeps its library in its own container (so the
+   watch entitlements file is intentionally empty).
 4. Run the **OfflineListenWatch** scheme on a paired watch (or a paired
    iPhone + Watch Simulator pair) to test the sync end-to-end.
 
