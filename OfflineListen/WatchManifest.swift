@@ -50,6 +50,24 @@ enum WatchSyncKeys {
     /// its Log tab, so the whole sync is debuggable from one place.
     static let log = "log"
 
+    // Resumable chunked-stream keys. `transferFile` is the primary path, but on
+    // device pairs where the system file-transfer channel never establishes
+    // (it accepts the transfer yet moves no bytes), the phone streams the file
+    // over the live message channel instead. The watch keeps a `.part` file and
+    // reports how many bytes it already has, so a dropped connection resumes from
+    // that offset rather than restarting.
+    static let fxQuery = "fxQuery"   // phone → watch: value is the file name; asks the current offset
+    static let fxName = "fxName"     // chunk message: the file name
+    static let fxOffset = "fxOffset" // chunk message: byte offset this chunk starts at
+    static let fxData = "fxData"     // chunk message: the bytes
+    static let fxEof = "fxEof"       // chunk message: true on the final chunk
+    static let fxHave = "fxHave"     // watch → phone reply: bytes the watch now holds
+    static let fxDone = "fxDone"     // watch → phone reply: the whole file is present
+    static let fxOk = "fxOk"         // watch → phone reply: chunk accepted at the expected offset
+    /// Per-message chunk size. The WatchConnectivity message ceiling is ~64 KB,
+    /// so this is the practical maximum payload per round-trip.
+    static let fxChunkSize = 50_000
+
     // Per-file `transferFile` metadata keys (a self-describing copy of the
     // manifest fields, so a file can be ingested even before/without a manifest).
     static let metaID = "id"

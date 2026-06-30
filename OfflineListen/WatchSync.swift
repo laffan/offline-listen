@@ -7,32 +7,33 @@ import WatchConnectivity
 /// belongs on the watch; this pushes the desired state (a `WatchManifest`) and
 /// the audio files, and listens for the watch's commands and log lines.
 ///
-/// Audio is sent with **`transferFile`** — the system's background file-transfer
-/// API for a watch and its companion. It does **not** require the apps to be
-/// reachable or foregrounded: the OS queues each transfer and delivers it
-/// opportunistically, surviving the watch app backgrounding or being suspended,
-/// and resumes large files on its own. A file is marked delivered when its
-/// transfer reports `didFinish` with no error, so a failed one retries on the
-/// next push. Real per-file progress (`WCSessionFileTransfer.progress`) is
-/// published for the Watch folder's sync banner.
+/// File delivery has two paths because the system's `transferFile` channel
+/// doesn't establish on every device pair (it accepts the transfer but moves no
+/// bytes):
+///   - **Reachable** (the watch app is foreground): the phone **streams** the
+///     file over the live message channel. It's **resumable** — the watch keeps a
+///     `.part` file and reports its current byte offset, so a dropped connection
+///     continues from there instead of restarting.
+///   - **Not reachable**: a best-effort `transferFile` for background delivery.
+/// Whichever path lands the whole file first wins; a file is marked delivered
+/// once and the other path is cancelled. `deliveredFileNames`/`activeTransfers`
+/// are published for the Watch folder's progress banner.
 @MainActor
 final class WatchSync: NSObject, ObservableObject {
     static let shared = WatchSync()
 
-    /// Invoked when the watch asks to clear everything; wired to
-    /// `LibraryStore.clearAllFromWatch` at app startup.
     var onClearAll: (() -> Void)?
-
-    /// Invoked when the session becomes usable (activated / watch state changed)
-    /// so the current set can be re-pushed; wired to `LibraryStore.syncWatch`.
     var onReady: (() -> Void)?
 
-    /// File names confirmed received by the watch. Published for progress UI;
-    /// persisted so it survives relaunch.
+    /// File names confirmed present on the watch (persisted across launches).
     @Published private(set) var deliveredFileNames: Set<String> = []
-
-    /// Live per-file transfer progress (fileName → 0...1) for files in flight.
+    /// Live progress (fileName → 0...1) merged from streams and `transferFile`.
     @Published private(set) var activeTransfers: [String: Double] = [:]
+
+    /// Files currently mid-stream, so a re-push doesn't start a second stream.
+    private var streamingNames: Set<String> = []
+    /// Latest stream progress fraction per file (merged into `activeTransfers`).
+    private var streamFractions: [String: Double] = [:]
 
     private static let deliveredKey = "watchDeliveredFileNames"
     private var progressTimer: Timer?
@@ -73,7 +74,6 @@ final class WatchSync: NSObject, ObservableObject {
     }
     #endif
 
-    /// True when a session is active and a watch app is installed to receive data.
     private var isOperational: Bool {
         #if canImport(WatchConnectivity)
         guard WCSession.isSupported() else { return false }
@@ -83,9 +83,11 @@ final class WatchSync: NSObject, ObservableObject {
         #endif
     }
 
-    /// Pushes the desired watch set: updates the manifest and queues a background
-    /// transfer for any audio the watch hasn't confirmed yet. `tracks` is
-    /// `LibraryStore.watchTracks`; `folderNames` maps folder ids to display names.
+    // MARK: - Push
+
+    /// Pushes the desired watch set: updates the manifest, then for each
+    /// undelivered file streams it (when reachable) or queues a background
+    /// transfer (when not).
     func push(tracks: [Track], folderNames: [UUID: String]) {
         #if canImport(WatchConnectivity)
         let manifestTracks = tracks.enumerated().map { index, track in
@@ -97,9 +99,9 @@ final class WatchSync: NSObject, ObservableObject {
                 order: index)
         }
 
-        // Forget bookkeeping for files no longer wanted (removed from the watch).
         let wantedNames = Set(tracks.map { $0.fileName })
         deliveredFileNames.formIntersection(wantedNames)
+        streamingNames.formIntersection(wantedNames)
         persistDelivered()
 
         guard isOperational else {
@@ -119,115 +121,175 @@ final class WatchSync: NSObject, ObservableObject {
             appLog("Failed to send manifest: \(error.localizedDescription)", level: .error, category: "Watch")
         }
 
-        // Cancel stale transfers left over from earlier runs (files no longer on
-        // the watch). These otherwise pile up in the queue and clog it.
+        // Drop stale background transfers for files no longer wanted.
         for transfer in session.outstandingFileTransfers where !wantedNames.contains(fileName(of: transfer)) {
             appLog("Cancelling stale transfer \(fileName(of: transfer)).", level: .warning, category: "Watch")
             transfer.cancel()
         }
 
-        // Don't re-queue a file that's already mid-transfer.
+        let reachable = session.isReachable
         let outstanding = Set(session.outstandingFileTransfers.map { fileName(of: $0) })
         for track in tracks {
             let name = track.fileName
-            if deliveredFileNames.contains(name) || outstanding.contains(name) { continue }
-            let url = track.fileURL
-            guard FileManager.default.fileExists(atPath: url.path) else {
-                appLog("Skipping \"\(track.title)\" — file missing on phone (\(name)).",
-                       level: .error, category: "Watch")
+            if deliveredFileNames.contains(name) { continue }
+            guard FileManager.default.fileExists(atPath: track.fileURL.path) else {
+                appLog("Skipping \"\(track.title)\" — file missing on phone (\(name)).", level: .error, category: "Watch")
                 continue
             }
-            session.transferFile(url, metadata: [WatchSyncKeys.metaFileName: name])
-            appLog("Queued transfer of \"\(track.title)\" (\(track.fileSizeKB) KB) to watch.", category: "Watch")
+            if reachable {
+                startStream(track)
+            } else if !outstanding.contains(name) {
+                session.transferFile(track.fileURL, metadata: [WatchSyncKeys.metaFileName: name])
+                appLog("Queued background transfer of \"\(track.title)\" (\(track.fileSizeKB) KB) — watch unreachable.",
+                       category: "Watch")
+            }
         }
 
-        if session.outstandingFileTransfers.isEmpty {
-            if wantedNames.subtracting(deliveredFileNames).isEmpty, !tracks.isEmpty {
-                appLog("Watch is up to date — \(tracks.count) track(s) delivered.", level: .success, category: "Watch")
-            }
-        } else {
-            logOutstanding("After queueing")
+        if !session.outstandingFileTransfers.isEmpty {
             startProgressTicker()
+        }
+        if wantedNames.subtracting(deliveredFileNames).isEmpty, !tracks.isEmpty {
+            appLog("Watch is up to date — \(tracks.count) track(s) delivered.", level: .success, category: "Watch")
         }
         #endif
     }
 
+    // MARK: - Resumable stream
+
     #if canImport(WatchConnectivity)
-    /// One-line description of a transfer's live state.
+    /// Asks the watch how much of `track` it already has, then streams the rest.
+    private func startStream(_ track: Track) {
+        let name = track.fileName
+        guard session.isReachable, !streamingNames.contains(name) else { return }
+        streamingNames.insert(name)
+        session.sendMessage([WatchSyncKeys.fxQuery: name], replyHandler: { [weak self] reply in
+            Task { @MainActor in
+                guard let self else { return }
+                let have = reply[WatchSyncKeys.fxHave] as? Int ?? 0
+                let done = reply[WatchSyncKeys.fxDone] as? Bool ?? false
+                if done {
+                    self.markDelivered(name, via: "stream")
+                    return
+                }
+                guard let data = try? Data(contentsOf: track.fileURL) else {
+                    self.streamingNames.remove(name)
+                    appLog("Couldn't read \(name) to stream.", level: .error, category: "Watch")
+                    return
+                }
+                appLog("Streaming \"\(track.title)\" to watch from \(have / 1024) KB / \(data.count / 1024) KB.",
+                       category: "Watch")
+                self.sendStreamChunk(name: name, data: data, offset: have, title: track.title)
+            }
+        }, errorHandler: { [weak self] error in
+            Task { @MainActor in
+                self?.streamingNames.remove(name)
+                appLog("Stream query for \(name) failed: \(error.localizedDescription) — will resume when reachable.",
+                       level: .warning, category: "Watch")
+            }
+        })
+    }
+
+    private func sendStreamChunk(name: String, data: Data, offset: Int, title: String) {
+        let total = data.count
+        let end = min(offset + WatchSyncKeys.fxChunkSize, total)
+        let chunk = offset < end ? data.subdata(in: offset..<end) : Data()
+        let eof = end >= total
+        let message: [String: Any] = [
+            WatchSyncKeys.fxName: name,
+            WatchSyncKeys.fxOffset: offset,
+            WatchSyncKeys.fxData: chunk,
+            WatchSyncKeys.fxEof: eof
+        ]
+        session.sendMessage(message, replyHandler: { [weak self] reply in
+            Task { @MainActor in
+                guard let self else { return }
+                let have = reply[WatchSyncKeys.fxHave] as? Int ?? offset
+                let done = reply[WatchSyncKeys.fxDone] as? Bool ?? false
+                self.streamFractions[name] = total > 0 ? min(Double(have) / Double(total), 1) : 1
+                self.publishActiveTransfers()
+                if done || have >= total {
+                    self.markDelivered(name, via: "stream")
+                    return
+                }
+                // Always continue from the watch's confirmed offset (self-corrects
+                // if a chunk was rejected for arriving at the wrong offset).
+                self.sendStreamChunk(name: name, data: data, offset: have, title: title)
+            }
+        }, errorHandler: { [weak self] error in
+            Task { @MainActor in
+                guard let self else { return }
+                self.streamingNames.remove(name)
+                appLog("Stream of \"\(title)\" paused at \(offset / 1024) KB: \(error.localizedDescription) — resumes when reachable.",
+                       level: .warning, category: "Watch")
+            }
+        })
+    }
+
+    /// Marks a file delivered, cleans up its stream/transfer state, and cancels
+    /// the other (background) path if it's still queued.
+    private func markDelivered(_ name: String, via: String) {
+        streamingNames.remove(name)
+        streamFractions[name] = nil
+        deliveredFileNames.insert(name)
+        persistDelivered()
+        for transfer in session.outstandingFileTransfers where fileName(of: transfer) == name {
+            transfer.cancel()
+        }
+        publishActiveTransfers()
+        appLog("Watch received \(name) (via \(via)).", level: .success, category: "Watch")
+    }
+    #endif
+
+    // MARK: - Progress
+
+    #if canImport(WatchConnectivity)
+    private func publishActiveTransfers() {
+        var map = streamFractions
+        for transfer in session.outstandingFileTransfers {
+            let name = fileName(of: transfer)
+            // A stuck background transfer (0%) must not mask live stream progress.
+            map[name] = max(map[name] ?? 0, transfer.progress.fractionCompleted)
+        }
+        activeTransfers = map
+    }
+
     private func describe(_ transfer: WCSessionFileTransfer) -> String {
         let p = transfer.progress
         let pct = p.fractionCompleted.isFinite ? Int(p.fractionCompleted * 100) : 0
         return "\(fileName(of: transfer)) — transferring=\(transfer.isTransferring), \(pct)% (\(p.completedUnitCount)/\(p.totalUnitCount) bytes)"
     }
 
-    /// Logs the full outstanding-transfer queue with per-file byte progress.
-    private func logOutstanding(_ context: String) {
-        let xs = session.outstandingFileTransfers
-        guard !xs.isEmpty else {
-            appLog("\(context): no outstanding transfers.", category: "Watch")
-            return
-        }
-        appLog("\(context): \(xs.count) outstanding transfer(s):", category: "Watch")
-        for transfer in xs {
-            appLog("  • \(describe(transfer))", category: "Watch")
-        }
-    }
-
-    // Stall detection: if the queue's total byte progress doesn't advance for a
-    // while, say so.
-    private var lastProgressBytes: Int64 = -1
-    private var lastProgressAt = Date()
     private var stallWarned = false
-    private var tickCount = 0
+    private var lastBackgroundBytes: Int64 = -1
+    private var lastBackgroundAt = Date()
 
-    /// Polls the system's outstanding transfers for live progress while any run.
     private func startProgressTicker() {
         guard progressTimer == nil else { return }
-        lastProgressBytes = -1
-        lastProgressAt = Date()
         stallWarned = false
-        tickCount = 0
-        progressTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.updateProgress() }
+        lastBackgroundBytes = -1
+        lastBackgroundAt = Date()
+        progressTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tickBackgroundTransfers() }
         }
-        updateProgress()
     }
 
-    private func updateProgress() {
+    private func tickBackgroundTransfers() {
         let outstanding = session.outstandingFileTransfers
         guard !outstanding.isEmpty else {
             progressTimer?.invalidate()
             progressTimer = nil
-            if !activeTransfers.isEmpty { activeTransfers = [:] }
+            publishActiveTransfers()
             return
         }
-        var map: [String: Double] = [:]
-        var totalBytes: Int64 = 0
-        for transfer in outstanding {
-            map[fileName(of: transfer)] = transfer.progress.fractionCompleted
-            totalBytes += transfer.progress.completedUnitCount
-        }
-        activeTransfers = map
-
-        // Heartbeat every ~8s so the queue's evolution is visible in the log even
-        // when nothing finishes.
-        tickCount += 1
-        if tickCount % 8 == 0 {
-            logOutstanding("Heartbeat (hasContentPending=\(session.hasContentPending))")
-        }
-
-        if totalBytes != lastProgressBytes {
-            if lastProgressBytes >= 0, totalBytes > lastProgressBytes {
-                appLog("Transfer progress: \(totalBytes) bytes delivered across \(outstanding.count) transfer(s).",
-                       level: .debug, category: "Watch")
-            }
-            lastProgressBytes = totalBytes
-            lastProgressAt = Date()
+        publishActiveTransfers()
+        let bytes = outstanding.reduce(Int64(0)) { $0 + $1.progress.completedUnitCount }
+        if bytes != lastBackgroundBytes {
+            lastBackgroundBytes = bytes
+            lastBackgroundAt = Date()
             stallWarned = false
-        } else if !stallWarned, Date().timeIntervalSince(lastProgressAt) > 20 {
+        } else if !stallWarned, Date().timeIntervalSince(lastBackgroundAt) > 20 {
             stallWarned = true
-            logOutstanding("Stalled (no byte progress in 20s)")
-            appLog("Transfers are queued but not progressing — the head-of-queue transfer may be wedged. Check the watch isn't in Low Power Mode and has free storage; toggling Bluetooth or rebooting both devices can unstick WatchConnectivity.",
+            appLog("Background transfer(s) not progressing; open the watch app to deliver over the live channel instead.",
                    level: .warning, category: "Watch")
         }
     }
@@ -242,17 +304,11 @@ extension WatchSync: WCSessionDelegate {
         if let error {
             appLog("Watch session activation error: \(error.localizedDescription)", level: .error, category: "Watch")
         } else {
-            let pending = session.hasContentPending
-            let files = session.outstandingFileTransfers.count
-            appLog("Watch session activated (state \(activationState.rawValue), hasContentPending=\(pending), outstandingFiles=\(files)).",
+            appLog("Watch session activated (state \(activationState.rawValue), reachable=\(session.isReachable)).",
                    category: "Watch")
         }
         if activationState == .activated {
-            Task { @MainActor in
-                self.logOutstanding("At activation")
-                if !WCSession.default.outstandingFileTransfers.isEmpty { self.startProgressTicker() }
-                self.onReady?()
-            }
+            Task { @MainActor in self.onReady?() }
         }
     }
 
@@ -268,20 +324,21 @@ extension WatchSync: WCSessionDelegate {
         Task { @MainActor in self.onReady?() }
     }
 
+    nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
+        appLog("Watch reachability changed (reachable=\(session.isReachable)).", category: "Watch")
+        Task { @MainActor in self.onReady?() }
+    }
+
     nonisolated func session(_ session: WCSession, didFinish fileTransfer: WCSessionFileTransfer, error: Error?) {
         let name = (fileTransfer.file.metadata?[WatchSyncKeys.metaFileName] as? String)
             ?? fileTransfer.file.fileURL.lastPathComponent
         Task { @MainActor in
-            self.activeTransfers[name] = nil
             if let error {
-                appLog("Transfer of \(name) failed: \(error.localizedDescription) — will retry.",
-                       level: .error, category: "Watch")
+                appLog("Background transfer of \(name) ended: \(error.localizedDescription).", category: "Watch")
             } else {
-                self.deliveredFileNames.insert(name)
-                self.persistDelivered()
-                appLog("Watch received \(name).", level: .success, category: "Watch")
+                self.markDelivered(name, via: "background")
             }
-            self.updateProgress()
+            self.publishActiveTransfers()
         }
     }
 

@@ -62,6 +62,78 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
         let playlists = Set(manifest.tracks.compactMap { $0.folderName }).count
         forwardLog("Applied manifest: \(manifest.tracks.count) track(s), \(present) file(s) present, \(playlists) playlist(s).")
     }
+
+    private func byteSize(of url: URL) -> Int {
+        ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int) ?? 0
+    }
+
+    /// Handles a resumable-stream message from the phone and replies with how many
+    /// bytes the watch now holds (so the phone resumes from the right offset).
+    fileprivate func handleStreamMessage(_ message: [String: Any], reply: ([String: Any]) -> Void) {
+        // Offset query: report how much of the file we already have.
+        if let name = message[WatchSyncKeys.fxQuery] as? String {
+            let finalURL = WatchPaths.documents.appendingPathComponent(name)
+            if FileManager.default.fileExists(atPath: finalURL.path) {
+                reply([WatchSyncKeys.fxHave: byteSize(of: finalURL), WatchSyncKeys.fxDone: true])
+            } else {
+                let partURL = WatchPaths.documents.appendingPathComponent(name + ".part")
+                reply([WatchSyncKeys.fxHave: byteSize(of: partURL), WatchSyncKeys.fxDone: false])
+            }
+            return
+        }
+
+        guard let name = message[WatchSyncKeys.fxName] as? String,
+              let offset = message[WatchSyncKeys.fxOffset] as? Int,
+              let data = message[WatchSyncKeys.fxData] as? Data else {
+            reply([WatchSyncKeys.fxOk: false, WatchSyncKeys.fxHave: 0, WatchSyncKeys.fxDone: false])
+            return
+        }
+        let eof = message[WatchSyncKeys.fxEof] as? Bool ?? false
+        let finalURL = WatchPaths.documents.appendingPathComponent(name)
+        if FileManager.default.fileExists(atPath: finalURL.path) {
+            reply([WatchSyncKeys.fxOk: true, WatchSyncKeys.fxHave: byteSize(of: finalURL), WatchSyncKeys.fxDone: true])
+            return
+        }
+
+        let partURL = WatchPaths.documents.appendingPathComponent(name + ".part")
+        var partSize = byteSize(of: partURL)
+
+        // A chunk for offset 0 restarts the file.
+        if offset == 0, partSize > 0 {
+            try? FileManager.default.removeItem(at: partURL)
+            partSize = 0
+        }
+
+        guard offset == partSize else {
+            // Out of order — tell the phone our real offset so it resends from there.
+            reply([WatchSyncKeys.fxOk: false, WatchSyncKeys.fxHave: partSize, WatchSyncKeys.fxDone: false])
+            return
+        }
+
+        if partSize == 0, !FileManager.default.fileExists(atPath: partURL.path) {
+            FileManager.default.createFile(atPath: partURL.path, contents: nil)
+        }
+        if let handle = try? FileHandle(forWritingTo: partURL) {
+            do {
+                try handle.seekToEnd()
+                try handle.write(contentsOf: data)
+            } catch {
+                forwardLog("Error writing \(name) at \(offset): \(error.localizedDescription)")
+            }
+            try? handle.close()
+        }
+        let newSize = byteSize(of: partURL)
+
+        if eof {
+            try? FileManager.default.removeItem(at: finalURL)
+            try? FileManager.default.moveItem(at: partURL, to: finalURL)
+            forwardLog("Received \(name) via stream (\(newSize / 1024) KB).")
+            store.objectWillChange.send()
+            reply([WatchSyncKeys.fxOk: true, WatchSyncKeys.fxHave: byteSize(of: finalURL), WatchSyncKeys.fxDone: true])
+        } else {
+            reply([WatchSyncKeys.fxOk: true, WatchSyncKeys.fxHave: newSize, WatchSyncKeys.fxDone: false])
+        }
+    }
 }
 
 extension WatchConnectivityManager: WCSessionDelegate {
@@ -82,6 +154,12 @@ extension WatchConnectivityManager: WCSessionDelegate {
     nonisolated func session(_ session: WCSession,
                              didReceiveApplicationContext applicationContext: [String: Any]) {
         Task { @MainActor in self.applyManifest(from: applicationContext) }
+    }
+
+    nonisolated func session(_ session: WCSession,
+                             didReceiveMessage message: [String: Any],
+                             replyHandler: @escaping ([String: Any]) -> Void) {
+        Task { @MainActor in self.handleStreamMessage(message, reply: replyHandler) }
     }
 
     nonisolated func session(_ session: WCSession, didReceive file: WCSessionFile) {

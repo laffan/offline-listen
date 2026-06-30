@@ -189,23 +189,29 @@ sync.
 
 Transport is **WatchConnectivity** (`WCSession`). The phone pushes the
 authoritative set as a JSON **manifest** via `updateApplicationContext` (the watch
-renders its List from it and **prunes** any local file no longer listed), and
-sends each audio file with **`transferFile`** — the system's background
-file-transfer API for a watch and its companion. `transferFile` does **not**
-require the apps to be reachable or foregrounded: the OS queues each transfer and
-delivers it opportunistically, surviving the watch app being backgrounded or
-suspended, and resumes large files on its own. The Watch folder shows real
-byte-level progress from each transfer's `progress`. The watch sends a small
-`clearAll` message back when you clear it, and mirrors each sync step to the
-phone's **Log** tab (`⌚`-prefixed) so the whole exchange is debuggable from one
-place. The wire format (`WatchManifest.swift`) is compiled into **both** targets
-so encode and decode can't drift — the same trick the Share Extension uses with
-`SharedInbox.swift`.
+renders its List from it and **prunes** any local file no longer listed). Audio
+files travel one of two ways:
 
-> **Simulator note:** `transferFile` is reliable on a real iPhone + Apple Watch
-> pair, but background file transfers are flaky on paired **Simulators** (the
-> manifest still arrives, so tracks list but their files may never land). Test
-> file delivery on real hardware.
+- **`transferFile`** — the system's background file-transfer API — when the watch
+  isn't reachable (so a queued track keeps delivering after you pocket the phone).
+- A **resumable stream** over the live message channel when the watch app *is*
+  reachable. The phone asks the watch how many bytes of the file it already has
+  (the watch keeps a `.part` file) and sends the rest in chunks; if the
+  connection drops the next attempt **resumes from that offset** instead of
+  restarting. This exists because the system file-transfer channel doesn't
+  establish on every device pair (it accepts the transfer but moves no bytes) —
+  the resumable stream delivers regardless, as long as the watch app is open.
+
+Whichever path lands the whole file first wins; the other is cancelled. The Watch
+folder shows real byte-level progress. The watch sends a small `clearAll` message
+back when you clear it, and mirrors each sync step to the phone's **Log** tab
+(`⌚`-prefixed) so the whole exchange is debuggable from one place. The wire format
+(`WatchManifest.swift`) is compiled into **both** targets so encode and decode
+can't drift — the same trick the Share Extension uses with `SharedInbox.swift`.
+
+> **Tip:** for the fastest, most reliable delivery, **keep the watch app open**
+> (the List pane) while syncing — that keeps the watch reachable so the resumable
+> stream runs.
 
 ### Watch source layout (`OfflineListenWatch/`)
 
