@@ -203,6 +203,16 @@ struct LibraryView: View {
                     ArchivedTracksView(onPlay: onPlay, share: $share)
                 }
             }
+            .onChange(of: path) { newPath in
+                // Safety net: none of these routes is ever legitimately pushed
+                // twice in a row, so collapse a transient duplicate push (which
+                // otherwise left a duplicate screen needing two Back taps).
+                guard newPath.count >= 2, newPath[newPath.count - 1] == newPath[newPath.count - 2] else { return }
+                DispatchQueue.main.async {
+                    guard path.count >= 2, path[path.count - 1] == path[path.count - 2] else { return }
+                    path.removeLast()
+                }
+            }
             .alert("New Folder", isPresented: $showNewFolder) {
                 TextField("Folder name", text: $newFolderName)
                 Button("Create") {

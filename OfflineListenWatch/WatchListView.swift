@@ -10,10 +10,10 @@ struct WatchListView: View {
 
     var body: some View {
         NavigationStack {
-            // No nav title: in a paged TabView the large "Library" title left the
-            // top row tucked under it on first render. Dropping it sidesteps the
-            // title/content-inset glitch entirely. The empty state is an overlay
-            // so the List still owns the scroll layout.
+            // The "Library" title provides the top inset (without it the content
+            // rides up under the clock). The first-render glitch where the top row
+            // tucked under the title is a wrong initial scroll offset, so pin the
+            // initial scroll to the top.
             List {
                 if !library.folders.isEmpty {
                     Section("Playlists") {
@@ -46,6 +46,8 @@ struct WatchListView: View {
                     }
                 }
             }
+            .defaultScrollAnchor(.top)
+            .navigationTitle("Library")
             .overlay {
                 if library.tracks.isEmpty {
                     ContentUnavailableCompat(
