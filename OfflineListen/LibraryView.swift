@@ -168,8 +168,25 @@ struct LibraryView: View {
         library.unfiledActiveTracks.filter { filter.matches($0) }
     }
 
+    /// Wraps `path` to reject a consecutive-duplicate push synchronously, before
+    /// the stack animates a second copy of the same screen. (Some destinations
+    /// trigger a spurious double-append; none of these routes is ever
+    /// legitimately pushed twice in a row.)
+    private var dedupedPath: Binding<[LibraryRoute]> {
+        Binding(
+            get: { path },
+            set: { newValue in
+                if newValue.count >= 2, newValue[newValue.count - 1] == newValue[newValue.count - 2] {
+                    path = Array(newValue.dropLast())
+                } else {
+                    path = newValue
+                }
+            }
+        )
+    }
+
     var body: some View {
-        NavigationStack(path: $path) {
+        NavigationStack(path: dedupedPath) {
             VStack(spacing: 0) {
                 if library.tracks.isEmpty && library.folders.isEmpty {
                     ContentUnavailableViewCompat(
@@ -201,16 +218,6 @@ struct LibraryView: View {
                     FolderDetailView(folderID: id, onPlay: onPlay, share: $share)
                 case .archived:
                     ArchivedTracksView(onPlay: onPlay, share: $share)
-                }
-            }
-            .onChange(of: path) { newPath in
-                // Safety net: none of these routes is ever legitimately pushed
-                // twice in a row, so collapse a transient duplicate push (which
-                // otherwise left a duplicate screen needing two Back taps).
-                guard newPath.count >= 2, newPath[newPath.count - 1] == newPath[newPath.count - 2] else { return }
-                DispatchQueue.main.async {
-                    guard path.count >= 2, path[path.count - 1] == path[path.count - 2] else { return }
-                    path.removeLast()
                 }
             }
             .alert("New Folder", isPresented: $showNewFolder) {
