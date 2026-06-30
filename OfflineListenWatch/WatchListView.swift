@@ -8,17 +8,12 @@ struct WatchListView: View {
 
     let onPlay: () -> Void
 
-    /// Flipped once just after the pane appears to force a fresh layout pass:
-    /// in a paged TabView the List's first render can tuck the top row under the
-    /// nav title until it's re-laid-out (what swiping away and back did by hand).
-    @State private var laidOut = false
-
     var body: some View {
         NavigationStack {
-            // Always a List (with the title attached to it), rather than swapping
-            // a List in/out of a Group — that swap left the first row tucked under
-            // the title until the pane was re-laid-out. The empty state is an
-            // overlay so the List still owns the scroll/title layout.
+            // No nav title: in a paged TabView the large "Library" title left the
+            // top row tucked under it on first render. Dropping it sidesteps the
+            // title/content-inset glitch entirely. The empty state is an overlay
+            // so the List still owns the scroll layout.
             List {
                 if !library.folders.isEmpty {
                     Section("Playlists") {
@@ -51,7 +46,6 @@ struct WatchListView: View {
                     }
                 }
             }
-            .navigationTitle("Library")
             .overlay {
                 if library.tracks.isEmpty {
                     ContentUnavailableCompat(
@@ -61,12 +55,6 @@ struct WatchListView: View {
                     )
                 }
             }
-            .id(laidOut)
-        }
-        .task {
-            guard !laidOut else { return }
-            try? await Task.sleep(nanoseconds: 100_000_000)
-            laidOut = true
         }
     }
 }
