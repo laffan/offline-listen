@@ -305,8 +305,12 @@ on your own device).
    - **YoutubeDL-iOS** — `https://github.com/kewlbear/YoutubeDL-iOS.git` — the
      yt-dlp fallback extractor.
 
-   Both are pinned to `main`; change the rule in *Project ▸ Package Dependencies*
-   to pin versions. Playback uses Apple's AVFoundation — no media-player package.
+   YouTubeKit is pinned **up-to-next-major from 2.8.0** (it's actively
+   maintained and tracks YouTube's changes — use Xcode's *Update Package*
+   to pull new releases deliberately); YoutubeDL-iOS is pinned to `main`
+   (the repo is dormant — the yt-dlp *engine* it downloads at runtime is
+   what actually updates). Playback uses Apple's AVFoundation — no
+   media-player package.
 3. Select the **OfflineListen** scheme and your device (or a Simulator — note
    the on-device yt-dlp download needs network).
 4. Set your **Signing Team** under *Signing & Capabilities* and adjust
@@ -428,10 +432,40 @@ excluded because AVFoundation can't read it.
 
 Both resolve a direct stream URL and then hand it to the shared
 `AudioStreamDownloader`, which fetches it in **5 MB HTTP byte-range chunks**
-(each retried on transient errors). YouTube throttles/drops single large
-connections, so — like yt-dlp — ranged requests are what make big files download
-reliably. We deliberately avoid YoutubeDL-iOS's own `download(...)`: it's
-hardwired to a *background* `URLSession` that doesn't complete on the Simulator.
+(each retried on transient errors with exponential backoff). YouTube
+throttles/drops single large connections, so — like yt-dlp — ranged requests
+are what make big files download reliably. We deliberately avoid
+YoutubeDL-iOS's own `download(...)`: it's hardwired to a *background*
+`URLSession` that doesn't complete on the Simulator.
+
+The downloader is **self-healing** rather than fail-fast, because googlevideo
+URLs expire (~6h), are IP-bound, and get rejected outright (HTTP 403/410) when
+YouTube's token checks shift mid-download:
+
+- **Re-resolve + resume.** Every download carries a *refresher* from its
+  extractor: on a 403/410/416 (or a stall that survives in-place retries) the
+  URL is re-resolved — the same yt-dlp `format_id` or YouTubeKit rendition —
+  and the download **resumes from its current byte offset** instead of failing.
+  The server's first Content-Range total overrides the extractor's metadata
+  size (which can be inaccurate); a *change* in the server-confirmed total
+  afterwards means a different rendition was served and aborts the download
+  rather than corrupting the file, and a mid-file HTTP 200 (Range ignored)
+  rewinds and rewrites the file rather than appending foreign bytes.
+- **No silent truncation.** An empty or short body before the advertised size
+  is a stall to retry, *not* an end-of-stream; if the remaining bytes can't be
+  fetched the download **fails** — a truncated file is never saved as a
+  success.
+- **Verified playable.** Every finished file must pass `MediaVerifier` (a
+  decodable audio/video track and a real duration via AVFoundation) before
+  it's returned; an unplayable dud fails the attempt so the next player
+  client / extractor gets its turn, instead of a broken track landing in the
+  library.
+- **Download failures fall through to other clients.** On the yt-dlp path, a
+  failure *after* a successful extraction (URL rejected even across refreshes,
+  truncation, failed merge, failed verification) retries via the forced player
+  clients — which resolve *different* URLs — not just extraction failures. In
+  the forced-client loop itself, one client's download failure moves to the
+  next client rather than sinking the whole recovery.
 
 ### Any yt-dlp site (Vimeo, SoundCloud, …) — progressive only
 
@@ -504,6 +538,17 @@ as possible rather than collapsing to one opaque line:
   one. `.debug` breadcrumbs bracket each Python call (`Importing yt_dlp…`,
   `Running extract_info…`, `extract_info returned`) so the last persisted line
   pinpoints the exact in-flight step.
+- **A stale engine refreshes itself.** When a failure's signature says the
+  cached yt-dlp module is out of date with YouTube's player (nsig/signature
+  extraction failures), the engine is re-downloaded automatically — once per
+  session — and the URL retried, instead of waiting for the user to find
+  ⋯ → Refresh yt-dlp engine.
+
+The remaining structural gap — YouTube's PO-token enforcement and
+JS-runtime-only nsig challenges, which desktop tools solve with an embedded
+browser engine — is scoped as future work in
+[`docs/JS-RUNTIME-PLAN.md`](docs/JS-RUNTIME-PLAN.md) (PO-token minting in a
+hidden WKWebView, nsig solving via JavaScriptCore).
 
 ## Chapters
 

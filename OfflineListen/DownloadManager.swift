@@ -257,7 +257,7 @@ final class DownloadManager: ObservableObject {
                 Task { await aiOrganizer.organizeIfEnabled(id) }
             }
         } catch {
-            if error is CancellationError || (error as? URLError)?.code == .cancelled || Task.isCancelled {
+            if isCancellation(error) {
                 job.state = .cancelled
                 appLog("Cancelled: \(job.url)", level: .warning, category: "Queue")
             } else {

@@ -8,9 +8,12 @@ import AVFoundation
 enum VideoMerger {
     /// Ensures `videoFile` has an audio track. If it already does (a progressive
     /// muxed download), it's returned unchanged. Otherwise the audio described by
-    /// `audioRequest` is downloaded and muxed in.
+    /// `audioRequest` is downloaded and muxed in. `audioRefresh`, when provided,
+    /// lets the chunked download replace an expired/rejected audio URL and
+    /// resume, the same way the main stream download does.
     static func ensureAudio(videoFile: URL,
                             audioRequest: URLRequest?,
+                            audioRefresh: AudioStreamDownloader.RequestRefresher? = nil,
                             category: String) async throws -> URL {
         appLog("Checking downloaded video for an embedded audio track…", level: .debug, category: category)
         let videoAsset = AVURLAsset(url: videoFile)
@@ -33,6 +36,7 @@ enum VideoMerger {
             expectedSize: nil,
             to: audioDest,
             category: category,
+            refresh: audioRefresh,
             onProgress: { _ in }
         )
 

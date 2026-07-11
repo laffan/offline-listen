@@ -36,9 +36,7 @@ final class CompositeExtractor: MediaExtractor {
                                                   onDownloadStart: onDownloadStart,
                                                   onProgress: onProgress)
         } catch {
-            if error is CancellationError || (error as? URLError)?.code == .cancelled || Task.isCancelled {
-                throw error
-            }
+            if isCancellation(error) { throw error }
             appLog("\(primaryName) failed: \(error.localizedDescription) — falling back to \(fallbackName)",
                    level: .warning, category: "Extract")
             // localizedDescription is generic (e.g. YouTubeKit's "ResponseError
