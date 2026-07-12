@@ -183,10 +183,10 @@ struct AddBrowseSourceView: View {
             Form {
                 Section {
                     TextField(kind.inputPlaceholder, text: $input)
-                        .textInputAutocapitalization(kind.usesAI ? .words : .never)
-                        .autocorrectionDisabled(!kind.usesAI)
-                        .keyboardType(kind.usesAI ? .default : .URL)
-                    TextField(kind.usesAI ? "Name (optional)" : "Name (optional — uses the feed's title)",
+                        .textInputAutocapitalization(kind.inputIsURL ? .never : .words)
+                        .autocorrectionDisabled(kind.inputIsURL)
+                        .keyboardType(kind.inputIsURL ? .URL : .default)
+                    TextField(kind.inputIsURL ? "Name (optional — uses the site's title)" : "Name (optional)",
                               text: $name)
                 } footer: {
                     Text(kind.help)

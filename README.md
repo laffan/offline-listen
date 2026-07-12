@@ -36,7 +36,8 @@ Five screens (tabs):
    prior download.
 2. **Browse** — keeps tabs on and curates different audio **sources** (see
    [Browse: keeping tabs on audio sources](#browse-keeping-tabs-on-audio-sources)).
-   Add YouTube channels/playlists, RSS feeds, or AI-curated Artist/Genre/Country
+   Add YouTube channels/playlists, RSS feeds, a **Blog Agent** for blogs
+   without a feed, or AI-curated Artist/Genre/Country
    lists; each refresh surfaces YouTube links with title and description, and
    every item offers **Download** (sends it to the download queue) and
    **Preview** (a listen-first modal with **Save** / **Discard**).
@@ -145,24 +146,33 @@ description when one exists, and two actions per item:
   the modal without deciding deletes the temp file and leaves the item
   untouched.
 
-Six **source types**, in two families:
+Seven **source types**, in two families:
 
 | Type | How it works |
 |------|--------------|
 | **YouTube Channel** | Scrape/RSS: watches the channel's upload feed (`/feeds/videos.xml`). Accepts a channel URL, `@handle`, or bare `UC…` id — a handle/vanity URL is resolved to its channel id by scraping the channel page once, then cached. |
 | **YouTube Playlist** | Scrape/RSS: watches the playlist's feed. Accepts a playlist URL (anything with `list=`) or a bare playlist id. |
 | **RSS Feed** | RSS reader: parses any RSS/Atom feed and keeps **only the posts that contain YouTube links** (a music blog's roundups, a newsletter's song-of-the-day). A post with several links yields one item per video. |
+| **Blog Agent** | AI agent: RSS-reader behaviour for blogs **without a feed**. The agent fetches the homepage, asks the model which of the page's links are individual recent articles (telling posts apart from nav/category/about links is exactly the judgement call heuristics get wrong — and the model may only *pick from* the links found on the page, never invent one), reads up to 8 of them, and pulls out the YouTube links inside — one item per video, titled after its article, with the article's `og:description` and publish date when present. |
 | **Artist** | AI: the model suggests the artist's popular/essential songs. |
 | **Genre** | AI: popular songs in a genre, across artists. |
 | **Country** | AI: popular songs from a country, across eras and artists. |
 
 The AI types use the **Anthropic key from Settings** (they're unavailable until
-one is saved). The model is asked for real, well-known songs — title, artist,
-and a one-line note that becomes the item's description — and is deliberately
-**never trusted to produce YouTube links** (it hallucinates video ids); each
-suggestion is instead resolved to a real video by scraping the top result of a
-YouTube search. On a refresh, the model is told what it already suggested so it
-digs deeper instead of repeating itself.
+one is saved). For Artist/Genre/Country the model is asked for real, well-known
+songs — title, artist, and a one-line note that becomes the item's description —
+and is deliberately **never trusted to produce YouTube links** (it hallucinates
+video ids); each suggestion is instead resolved to a real video by scraping the
+top result of a YouTube search. On a refresh, the model is told what it already
+suggested so it digs deeper instead of repeating itself.
+
+**Agent blockers.** Sites behind bot protection refuse automated readers —
+a 403/429 for non-browser clients, or a Cloudflare-style challenge
+interstitial served with a 200 ("Just a moment…", "Verify you are human").
+The Blog Agent detects both and the source row shows a distinct
+**"Agent blocked"** error status instead of a generic failure or a silently
+empty list. A single blocked *article* is skipped (the rest still land); the
+error is raised when the homepage — or every article — refuses the agent.
 
 **Curation state persists** (`Documents/browse.json`): every item remembers
 whether it's new, sent to Downloads, saved, or discarded — so a refresh never
@@ -218,6 +228,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `FeedParser.swift` | Minimal RSS 2.0 + Atom parser (XMLParser) shared by the YouTube feeds and the generic RSS reader. |
 | `BrowseFetchers.swift` | YouTube channel/playlist feed fetch (+ channel-id resolution by page scrape), the YouTube-link-filtered RSS reader, and the search-result resolver. |
 | `AIDiscovery.swift` | AI song discovery for Artist/Genre/Country sources (suggestions via the Messages API, links via the search resolver). |
+| `BlogAgent.swift` | The Blog Agent source: homepage fetch → AI link triage → article reads → YouTube-link harvest, with bot-protection ("agent blocked") detection. |
 | `BrowseView.swift` | The Browse tab: sources grouped by type, add-source sheet, refresh. |
 | `BrowseSourceView.swift` | One source's items with per-row Download/Preview/Discard. |
 | `BrowsePreviewView.swift` | The preview modal: pipeline download, mini player, Save/Discard. |

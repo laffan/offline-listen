@@ -7,6 +7,8 @@ enum BrowseFetchError: LocalizedError {
     case notAFeed
     case channelNotFound
     case aiNotConfigured
+    /// The site refused the agent (bot protection / anti-scraping challenge).
+    case agentBlocked
 
     var errorDescription: String? {
         switch self {
@@ -20,6 +22,8 @@ enum BrowseFetchError: LocalizedError {
             return "Couldn't find a channel id for that link. Try the channel's /channel/UC… URL."
         case .aiNotConfigured:
             return "This source type needs an Anthropic API key — add one in Settings."
+        case .agentBlocked:
+            return "Agent blocked: the site's bot protection is refusing automated readers."
         }
     }
 }
@@ -47,6 +51,26 @@ enum BrowseHTTP {
             throw BrowseFetchError.network("HTTP \(http.statusCode) from \(url.host ?? "server")")
         }
         return data
+    }
+
+    /// Like `get`, but hands back non-2xx responses instead of throwing, so
+    /// the Blog Agent can tell a bot-protection refusal (403/429 + challenge
+    /// page) from an ordinary failure. Also reports the post-redirect URL
+    /// (the base for resolving a page's relative links). Network-level errors
+    /// still throw.
+    static func getRaw(_ url: URL) async throws -> (data: Data, status: Int, finalURL: URL) {
+        var request = URLRequest(url: url)
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("en", forHTTPHeaderField: "Accept-Language")
+        request.timeoutInterval = 30
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 200
+            return (data, status, response.url ?? url)
+        } catch {
+            if isCancellation(error) { throw error }
+            throw BrowseFetchError.network(error.localizedDescription)
+        }
     }
 
     /// Every YouTube video id found in `text` (watch/short/embed/youtu.be

@@ -7,6 +7,7 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
     case youtubeChannel
     case youtubePlaylist
     case rssFeed
+    case blogAgent
     case artist
     case genre
     case country
@@ -18,6 +19,7 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
         case .youtubeChannel: return "YouTube Channel"
         case .youtubePlaylist: return "YouTube Playlist"
         case .rssFeed: return "RSS Feed"
+        case .blogAgent: return "Blog Agent"
         case .artist: return "Artist"
         case .genre: return "Genre"
         case .country: return "Country"
@@ -30,6 +32,7 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
         case .youtubeChannel: return "YouTube Channels"
         case .youtubePlaylist: return "YouTube Playlists"
         case .rssFeed: return "RSS Feeds"
+        case .blogAgent: return "Blog Agents"
         case .artist: return "Artists"
         case .genre: return "Genres"
         case .country: return "Countries"
@@ -41,17 +44,29 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
         case .youtubeChannel: return "person.crop.rectangle"
         case .youtubePlaylist: return "list.and.film"
         case .rssFeed: return "dot.radiowaves.up.forward"
+        case .blogAgent: return "doc.text.magnifyingglass"
         case .artist: return "music.mic"
         case .genre: return "guitars"
         case .country: return "globe"
         }
     }
 
-    /// AI-driven kinds need an Anthropic key (Settings) to refresh.
+    /// AI-driven kinds need an Anthropic key (Settings) to refresh. The Blog
+    /// Agent counts: it uses the model to tell article links apart from the
+    /// rest of a homepage.
     var usesAI: Bool {
         switch self {
-        case .artist, .genre, .country: return true
+        case .blogAgent, .artist, .genre, .country: return true
         case .youtubeChannel, .youtubePlaylist, .rssFeed: return false
+        }
+    }
+
+    /// Whether the input field takes a URL/handle (URL keyboard, no
+    /// autocapitalization) rather than free text like an artist name.
+    var inputIsURL: Bool {
+        switch self {
+        case .youtubeChannel, .youtubePlaylist, .rssFeed, .blogAgent: return true
+        case .artist, .genre, .country: return false
         }
     }
 
@@ -61,6 +76,7 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
         case .youtubeChannel: return "Channel URL or @handle"
         case .youtubePlaylist: return "Playlist URL or ID"
         case .rssFeed: return "Feed URL"
+        case .blogAgent: return "Blog URL"
         case .artist: return "Artist name"
         case .genre: return "Genre (e.g. Bossa Nova)"
         case .country: return "Country (e.g. Mali)"
@@ -76,6 +92,8 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
             return "Watches the playlist's feed for entries."
         case .rssFeed:
             return "Reads the feed and keeps only posts that contain YouTube links."
+        case .blogAgent:
+            return "For blogs without a feed: an AI agent visits the site, reads recent articles, and pulls out the YouTube links inside them."
         case .artist:
             return "AI suggests the artist's popular songs and finds them on YouTube."
         case .genre:

@@ -125,6 +125,10 @@ final class BrowseStore: ObservableObject {
                 let result = try await RSSBrowseFeed.fetch(source: source)
                 fetched = result.items
                 feedTitle = result.feedTitle
+            case .blogAgent:
+                let result = try await BlogAgent.fetch(source: source, settings: aiSettings)
+                fetched = result.items
+                feedTitle = result.blogTitle
             case .artist, .genre, .country:
                 // Tell the model what it already suggested so refreshes dig
                 // deeper instead of repeating (discards included, on purpose).

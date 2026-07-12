@@ -66,6 +66,7 @@
 		1B00000000000000000002E6 /* BrowseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E6 /* BrowseView.swift */; };
 		1B00000000000000000002E7 /* BrowseSourceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E7 /* BrowseSourceView.swift */; };
 		1B00000000000000000002E8 /* BrowsePreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E8 /* BrowsePreviewView.swift */; };
+		1B00000000000000000002E9 /* BlogAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E9 /* BlogAgent.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -148,6 +149,7 @@
 		1A00000000000000000002E6 /* BrowseView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseView.swift; sourceTree = "<group>"; };
 		1A00000000000000000002E7 /* BrowseSourceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseSourceView.swift; sourceTree = "<group>"; };
 		1A00000000000000000002E8 /* BrowsePreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowsePreviewView.swift; sourceTree = "<group>"; };
+		1A00000000000000000002E9 /* BlogAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlogAgent.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -203,6 +205,7 @@
 				1A00000000000000000002E3 /* FeedParser.swift */,
 				1A00000000000000000002E4 /* BrowseFetchers.swift */,
 				1A00000000000000000002E5 /* AIDiscovery.swift */,
+				1A00000000000000000002E9 /* BlogAgent.swift */,
 				1A00000000000000000002E6 /* BrowseView.swift */,
 				1A00000000000000000002E7 /* BrowseSourceView.swift */,
 				1A00000000000000000002E8 /* BrowsePreviewView.swift */,
@@ -454,6 +457,7 @@
 				1B00000000000000000002E3 /* FeedParser.swift in Sources */,
 				1B00000000000000000002E4 /* BrowseFetchers.swift in Sources */,
 				1B00000000000000000002E5 /* AIDiscovery.swift in Sources */,
+				1B00000000000000000002E9 /* BlogAgent.swift in Sources */,
 				1B00000000000000000002E6 /* BrowseView.swift in Sources */,
 				1B00000000000000000002E7 /* BrowseSourceView.swift in Sources */,
 				1B00000000000000000002E8 /* BrowsePreviewView.swift in Sources */,
