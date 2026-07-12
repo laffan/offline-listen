@@ -726,14 +726,17 @@ final class YoutubeDLExtractor: MediaExtractor {
         // device they almost always fail the n-challenge (no JS runtime), so
         // they're a last resort. We accept the first client that yields a usable
         // stream, so this order is what decides quality and which client wins.
-        // Wire the on-device JS runtime (JavaScriptCore nsig/sig solving + a
-        // WKWebView PO-token minter) into yt-dlp before resolving. Python is
-        // bootstrapped by the default extractInfo that preceded us, so this is
-        // safe here. Once registered, the web-family clients below can actually
-        // resolve (their n-challenge is solved on device) instead of failing —
-        // and yt-dlp mints PO tokens on demand via the provider. Best-effort: if
-        // wiring fails, the clients behave exactly as before.
-        PythonBridge.configureIfNeeded()
+        // NOTE: the on-device JS runtime is deliberately *not* wired here.
+        // Registering it runs `load_all_plugins()` (Python module imports), and
+        // this forced-client path is reached precisely when the default
+        // extraction timed out — which frequently leaves an orphaned
+        // `extract_info` still executing in the embedded interpreter
+        // (`waitForOrphanedExtraction` logs "proceeding anyway"). Importing
+        // modules while another thread runs Python is a re-entrancy crash. So the
+        // wiring happens only at a calm point — right after a *successful*
+        // default resolve (see `extractMedia`) — and, once registered for the
+        // session, it benefits every later default-web resolve. The forced
+        // clients here run exactly as they did before the JS-runtime work.
 
         // The client order still leads with the pre-signed no-token clients
         // (`tv` for video quality, `ios` for audio) because PO-token minting is
@@ -1180,12 +1183,17 @@ final class YoutubeDLExtractor: MediaExtractor {
             appLog("Info: \"\(info.title)\" · \(formats.count) formats · \(Int(info.duration ?? 0))s",
                    level: .success, category: category)
 
-            // Python is now bootstrapped by the extractInfo above, so it's safe
-            // to register the on-device JS-runtime providers. This doesn't affect
-            // the extraction we just did, but a mid-download re-resolve and every
-            // subsequent download's default web path will have nsig solving and
-            // PO-token minting available.
-            PythonBridge.configureIfNeeded()
+            // The default extractInfo just *succeeded*, so Python is bootstrapped
+            // and — unlike the timeout path — nothing is orphaned in the
+            // interpreter. This is the one safe moment to run the plugin's
+            // `load_all_plugins()` import work. It doesn't affect the extraction
+            // we just did, but once registered for the session it gives every
+            // later default-web resolve on-device nsig solving (and, when
+            // `botguard.js` is present, PO-token minting). Guarded so it only
+            // runs with no orphaned extraction in flight.
+            if orphanedDefaultExtraction == nil {
+                PythonBridge.configureIfNeeded()
+            }
 
             do {
                 return try await downloadUsingDefaultInfo(

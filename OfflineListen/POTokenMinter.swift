@@ -80,6 +80,15 @@ final class POTokenMinter {
         case player
     }
 
+    /// Whether the vendored BotGuard orchestration script is bundled. When it
+    /// isn't (the default in a sandboxed build), minting can't work, so the
+    /// bridge doesn't install the mint callback at all — the PO-token provider
+    /// then reports itself unavailable and yt-dlp never invokes it. `nonisolated`
+    /// so the background bridge thread can check it without a main-actor hop.
+    nonisolated static var isBotguardBundled: Bool {
+        Bundle.main.url(forResource: "botguard", withExtension: "js", subdirectory: "ytdlp/scripts") != nil
+    }
+
     /// Returns a PO token for `binding` in `context`, minting one if the cache is
     /// empty or stale. Never throws: any failure logs a `.warning` and returns
     /// nil so the caller falls back to today's behaviour.

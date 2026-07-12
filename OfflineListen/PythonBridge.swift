@@ -80,6 +80,17 @@ enum PythonBridge {
         // WKWebView is main-thread-only, so this blocks the calling background
         // thread on a main-actor hop (safe: the caller is never the main actor,
         // and the WebView JS never re-enters Python).
+        //
+        // Installed ONLY when `botguard.js` is bundled. Without it minting can't
+        // work, and leaving the callback out means the PO-token provider reports
+        // itself unavailable — so yt-dlp never calls it and the main-actor hop
+        // never happens. This keeps the dormant Phase-1 path completely inert
+        // until its one missing script is vendored.
+        guard POTokenMinter.isBotguardBundled else {
+            appLog("PO-token bridge not installed (botguard.js absent) — provider stays dormant.",
+                   level: .debug, category: "JS-runtime")
+            return
+        }
         builtins.__ol_mint_pot = PythonObject(PythonFunction { (args: [PythonObject]) -> PythonConvertible in
             guard args.count >= 2,
                   let binding = String(args[0]),
