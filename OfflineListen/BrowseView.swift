@@ -175,6 +175,8 @@ struct AddBrowseSourceView: View {
 
     @State private var name = ""
     @State private var input = ""
+    /// Decade scope for a Country source; empty means any era.
+    @State private var era = ""
 
     private var aiBlocked: Bool { kind.usesAI && !aiSettings.isAuthenticated }
 
@@ -186,10 +188,20 @@ struct AddBrowseSourceView: View {
                         .textInputAutocapitalization(kind.inputIsURL ? .never : .words)
                         .autocorrectionDisabled(kind.inputIsURL)
                         .keyboardType(kind.inputIsURL ? .URL : .default)
+                    if kind == .country {
+                        Picker("Era", selection: $era) {
+                            Text("Any era").tag("")
+                            ForEach(BrowseEra.decades, id: \.self) { decade in
+                                Text(decade).tag(decade)
+                            }
+                        }
+                    }
                     TextField(kind.inputIsURL ? "Name (optional — uses the site's title)" : "Name (optional)",
                               text: $name)
                 } footer: {
-                    Text(kind.help)
+                    Text(kind == .country
+                         ? "\(kind.help) Pick a decade to focus the suggestions on that era."
+                         : kind.help)
                 }
 
                 if aiBlocked {
@@ -217,7 +229,10 @@ struct AddBrowseSourceView: View {
     }
 
     private func add() {
-        let source = browse.addSource(kind: kind, name: name, input: input)
+        let source = browse.addSource(kind: kind,
+                                      name: name,
+                                      input: input,
+                                      era: era.isEmpty ? nil : era)
         // First refresh happens right away so the source lands populated.
         Task { await browse.refresh(source) }
         dismiss()

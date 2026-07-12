@@ -43,15 +43,18 @@ final class BrowseStore: ObservableObject {
     // MARK: - Source management
 
     @discardableResult
-    func addSource(kind: BrowseSourceKind, name: String, input: String) -> BrowseSource {
+    func addSource(kind: BrowseSourceKind, name: String, input: String, era: String? = nil) -> BrowseSource {
         let trimmedInput = input.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         // Feed sources may leave the name blank — it's filled from the feed's
-        // own title on first refresh. AI sources read naturally as their input.
-        let fallbackName = trimmedInput.isEmpty ? kind.displayName : trimmedInput
+        // own title on first refresh. AI sources read naturally as their input
+        // (with the era folded in for an era-scoped Country source).
+        var fallbackName = trimmedInput.isEmpty ? kind.displayName : trimmedInput
+        if let era { fallbackName += " (\(era))" }
         let source = BrowseSource(kind: kind,
                                   name: trimmedName.isEmpty ? fallbackName : trimmedName,
-                                  input: trimmedInput)
+                                  input: trimmedInput,
+                                  era: era)
         sources.append(source)
         save()
         appLog("Browse: added \(kind.displayName) source \"\(source.name)\"", category: "Browse")

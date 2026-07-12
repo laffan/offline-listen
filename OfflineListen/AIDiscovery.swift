@@ -76,7 +76,11 @@ enum AIDiscovery {
         case .genre:
             subject = "List \(batchSize) popular, essential songs in the genre \"\(source.input)\", spanning different artists."
         case .country:
-            subject = "List \(batchSize) popular, beloved songs from \(source.input) (by artists from that country), spanning eras and artists."
+            if let era = source.era {
+                subject = "List \(batchSize) popular, beloved songs from \(source.input) released in the \(era) (by artists from that country), spanning artists and styles of that decade."
+            } else {
+                subject = "List \(batchSize) popular, beloved songs from \(source.input) (by artists from that country), spanning eras and artists."
+            }
         default:
             subject = "List \(batchSize) popular songs related to \"\(source.input)\"."
         }
