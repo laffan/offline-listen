@@ -94,7 +94,12 @@ enum PythonBridge {
         guard !isConfigured else { return }
         let category = "JS-runtime"
         do {
+            // Breadcrumbs written to the durable on-disk log before each step, so
+            // if a native fault happens inside these Python/PythonKit calls the
+            // last persisted line names exactly which one died.
+            appLog("Wiring JS runtime: installing bridge callables…", level: .debug, category: category)
             try installBridgeCallables()
+            appLog("Wiring JS runtime: registering plugin…", level: .debug, category: category)
             try registerPlugin(category: category)
             isConfigured = true
             appLog("On-device JS runtime wired into yt-dlp (JavaScriptCore + WKWebView).",
@@ -175,12 +180,14 @@ enum PythonBridge {
         }
         // Make sure the plugin specs (extractor/postprocessor) are registered by
         // importing the packages, then repoint plugin_dirs and reload.
+        appLog("Plugin: importing yt_dlp.extractor…", level: .debug, category: category)
         _ = Python.import("yt_dlp.extractor")
         _ = Python.import("yt_dlp.postprocessor")
         let globals = Python.import("yt_dlp.globals")
         let plugins = Python.import("yt_dlp.plugins")
         globals.plugin_dirs.value = PythonObject(["default", pluginDir])
         globals.all_plugins_loaded.value = false
+        appLog("Plugin: running load_all_plugins…", level: .debug, category: category)
         plugins.load_all_plugins()
         appLog("Registered on-device yt-dlp plugin from \(pluginDir).", level: .debug, category: category)
     }

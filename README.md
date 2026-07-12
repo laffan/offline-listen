@@ -595,21 +595,17 @@ client YouTube hasn't gated yet — the plan is
   dormant and extraction is unchanged.
 
 Both providers are strictly best-effort: any failure logs a `.warning` and
-extraction proceeds exactly as it did before. For YouTube the runtime is started
-and registered **up front** — Python is bootstrapped directly via
-`PythonSupport.initialize()` (no extraction needed) at the start of the job, so
-the very first web extraction solves nsig on device instead of grinding the
-pure-Python path that hangs (and used to orphan a thread and crash the fallback).
-Registration only runs with the interpreter idle, so the plugin import never
-races a running extraction. Each failed job also logs a single `Failure class: …`
-line (`nsig` | `po-token` | `bot-check` | `http-403` | `timeout` | `hls-only` |
-…) so a week of diagnostics logs can be tallied by failure mode.
-
-> This early bootstrap needs **PythonSupport** (a transitive dependency of
-> YoutubeDL-iOS) importable from the app target; add it as an explicit package
-> dependency alongside PythonKit if `import PythonSupport` doesn't resolve.
-> Without it the runtime falls back to activating from the second extraction of a
-> session.
+extraction proceeds exactly as it did before. The runtime registers lazily, at a
+point that's been observed safe — once a prior `extractInfo` has bootstrapped the
+embedded Python and the interpreter is idle — so the plugin import never races a
+running extraction. **In practice: download one easy video first (it bootstraps
+Python cleanly), and hard videos then resolve on device in the same session**; a
+first-ever hard video fails cleanly rather than downloading. The forced-client
+fallback also refuses to run while a timed-out extraction is still executing in
+the interpreter, so concurrent extractions can't crash the app. Each failed job
+logs a single `Failure class: …` line (`nsig` | `po-token` | `bot-check` |
+`http-403` | `timeout` | `hls-only` | …) so a week of diagnostics logs can be
+tallied by failure mode.
 
 The remaining gap — age-gated / members-only content needing a signed-in
 session — is scoped as optional cookie import (Phase 3) in the plan.

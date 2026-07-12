@@ -37,43 +37,40 @@ What still needs an **on-device** run: a live nsig solve against a real
 `base.js`, and the live BotGuard round-trip (Create → VM → GenerateIT → mint) in
 the WKWebView.
 
-## Early bootstrap (breaking the chicken-and-egg)
+## Registration & the crash chain (current, safe behaviour)
 
-The web client hangs on hard videos *because* nsig isn't solved on device — but
-the runtime can only register after Python is up, which used to happen only by
-running that same hanging extraction. That circular dependency meant a
-first-ever hard video would time out, orphan a GIL-holding nsig thread, and
-crash the forced-client fallback when it ran a second `extract_info`
-concurrently.
+Two distinct crashes surfaced during device testing; both are now guarded.
 
-`YoutubeDL-iOS` bootstraps Python lazily via `PythonSupport.initialize()` inside
-`loadPythonModule` — **not** by running an extraction. So we call that ourselves
-(`PythonBridge.bootstrapAndConfigure`) at the very start of a YouTube job, insert
-the yt-dlp module dir into `sys.path`, and register the providers *before* the
-first web extraction. The web client then solves nsig on device (resolving in a
-couple of seconds) and mints a PO token — no hang, no orphan, no crash — on the
-**first** download. (We skip the wrapper's `injectFakePopen` ffmpeg shim: this
-app never invokes yt-dlp's ffmpeg path.)
+**Crash A — concurrent `extract_info`.** The web client hangs on hard videos
+grinding nsig in pure Python; it times out but keeps running (orphaned), holding
+the interpreter's GIL. The forced-client fallback then started a *second*
+`extract_info` — two extractions in one embedded interpreter — which crashes,
+and the orphan also starves the second one (the "51s re-resolving ios" hang).
+Fix: `waitForOrphanedExtraction` now reports whether the interpreter is idle and
+clears its handle **only** when the orphan truly settled; the forced-client
+fallback waits a generous window and, if the orphan won't settle, **fails cleanly
+instead of running a concurrent extraction**.
 
-Guards that keep it safe:
+**Crash B — manual early bootstrap.** An attempt to start Python ourselves via
+`PythonSupport.initialize()` *before* the first extraction (to register the
+runtime up front and avoid the nsig hang entirely) crashed on device within a
+second — `PythonSupport.initialize()` returned, but Python work right after it
+faulted. A manual init is evidently **not** equivalent to `YoutubeDL-iOS`'s full
+private `loadPythonModule` sequence. `PythonBridge.bootstrapAndConfigure` is kept
+in the source but **not called**, pending on-device debugging of that fault.
 
-- `load_all_plugins()` (the plugin import) must never run while another
-  `extract_info` is executing in the interpreter — that re-entrancy is the
-  crash. Registration only runs with the interpreter idle:
-  `orphanedDefaultExtraction == nil` at the start of a job, or
-  `wireJSRuntimeIfSafe` after `waitForOrphanedExtraction` confirms settlement.
-- `waitForOrphanedExtraction` now returns whether the interpreter is idle and
-  clears its handle **only** when the orphan truly settled (it used to clear
-  unconditionally, falsely reading as idle).
-- The forced-client fallback no longer runs concurrently with an unsettled
-  orphan: it waits a generous window and, if the orphan won't settle, fails
-  cleanly instead of risking the concurrent-`extract_info` crash.
+**So registration is lazy and only at a known-safe point.** `wireJSRuntimeIfSafe`
+runs the plugin import only once a prior `extractInfo` has fully bootstrapped
+Python (the wrapper's own init — the condition under which registration was
+observed to succeed) *and* the interpreter is idle. Consequence: the runtime
+activates from the **second** extraction of a session — so **download one easy
+video first and hard videos then work in the same session**, or retry a
+first-attempt hard video. A first-ever hard video fails cleanly (no crash) rather
+than downloading. Breaking this last limitation needs a safe pre-extraction
+Python bootstrap, which needs device-side debugging of Crash B.
 
-Requires **PythonSupport** (a transitive dependency of YoutubeDL-iOS) to be
-importable from the app target — add it as an explicit package dependency
-alongside PythonKit if `canImport(PythonSupport)` is false. Without it the early
-bootstrap compiles out and the runtime falls back to lazy wiring (activates from
-the second extraction of a session).
+`PythonSupport` (a transitive dependency of YoutubeDL-iOS) is imported for the
+dormant early-bootstrap path; the active lazy path doesn't require it.
 
 ## Why this is the structural fix
 

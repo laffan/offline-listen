@@ -1171,24 +1171,20 @@ final class YoutubeDLExtractor: MediaExtractor {
             appLog("Initializing yt-dlp…", level: .debug, category: category)
             let youtubeDL = YoutubeDL()
 
-            // Register the on-device JS runtime *before* this job's default web
-            // extraction, so the web client solves nsig on device (resolving in a
-            // couple of seconds) instead of grinding the pure-Python path that
-            // hangs on hard videos — which orphans a GIL-holding thread and
-            // crashes the forced-client fallback when it runs a second
-            // `extract_info` concurrently.
+            // Register the on-device JS runtime once Python is bootstrapped and
+            // the interpreter is idle, so a later default web extraction solves
+            // nsig on device (resolving instead of hanging) and mints a PO token.
             //
-            // For YouTube we can start Python ourselves (PythonSupport) and wire
-            // the runtime up front, on the very first download. Gated on an idle
-            // interpreter (no orphan from a prior job) so the plugin import never
-            // races a running extraction. Non-YouTube sites, or builds without
-            // PythonSupport, fall back to the lazy path (registers once a prior
-            // extraction has bootstrapped Python).
-            #if canImport(PythonKit)
-            if Self.isYouTubeURL(url), orphanedDefaultExtraction == nil {
-                PythonBridge.bootstrapAndConfigure(pythonAlreadyInitialized: Self.pythonBootstrapped)
-            }
-            #endif
+            // NOTE: an experimental early bootstrap (starting Python ourselves via
+            // PythonSupport *before* the first extraction) crashed on device — a
+            // manual `PythonSupport.initialize()` is evidently not equivalent to
+            // the wrapper's full private init, and Python work right after it
+            // faults. So we use only the lazy path, which is known to work once
+            // the wrapper's own `extractInfo` has bootstrapped Python. That means
+            // the runtime activates from the second extraction of a session (or a
+            // retry of a first hard video), not the very first one.
+            // `PythonBridge.bootstrapAndConfigure` is kept but intentionally NOT
+            // called, pending on-device debugging of the fault.
             await wireJSRuntimeIfSafe(category: category)
 
             // The default web-client extraction (`extractInfo`) must run first: it
