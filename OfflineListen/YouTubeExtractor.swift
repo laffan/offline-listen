@@ -726,6 +726,21 @@ final class YoutubeDLExtractor: MediaExtractor {
         // device they almost always fail the n-challenge (no JS runtime), so
         // they're a last resort. We accept the first client that yields a usable
         // stream, so this order is what decides quality and which client wins.
+        // Wire the on-device JS runtime (JavaScriptCore nsig/sig solving + a
+        // WKWebView PO-token minter) into yt-dlp before resolving. Python is
+        // bootstrapped by the default extractInfo that preceded us, so this is
+        // safe here. Once registered, the web-family clients below can actually
+        // resolve (their n-challenge is solved on device) instead of failing —
+        // and yt-dlp mints PO tokens on demand via the provider. Best-effort: if
+        // wiring fails, the clients behave exactly as before.
+        PythonBridge.configureIfNeeded()
+
+        // The client order still leads with the pre-signed no-token clients
+        // (`tv` for video quality, `ios` for audio) because PO-token minting is
+        // a no-op until `botguard.js` is vendored (see POTokenMinter); the
+        // web-family clients — now resolvable thanks to nsig solving — remain the
+        // fallback tier. When PO minting is live, promote `web_safari`/`web` to
+        // the front for their higher-quality, least-gated renditions.
         let clientSets: [[String]] = mode == .video
             ? [["tv"], ["ios"], ["android"], ["web_safari"], ["mweb"], ["web"]]
             : [["ios"], ["android"], ["tv"], ["web_safari"], ["mweb"], ["web"]]
@@ -1164,6 +1179,13 @@ final class YoutubeDLExtractor: MediaExtractor {
             }
             appLog("Info: \"\(info.title)\" · \(formats.count) formats · \(Int(info.duration ?? 0))s",
                    level: .success, category: category)
+
+            // Python is now bootstrapped by the extractInfo above, so it's safe
+            // to register the on-device JS-runtime providers. This doesn't affect
+            // the extraction we just did, but a mid-download re-resolve and every
+            // subsequent download's default web path will have nsig solving and
+            // PO-token minting available.
+            PythonBridge.configureIfNeeded()
 
             do {
                 return try await downloadUsingDefaultInfo(

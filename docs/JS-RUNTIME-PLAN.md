@@ -1,10 +1,38 @@
 # Plan: on-device JavaScript runtime for extraction (JavaScriptCore / WKWebView)
 
-*Status: planned — not started. This document scopes the work for a future
-session. The download-layer reliability fixes (resume + re-resolve on 403,
+*Status: **Phase 2 implemented; Phase 1 scaffolded; Phase 3 still future.** The
+download-layer reliability fixes (resume + re-resolve on 403,
 truncation-as-failure, download-failure client fallback, playability
 verification, auto engine refresh) landed separately and are prerequisites,
 not part of this plan.*
+
+## What landed (this session)
+
+| Piece | Status | Where |
+|-------|--------|-------|
+| JavaScriptCore nsig/sig solver | **Done** | `JSChallengeSolver.swift` |
+| yt-dlp provider plugin (JCP + PTP) | **Done** | `ytdlp/plugins/offlinelisten/yt_dlp_plugins/extractor/offlinelisten.py` |
+| PythonKit↔Swift bridge + plugin registration | **Done** | `PythonBridge.swift` |
+| Vendored `yt-dlp-ejs` scripts (v0.8.0) | **Done** | `ytdlp/scripts/yt.solver.{lib,core}.js` |
+| Failure-class counter line | **Done** | `DownloadManager.failureClass(for:)` |
+| PO-token minter (WKWebView + BotGuard) | **Scaffolded** | `POTokenMinter.swift` |
+| `botguard.js` orchestration glue | **Not vendored** | see `ytdlp/scripts/README.md` |
+| Phase 3 cookie import | **Not started** | — |
+
+**Verification done off-device (no Xcode/YouTube access in the build sandbox):**
+the real `yt-dlp-ejs` v0.8.0 `lib`+`core` scripts were confirmed to load and run
+`jsc(...)` in a barebones JS engine exposing only `globalThis`/`JSON`/`console`
+— exactly JavaScriptCore's surface — and the Python plugin was driven through
+the **real** yt-dlp `JsChallengeRequestDirector`, solving both an `n` and a
+`sig` request end-to-end (request grouping → Swift-bridge call → output mapping →
+yt-dlp's own validators). What still needs an on-device run: a live nsig solve
+against a real `base.js`, and the entire BotGuard/PO-token flow (Phase 1).
+
+**The one missing piece for Phase 1** is `ytdlp/scripts/botguard.js` (the
+`bgutils-js` `BotGuardClient`/`WebPoMinter` glue), which couldn't be fetched in
+the sandboxed build. Until it's present, PO-token minting is a clean no-op and
+extraction behaves exactly as before. See `ytdlp/scripts/README.md` for the
+drop-in contract.
 
 ## Why this is the structural fix
 

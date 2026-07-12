@@ -349,8 +349,39 @@ final class DownloadManager: ObservableObject {
             } else {
                 job.state = .failed(error.localizedDescription)
                 appLog("Job failed: \(error.localizedDescription)", level: .error, category: "Queue")
+                // A single, greppable classification line per failed job, so a
+                // week of diagnostics logs can be tallied by failure mode
+                // (JS-RUNTIME-PLAN "Testing & metrics").
+                appLog("Failure class: \(Self.failureClass(for: error))", level: .warning, category: "Queue")
             }
         }
+    }
+
+    /// Buckets a job failure into one coarse class for the diagnostics tally.
+    /// Pure string matching over the error text (the same signatures
+    /// `diagnosticHint` recognises), most-specific first. `other` when nothing
+    /// matches — it never guesses.
+    static func failureClass(for error: Error) -> String {
+        if error is OperationTimeout { return "timeout" }
+        if let extractorError = error as? ExtractorError {
+            switch extractorError {
+            case .hlsOnly: return "hls-only"
+            case .unplayableVideoCodec: return "unplayable-codec"
+            case .noAudioFormat, .noVideoFormat: return "no-format"
+            default: break
+            }
+        }
+        let t = "\(error.localizedDescription) \(String(describing: error))".lowercased()
+        func has(_ s: String) -> Bool { t.contains(s) }
+        if has("sign in to confirm") || has("not a bot") || has("confirm you’re not a bot") { return "bot-check" }
+        if has("po token") || has("po_token") || has("missing a po") { return "po-token" }
+        if has("nsig") || has("signature extraction failed") || (has("unable to extract") && has("player")) { return "nsig" }
+        if has("http 403") || has("403") || has("410") { return "http-403" }
+        if has("timed out") || has("timeout") { return "timeout" }
+        if has("members-only") || has("private video") || has("age") || has("unavailable") { return "unavailable" }
+        if has("network") || has("connection") || has("offline") { return "network" }
+        if has("truncat") || has("not playable") || has("corrupt") { return "truncated" }
+        return "other"
     }
 
     /// Expands a playlist job: resolves the entries (running serially in the

@@ -140,6 +140,10 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `YouTubeExtractor.swift` | `MediaExtractor` protocol + YoutubeDL-iOS impl + a mock. |
 | `YouTubeKitExtractor.swift` | Native-Swift (b5i/YouTubeKit) primary extractor. |
 | `CompositeExtractor.swift` | Tries the native extractor, falls back to yt-dlp. |
+| `JSChallengeSolver.swift` | Solves YouTube's `n`/`sig` challenges by running the `yt-dlp-ejs` scripts in JavaScriptCore. |
+| `POTokenMinter.swift` | Mints PO tokens via BotGuard in a hidden WKWebView (needs vendored `botguard.js`). |
+| `PythonBridge.swift` | Installs the Swift↔Python callbacks and registers the on-device yt-dlp provider plugin. |
+| `ytdlp/` | Bundled (folder reference): the `yt-dlp-ejs` solver scripts + the `yt_dlp_plugins` provider package. |
 | `AudioStreamDownloader.swift` | Shared chunked byte-range stream downloader. |
 | `VideoAudioExtractor.swift` | Extracts audio from a muxed video via AVFoundation. |
 | `ChapterFetcher.swift` | Best-effort capture of YouTube chapter markers via the on-device yt-dlp module. |
@@ -561,11 +565,41 @@ as possible rather than collapsing to one opaque line:
   session — and the URL retried, instead of waiting for the user to find
   ⋯ → Refresh yt-dlp engine.
 
-The remaining structural gap — YouTube's PO-token enforcement and
-JS-runtime-only nsig challenges, which desktop tools solve with an embedded
-browser engine — is scoped as future work in
-[`docs/JS-RUNTIME-PLAN.md`](docs/JS-RUNTIME-PLAN.md) (PO-token minting in a
-hidden WKWebView, nsig solving via JavaScriptCore).
+### On-device JavaScript runtime (nsig solving + PO tokens)
+
+YouTube's 2025–26 countermeasures made "extraction" require running the site's
+own player JavaScript: the `n`/`sig` challenges now need a real JS runtime (yt-dlp
+uses Deno on desktop), and PO (proof-of-origin) tokens are minted by BotGuard, a
+JS attestation program. iOS ships two first-party JS engines, so the app closes
+this gap on device rather than depending on whichever unauthenticated player
+client YouTube hasn't gated yet — the plan is
+[`docs/JS-RUNTIME-PLAN.md`](docs/JS-RUNTIME-PLAN.md).
+
+- **nsig/sig solving via JavaScriptCore (active).** `JSChallengeSolver` runs the
+  pinned [`yt-dlp-ejs`](https://github.com/yt-dlp/ejs) challenge-solver scripts
+  (`OfflineListen/ytdlp/scripts/`) in JavaScriptCore — the same scripts a desktop
+  Deno/QuickJS runtime would run. A small Python plugin
+  (`ytdlp/plugins/…/offlinelisten.py`) registers as a yt-dlp **JS-challenge
+  provider** and calls back into Swift via a PythonKit bridge (`PythonBridge`);
+  once it reports available, yt-dlp selects the web player clients again (whose
+  renditions are the ones Safari plays) instead of falling back to its JS-less
+  client set. Wired into the forced-client recovery and, from the second download
+  on, the default web path.
+- **PO-token minting via WKWebView (scaffolded).** `POTokenMinter` runs Google's
+  BotGuard program in a hidden `WKWebView` and mints `gvs`/`player` tokens
+  (fetched lazily, cached for hours, refreshed on 403), fed to yt-dlp through a
+  registered **PO-token provider**. This needs one vendored orchestration script,
+  `botguard.js`, that isn't bundled yet — **until it is, minting is a clean no-op
+  and extraction is unchanged** (see `OfflineListen/ytdlp/scripts/README.md`).
+
+Both providers are strictly best-effort: any failure logs a `.warning` and
+extraction proceeds exactly as it did before. Each failed job also logs a single
+`Failure class: …` line (`nsig` | `po-token` | `bot-check` | `http-403` |
+`timeout` | `hls-only` | …) so a week of diagnostics logs can be tallied by
+failure mode.
+
+The remaining gap — age-gated / members-only content needing a signed-in
+session — is scoped as optional cookie import (Phase 3) in the plan.
 
 ## Chapters
 
