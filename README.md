@@ -585,18 +585,24 @@ client YouTube hasn't gated yet — the plan is
   renditions are the ones Safari plays) instead of falling back to its JS-less
   client set. Wired into the forced-client recovery and, from the second download
   on, the default web path.
-- **PO-token minting via WKWebView (scaffolded).** `POTokenMinter` runs Google's
-  BotGuard program in a hidden `WKWebView` and mints `gvs`/`player` tokens
-  (fetched lazily, cached for hours, refreshed on 403), fed to yt-dlp through a
-  registered **PO-token provider**. This needs one vendored orchestration script,
-  `botguard.js`, that isn't bundled yet — **until it is, minting is a clean no-op
-  and extraction is unchanged** (see `OfflineListen/ytdlp/scripts/README.md`).
+- **PO-token minting via WKWebView.** `POTokenMinter` runs Google's BotGuard
+  program in a hidden `WKWebView` and mints `gvs`/`player` tokens (lazily, cached
+  for hours, refreshed on 403), fed to yt-dlp through a registered **PO-token
+  provider**. The whole flow is vendored as `botguard.js` (bundled from
+  [`bgutils-js`](https://github.com/LuanRT/BgUtils)); because the WebView runs in
+  the `youtube.com` origin, its network calls are same-origin, so Swift makes no
+  HTTP calls of its own. If `botguard.js` is ever removed the provider goes
+  dormant and extraction is unchanged.
 
 Both providers are strictly best-effort: any failure logs a `.warning` and
-extraction proceeds exactly as it did before. Each failed job also logs a single
-`Failure class: …` line (`nsig` | `po-token` | `bot-check` | `http-403` |
-`timeout` | `hls-only` | …) so a week of diagnostics logs can be tallied by
-failure mode.
+extraction proceeds exactly as it did before. Registration is deferred to a safe
+point — the start of a job once Python is bootstrapped and the interpreter is
+idle — so the plugin import never races a running extraction (that re-entrancy
+crashed an early version). In practice the runtime activates from the second
+extraction of a session onward, or a retry of a first hard video. Each failed
+job also logs a single `Failure class: …` line (`nsig` | `po-token` |
+`bot-check` | `http-403` | `timeout` | `hls-only` | …) so a week of diagnostics
+logs can be tallied by failure mode.
 
 The remaining gap — age-gated / members-only content needing a signed-in
 session — is scoped as optional cookie import (Phase 3) in the plan.

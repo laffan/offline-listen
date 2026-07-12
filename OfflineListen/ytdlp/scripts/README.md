@@ -19,24 +19,31 @@ surface.
 pair. (The unminified `.js` variants are used here so JSC's error messages stay
 legible; the minified variants work identically.)
 
-## `botguard.js` — PO-token minter glue (Phase 1, **not yet vendored**)
+## `botguard.js` — PO-token minter glue (Phase 1, active)
 
-`POTokenMinter` runs BotGuard in a hidden `WKWebView`. It fetches Google's
-BotGuard **interpreter (VM)** at runtime and needs a small orchestration script,
-`botguard.js`, that exposes two globals:
+`POTokenMinter` runs BotGuard in a hidden `WKWebView` to mint PO tokens. The
+whole flow is vendored here as `botguard.js`, bundled from
+[`bgutils-js`](https://github.com/LuanRT/BgUtils) v3.2.0 (MIT, © 2024 LuanRT)
+plus a thin entry (`ol-entry.ts`, kept in the commit history) that exposes one
+global:
 
 ```js
-// Runs the BotGuard program bound to `binding`; returns the BotGuard response.
-globalThis.__ol_botguard = async (interpreterUrl, program, globalName, binding) => "...";
-// Mints the final websafe PO token from the integrity token + binding.
-globalThis.__ol_mint = async (integrityToken, binding) => "...";
+globalThis.__ol_generate_pot(requestKey, identifier)
+    // -> Promise<JSON string { poToken, ttl }>
 ```
 
-This is the `BG.BotGuardClient` / `BG.WebPoMinter` logic from
-[`bgutils-js`](https://github.com/LuanRT/BgUtils) (Unlicense/MIT). It could not
-be vendored in this sandboxed build (no network to GitHub). **Until
-`botguard.js` is present, PO-token minting is a clean no-op** — `mint(...)`
-returns nil, extraction proceeds exactly as before, and the Log notes it once.
-Drop the file here on a networked device build to activate Phase 1, then promote
-the web clients to the front of the forced-client order in
-`YouTubeExtractor.extractViaForcedClients` (see the comment there).
+It runs the full protocol — Create → load the interpreter VM → snapshot →
+GenerateIT → mint — inside the WebView. Because the WebView document sits in the
+`youtube.com` origin, the Create/GenerateIT `fetch`es are **same-origin** (no
+CORS), so Swift makes no HTTP calls and parses no challenge itself.
+
+**Regenerating** (after a bgutils-js update):
+
+```sh
+bun build ol-entry.ts --target=browser --format=iife --minify
+```
+
+then prepend the provenance header and save as `botguard.js`. If `botguard.js`
+is ever removed, `POTokenMinter.isBotguardBundled` is false, the bridge doesn't
+install the mint callback, and the PO-token provider reports itself unavailable
+— minting becomes a clean no-op with extraction unchanged.

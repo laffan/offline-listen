@@ -208,8 +208,15 @@ final class YoutubeDLExtractor: MediaExtractor {
     /// the cooperative pool, and because withTaskGroup waits for *all* children
     /// before returning — a non-throwing `await orphan.value` child would block
     /// the group even after cancellation.
-    private func waitForOrphanedExtraction(category: String, cap: TimeInterval = 5) async {
-        guard let orphan = orphanedDefaultExtraction else { return }
+    /// Returns whether the interpreter is now idle: `true` if there was no
+    /// orphan, or it finished within `cap`; `false` if it's still running. The
+    /// handle is cleared **only** when the orphan actually settles, so a `false`
+    /// return leaves it tracked — that's the reliable "Python is busy" signal the
+    /// safe JS-runtime wiring depends on (an unconditionally-cleared handle would
+    /// falsely read as idle while a zombie extraction still holds the GIL).
+    @discardableResult
+    private func waitForOrphanedExtraction(category: String, cap: TimeInterval = 5) async -> Bool {
+        guard let orphan = orphanedDefaultExtraction else { return true }
         appLog("Waiting for orphaned default extraction to settle (up to \(Int(cap))s)…",
                level: .debug, category: category)
         let settled: Bool = await withCheckedContinuation { continuation in
@@ -229,14 +236,41 @@ final class YoutubeDLExtractor: MediaExtractor {
 
             Task { await orphan.value; settle(true); timer.cancel() }
         }
-        orphanedDefaultExtraction = nil
         if settled {
+            orphanedDefaultExtraction = nil
             appLog("Orphaned extraction settled — proceeding with recovery.",
                    level: .debug, category: category)
         } else {
             appLog("Orphaned extraction still running after \(Int(cap))s — proceeding anyway (memory pressure risk).",
                    level: .warning, category: category)
         }
+        return settled
+    }
+
+    /// One-shot signal that a prior `extractInfo` has booted the embedded Python
+    /// runtime this session, so direct PythonKit calls (and the plugin import) are
+    /// safe. Set after the first resolve attempt of the session, success or
+    /// timeout — either way `extract_info` ran and Python came up.
+    private static var pythonBootstrapped = false
+
+    /// Registers the on-device JS-runtime providers at a point where it can't
+    /// crash: only once Python is bootstrapped **and** no extraction is running
+    /// in the interpreter. `load_all_plugins()` (the plugin import work) must
+    /// never run concurrently with another `extract_info` — that re-entrancy is
+    /// what crashed a mid-recovery attempt. Doing it at the very start of a job
+    /// (serial queue) after confirming the interpreter is idle lets the default
+    /// web extraction that follows solve nsig on device (so it resolves instead
+    /// of hanging) and mint a PO token.
+    private func wireJSRuntimeIfSafe(category: String) async {
+        #if canImport(PythonKit)
+        guard Self.pythonBootstrapped, !PythonBridge.isConfigured else { return }
+        guard await waitForOrphanedExtraction(category: category) else {
+            appLog("Deferring on-device JS-runtime wiring — a prior extraction is still running in the interpreter.",
+                   level: .debug, category: category)
+            return
+        }
+        PythonBridge.configureIfNeeded()
+        #endif
     }
 
     /// Deletes the cached yt-dlp Python module and re-downloads it. Useful when
@@ -1137,6 +1171,13 @@ final class YoutubeDLExtractor: MediaExtractor {
             appLog("Initializing yt-dlp…", level: .debug, category: category)
             let youtubeDL = YoutubeDL()
 
+            // If a prior extraction this session already bootstrapped Python and
+            // the interpreter is idle, register the on-device JS-runtime providers
+            // *before* this job's default web extraction — so it solves nsig on
+            // device (resolving instead of hanging) and mints a PO token. Safe:
+            // it only runs plugin imports with no other extraction in flight.
+            await wireJSRuntimeIfSafe(category: category)
+
             // The default web-client extraction (`extractInfo`) must run first: it
             // is the call that bootstraps the embedded Python runtime (PYTHONHOME,
             // the unpacked stdlib, PythonKit's module search path). The forced-
@@ -1158,6 +1199,8 @@ final class YoutubeDLExtractor: MediaExtractor {
             let info: Info
             do {
                 (formats, info) = try await resolveInfo(youtubeDL, url: url, category: category, timeout: infoTimeout)
+                // extract_info ran, so Python is bootstrapped for the session.
+                Self.pythonBootstrapped = true
             } catch {
                 // The default extraction stalled (the on-device web client needs
                 // nsig descrambling via the slow pure-Python JS interpreter, which
@@ -1167,6 +1210,9 @@ final class YoutubeDLExtractor: MediaExtractor {
                 // that work in the browser. Python is already initialized by the
                 // extractInfo attempt above, so the direct PythonKit calls are
                 // safe here. Cancellation is never retried.
+                // extract_info ran (even though it threw/timed out), so Python is
+                // bootstrapped — a later job can safely wire the JS runtime.
+                Self.pythonBootstrapped = true
                 if isCancellation(error) { throw error }
                 #if canImport(PythonKit)
                 appLog("Default extraction failed (\(error.localizedDescription)) — retrying with forced fast player clients…",
@@ -1183,17 +1229,12 @@ final class YoutubeDLExtractor: MediaExtractor {
             appLog("Info: \"\(info.title)\" · \(formats.count) formats · \(Int(info.duration ?? 0))s",
                    level: .success, category: category)
 
-            // The default extractInfo just *succeeded*, so Python is bootstrapped
-            // and — unlike the timeout path — nothing is orphaned in the
-            // interpreter. This is the one safe moment to run the plugin's
-            // `load_all_plugins()` import work. It doesn't affect the extraction
-            // we just did, but once registered for the session it gives every
-            // later default-web resolve on-device nsig solving (and, when
-            // `botguard.js` is present, PO-token minting). Guarded so it only
-            // runs with no orphaned extraction in flight.
-            if orphanedDefaultExtraction == nil {
-                PythonBridge.configureIfNeeded()
-            }
+            // The default extractInfo just *succeeded*, so nothing is orphaned in
+            // the interpreter — register the JS-runtime providers for the rest of
+            // the session (doesn't affect this already-resolved job, but every
+            // later default-web resolve gets on-device nsig solving and, with
+            // `botguard.js`, PO-token minting). Idempotent and orphan-guarded.
+            await wireJSRuntimeIfSafe(category: category)
 
             do {
                 return try await downloadUsingDefaultInfo(

@@ -1,6 +1,6 @@
 # Plan: on-device JavaScript runtime for extraction (JavaScriptCore / WKWebView)
 
-*Status: **Phase 2 implemented; Phase 1 scaffolded; Phase 3 still future.** The
+*Status: **Phases 1 and 2 implemented; Phase 3 still future.** The
 download-layer reliability fixes (resume + re-resolve on 403,
 truncation-as-failure, download-failure client fallback, playability
 verification, auto engine refresh) landed separately and are prerequisites,
@@ -12,27 +12,43 @@ not part of this plan.*
 |-------|--------|-------|
 | JavaScriptCore nsig/sig solver | **Done** | `JSChallengeSolver.swift` |
 | yt-dlp provider plugin (JCP + PTP) | **Done** | `ytdlp/plugins/offlinelisten/yt_dlp_plugins/extractor/offlinelisten.py` |
-| PythonKit↔Swift bridge + plugin registration | **Done** | `PythonBridge.swift` |
+| PythonKit↔Swift bridge + safe plugin registration | **Done** | `PythonBridge.swift` + `wireJSRuntimeIfSafe` |
 | Vendored `yt-dlp-ejs` scripts (v0.8.0) | **Done** | `ytdlp/scripts/yt.solver.{lib,core}.js` |
 | Failure-class counter line | **Done** | `DownloadManager.failureClass(for:)` |
-| PO-token minter (WKWebView + BotGuard) | **Scaffolded** | `POTokenMinter.swift` |
-| `botguard.js` orchestration glue | **Not vendored** | see `ytdlp/scripts/README.md` |
+| PO-token minter (WKWebView + BotGuard) | **Done** | `POTokenMinter.swift` |
+| Vendored `botguard.js` (bgutils-js v3.2.0) | **Done** | `ytdlp/scripts/botguard.js` |
 | Phase 3 cookie import | **Not started** | — |
 
-**Verification done off-device (no Xcode/YouTube access in the build sandbox):**
-the real `yt-dlp-ejs` v0.8.0 `lib`+`core` scripts were confirmed to load and run
-`jsc(...)` in a barebones JS engine exposing only `globalThis`/`JSON`/`console`
-— exactly JavaScriptCore's surface — and the Python plugin was driven through
-the **real** yt-dlp `JsChallengeRequestDirector`, solving both an `n` and a
-`sig` request end-to-end (request grouping → Swift-bridge call → output mapping →
-yt-dlp's own validators). What still needs an on-device run: a live nsig solve
-against a real `base.js`, and the entire BotGuard/PO-token flow (Phase 1).
+**Verification done off-device (no Xcode/live YouTube in the build sandbox):**
 
-**The one missing piece for Phase 1** is `ytdlp/scripts/botguard.js` (the
-`bgutils-js` `BotGuardClient`/`WebPoMinter` glue), which couldn't be fetched in
-the sandboxed build. Until it's present, PO-token minting is a clean no-op and
-extraction behaves exactly as before. See `ytdlp/scripts/README.md` for the
-drop-in contract.
+- The real `yt-dlp-ejs` v0.8.0 `lib`+`core` scripts load and run `jsc(...)` in a
+  barebones JS engine exposing only `globalThis`/`JSON`/`console` — exactly
+  JavaScriptCore's surface.
+- The Python plugin was driven through the **real** yt-dlp
+  `JsChallengeRequestDirector`, solving both an `n` and a `sig` request
+  end-to-end (grouping → Swift-bridge call → output mapping → yt-dlp's own
+  validators), and the PO-token provider through a `PoTokenRequest`
+  (WebPO content binding → bridge → `PoTokenResponse`).
+- `botguard.js` (bundled from `bgutils-js`) loads and exposes
+  `__ol_generate_pot` in a barebones engine matching WKWebView's surface,
+  returning a Promise that rejects cleanly with no network.
+
+What still needs an **on-device** run: a live nsig solve against a real
+`base.js`, and the live BotGuard round-trip (Create → VM → GenerateIT → mint) in
+the WKWebView.
+
+## Safe registration (why the plugin loads when it does)
+
+`load_all_plugins()` (the plugin import) must never run while another
+`extract_info` is executing in the embedded interpreter — that re-entrancy
+crashed an early mid-recovery attempt. So the runtime is wired only at a **calm
+point**: the start of a job (serial queue) once Python is bootstrapped *and*
+`waitForOrphanedExtraction` confirms no extraction is still running
+(`wireJSRuntimeIfSafe`). Consequence: the runtime activates from the second
+extraction of a session onward (or right after the first successful one). A
+first-ever hard video that times out on the default path still falls through to
+the forced clients exactly as before — then a retry, with the runtime now
+active, solves nsig on device and mints a PO token so the web client works.
 
 ## Why this is the structural fix
 
