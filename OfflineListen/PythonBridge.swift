@@ -48,13 +48,18 @@ enum PythonBridge {
     /// hard videos, orphans a GIL-holding thread, and crashes the forced-client
     /// fallback that then runs a second `extract_info` concurrently).
     ///
-    /// This mirrors what `YoutubeDL-iOS`'s own `loadPythonModule` does on first
-    /// use — `PythonSupport.initialize()` then insert the yt-dlp module dir into
-    /// `sys.path` — minus the `injectFakePopen` ffmpeg shim, which this app never
-    /// needs (it downloads with its own chunked fetcher, not yt-dlp). Requires the
-    /// yt-dlp module to already be on disk (the caller ensures that first) and no
-    /// extraction to be running (the caller gates on an idle interpreter). No-op
-    /// without `PythonSupport`, or once already configured.
+    /// This mirrors `YoutubeDL-iOS`'s own `loadPythonModule` sequence step for
+    /// step — `PythonSupport.initialize()`, install the fake `Popen` shim, insert
+    /// the yt-dlp module dir into `sys.path`, import `yt_dlp` — so the interpreter
+    /// ends up in exactly the state the wrapper's first extraction would leave it.
+    /// (The earlier version skipped the `Popen` shim and faulted; the log showed
+    /// the wrapper relies on it to intercept `ffmpeg`/`deno` subprocess spawns,
+    /// which posix_spawn can't do in the iOS sandbox.) Requires the yt-dlp module
+    /// on disk (the caller ensures that) and an idle interpreter (the caller gates
+    /// on it). No-op without `PythonSupport`, or once already configured.
+    ///
+    /// Every step writes a breadcrumb to the durable on-disk log *before* it runs,
+    /// so if a native fault happens the last persisted line names the exact call.
     /// - Parameter pythonAlreadyInitialized: pass true if a prior extraction has
     ///   already started the interpreter, so we don't call
     ///   `PythonSupport.initialize()` a second time (double-init could fault).
@@ -64,20 +69,27 @@ enum PythonBridge {
         let category = "JS-runtime"
         do {
             if !didBootstrapPython && !pythonAlreadyInitialized {
+                appLog("Early bootstrap: PythonSupport.initialize()…", level: .debug, category: category)
                 PythonSupport.initialize()
                 didBootstrapPython = true
-                appLog("Bootstrapped the embedded Python runtime early (before extraction).",
-                       level: .debug, category: category)
             }
-            // Ensure the yt-dlp module dir is importable (the wrapper inserts this
-            // on its first extraction; harmless to repeat, required if we init'd).
-            let sys = Python.import("sys")
+            appLog("Early bootstrap: import sys…", level: .debug, category: category)
+            let sys = try Python.attemptImport("sys")
             let modulePath = YoutubeDL.pythonModuleURL.path
             let paths = (Array(sys.path) ?? []).compactMap { String($0) }
             if !paths.contains(modulePath) {
+                // Install the fake Popen shim BEFORE importing yt_dlp — the same
+                // thing the wrapper does — so yt-dlp's later subprocess probes
+                // (ffmpeg/ffprobe/deno) raise a clean FileNotFoundError instead of
+                // a real posix_spawn the iOS sandbox faults on.
+                appLog("Early bootstrap: installing fake Popen shim…", level: .debug, category: category)
+                installFakePopen()
+                appLog("Early bootstrap: inserting module path into sys.path…", level: .debug, category: category)
                 sys.path.insert(1, PythonObject(modulePath))
             }
+            appLog("Early bootstrap: import yt_dlp…", level: .debug, category: category)
             _ = try Python.attemptImport("yt_dlp")
+            appLog("Early bootstrap: registering providers…", level: .debug, category: category)
             configureIfNeeded()
         } catch {
             // Best-effort: fall back to lazy wiring on the normal path.
@@ -85,6 +97,26 @@ enum PythonBridge {
                    level: .warning, category: category)
         }
         #endif
+    }
+
+    /// Replaces `subprocess.Popen` with a stub that raises `FileNotFoundError`
+    /// for every command. yt-dlp treats `ffmpeg`/`ffprobe`/`deno` as optional and
+    /// degrades gracefully when they're "missing"; this app never uses yt-dlp's
+    /// ffmpeg path (it does its own chunked download + AVFoundation), so a
+    /// reject-all shim is sufficient — and it prevents a real `posix_spawn` in the
+    /// iOS sandbox, which is what the wrapper's own shim exists to avoid.
+    private static func installFakePopen() {
+        let code = """
+        import errno, os, subprocess
+        class _OLFakePopen:
+            def __init__(self, *args, **kwargs):
+                cmd = args[0] if args else ''
+                raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), cmd)
+        subprocess.Popen = _OLFakePopen
+        """
+        let builtins = Python.import("builtins")
+        let namespace = builtins.dict()
+        builtins.exec(PythonObject(code), namespace)
     }
 
     /// Installs the callbacks and registers the plugin. Call at the top of the
