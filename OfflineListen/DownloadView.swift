@@ -22,7 +22,7 @@ struct DownloadView: View {
                     ContentUnavailableViewCompat(
                         title: "No downloads yet",
                         systemImage: "arrow.down.circle",
-                        description: "Paste a video URL above to start downloading audio."
+                        description: "Paste a video or playlist URL above to start downloading. A playlist downloads into its own folder."
                     )
                     .frame(maxHeight: .infinity)
                 } else {
@@ -54,6 +54,9 @@ struct DownloadView: View {
                     Button("Clear") { downloads.clearFinished() }
                         .disabled(downloads.jobs.isEmpty)
                 }
+            }
+            .sheet(item: $downloads.pendingPlaylist) { pending in
+                PlaylistPickerView(pending: pending)
             }
         }
     }
@@ -203,6 +206,91 @@ private struct DownloadJobRow: View {
         default:
             ProgressView().controlSize(.mini)
         }
+    }
+}
+
+/// The popup shown after a playlist link resolves: lists its entries with
+/// checkmarks (all selected by default), a Select-All toggle, and a Download
+/// button that queues the chosen entries into a folder. Cancelling — or
+/// dismissing the sheet — downloads nothing. The decision is delivered back to
+/// the waiting download job via `pending.decide`.
+struct PlaylistPickerView: View {
+    let pending: PendingPlaylist
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var selected: Set<PlaylistEntry.ID>
+    /// Guards against `decide` being called twice (e.g. a button tap followed by
+    /// the sheet's `onDisappear`); the download side is idempotent too.
+    @State private var decided = false
+
+    init(pending: PendingPlaylist) {
+        self.pending = pending
+        // Everything selected by default — "grab the whole list" is one tap.
+        _selected = State(initialValue: Set(pending.entries.map(\.id)))
+    }
+
+    private var allSelected: Bool { selected.count == pending.entries.count }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(pending.entries) { entry in
+                        Button {
+                            toggle(entry.id)
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: selected.contains(entry.id) ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(selected.contains(entry.id) ? Color.accentColor : .secondary)
+                                Text(entry.title)
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(2)
+                                Spacer(minLength: 0)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                } header: {
+                    HStack {
+                        Text("\(pending.entries.count) items · \(pending.mode.displayName)")
+                        Spacer()
+                        Button(allSelected ? "Deselect All" : "Select All") {
+                            selected = allSelected ? [] : Set(pending.entries.map(\.id))
+                        }
+                        .font(.caption.weight(.semibold))
+                        .textCase(nil)
+                    }
+                }
+            }
+            .navigationTitle(pending.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") { finish(nil) }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Download (\(selected.count))") {
+                        let chosen = pending.entries.filter { selected.contains($0.id) }
+                        finish(chosen)
+                    }
+                    .fontWeight(.semibold)
+                    .disabled(selected.isEmpty)
+                }
+            }
+            .onDisappear { finish(nil) }
+        }
+    }
+
+    private func toggle(_ id: PlaylistEntry.ID) {
+        if selected.contains(id) { selected.remove(id) } else { selected.insert(id) }
+    }
+
+    private func finish(_ entries: [PlaylistEntry]?) {
+        guard !decided else { return }
+        decided = true
+        pending.decide(entries)
+        dismiss()
     }
 }
 

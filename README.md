@@ -18,6 +18,22 @@ Three screens (tabs):
    yt-dlp supports** work — YouTube, Vimeo, SoundCloud and ~hundreds more — not
    just YouTube. Swipe a row for **Cancel** (active/queued), **Restart**, or
    **Clear**; tap a finished row to play it.
+
+   **Playlists.** Paste a **YouTube playlist** link — either the dedicated
+   `…/playlist?list=…` page or a `watch?v=…&list=…` link opened from inside a
+   playlist — and the app resolves its entries and shows a **selection popup**
+   listing every video. Everything is checked by default, so **Download** grabs
+   the whole list in one tap; or check off just the ones you want (a
+   **Select All / Deselect All** toggle is in the header). Confirming creates a
+   **folder named after the playlist** and queues the chosen entries into it (in
+   playlist order, using the same Audio/Video mode); cancelling — or dismissing
+   the popup — downloads nothing. A playlist row sits in the queue while it
+   resolves and while the popup is open, then reports how many downloads it
+   spawned. Auto-generated **mixes/radios** (`RD…` list ids) and the auth-only
+   **Watch Later** / **Liked** lists are treated as ordinary single-video links,
+   not playlists. Resolving the entry list uses the on-device yt-dlp module, so —
+   like chapter capture — it works only once that module has been fetched by a
+   prior download.
 2. **Library** — downloaded tracks; tap to play. A **filter** (All / Music /
    Podcasts / Video) sits directly beneath the **Tracks** header. Swipe **left**
    for Delete/Share/Archive (and bulk versions via **Select**); swipe **right**
@@ -127,6 +143,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `AudioStreamDownloader.swift` | Shared chunked byte-range stream downloader. |
 | `VideoAudioExtractor.swift` | Extracts audio from a muxed video via AVFoundation. |
 | `ChapterFetcher.swift` | Best-effort capture of YouTube chapter markers via the on-device yt-dlp module. |
+| `PlaylistResolver.swift` | Detects playlist links and flat-resolves their entries (on-device yt-dlp) so a playlist downloads into a folder. |
 | `ChapterSplitter.swift` | Exports one file per chapter (AVFoundation) for "Break Chapters into Playlist". |
 | `VideoMerger.swift` | Muxes a video-only + audio-only stream into one MP4. |
 | `PlaybackManager.swift` | `AVPlayer` engine (audio + video), audio session, lock screen. |
