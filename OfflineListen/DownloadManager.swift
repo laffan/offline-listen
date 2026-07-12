@@ -114,6 +114,19 @@ final class PlaylistDecisionBox: @unchecked Sendable {
     }
 }
 
+/// A Browse preview waiting its turn in the pipeline: extract-only work whose
+/// result goes back to the preview modal instead of the library.
+private struct PreviewWork {
+    let id: UUID
+    let url: URL
+    /// Invoked when the pipeline actually picks the preview up (it may sit
+    /// behind an in-flight download first).
+    let onBegin: @MainActor () -> Void
+    let onDownloadStart: @MainActor () -> Void
+    let onProgress: @MainActor (Double) -> Void
+    let continuation: CheckedContinuation<ExtractedMedia, Error>
+}
+
 /// Owns the download queue and runs jobs one at a time:
 /// URL → extract audio (yt-dlp) → convert/save → add to library.
 @MainActor
@@ -128,12 +141,25 @@ final class DownloadManager: ObservableObject {
     /// Optional AI organizer; when present and the user has opted in, finished
     /// downloads are classified/cleaned automatically.
     private let aiOrganizer: AIOrganizer?
-    private var isProcessing = false
+    /// Published so the preview modal can show a live "waiting for the queue"
+    /// state while something else holds the pipeline.
+    @Published private(set) var isProcessing = false
 
     /// The job currently being processed and the task running it, so an active
     /// download can be cancelled.
     private var activeJob: DownloadJob?
     private var activeTask: Task<Void, Never>?
+
+    /// Browse previews waiting for the pipeline. They share the serial queue
+    /// with downloads (two concurrent yt-dlp extractions risk crashing the
+    /// embedded interpreter) but jump ahead of queued jobs — a preview has the
+    /// user actively waiting on it.
+    private var previewQueue: [PreviewWork] = []
+    private var activePreviewID: UUID?
+
+    /// True while the pipeline is busy with a download or another preview —
+    /// the preview modal shows a "waiting for the queue" state off this.
+    var isPipelineBusy: Bool { isProcessing }
 
     init(library: LibraryStore,
          aiOrganizer: AIOrganizer? = nil,
@@ -258,6 +284,22 @@ final class DownloadManager: ObservableObject {
 
     private func processNext() async {
         guard !isProcessing else { return }
+
+        // Previews first — the user is sitting in the modal waiting for one.
+        if !previewQueue.isEmpty {
+            let work = previewQueue.removeFirst()
+            isProcessing = true
+            activePreviewID = work.id
+            let task = Task { await runPreview(work) }
+            activeTask = task
+            await task.value
+            activeTask = nil
+            activePreviewID = nil
+            isProcessing = false
+            await processNext()
+            return
+        }
+
         // Oldest queued job first (jobs are inserted at the front for display).
         guard let job = jobs.last(where: { $0.state == .queued }) else { return }
 
@@ -271,6 +313,86 @@ final class DownloadManager: ObservableObject {
         isProcessing = false
 
         await processNext()
+    }
+
+    // MARK: - Browse previews
+
+    /// Downloads the audio for `urlString` through the serial pipeline and
+    /// returns the extracted media *without* adding it to the library — the
+    /// Browse preview modal plays it and then saves or discards it. The file
+    /// lands in the previews scratch directory; the caller owns it from there.
+    /// Honours task cancellation (dismissing the modal cancels the work).
+    func downloadPreview(urlString: String,
+                         onBegin: @escaping @MainActor () -> Void = {},
+                         onDownloadStart: @escaping @MainActor () -> Void = {},
+                         onProgress: @escaping @MainActor (Double) -> Void = { _ in }) async throws -> ExtractedMedia {
+        guard let url = URL(string: urlString.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            throw ExtractorError.invalidURL
+        }
+        let id = UUID()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                previewQueue.append(PreviewWork(id: id,
+                                                url: url,
+                                                onBegin: onBegin,
+                                                onDownloadStart: onDownloadStart,
+                                                onProgress: onProgress,
+                                                continuation: continuation))
+                appLog("Preview queued: \(url.absoluteString)", category: "Browse")
+                Task { await self.processNext() }
+            }
+        } onCancel: {
+            Task { @MainActor in self.cancelPreview(id) }
+        }
+    }
+
+    /// Cancels a preview: still-queued work is resumed as cancelled right away;
+    /// the active one has its task cancelled (the extractor throws, and
+    /// `runPreview` resumes the continuation with that error).
+    private func cancelPreview(_ id: UUID) {
+        if let index = previewQueue.firstIndex(where: { $0.id == id }) {
+            let work = previewQueue.remove(at: index)
+            work.continuation.resume(throwing: CancellationError())
+        } else if activePreviewID == id {
+            activeTask?.cancel()
+        }
+    }
+
+    private func runPreview(_ work: PreviewWork) async {
+        work.onBegin()
+        appLog("Preview extracting: \(work.url.absoluteString)", category: "Browse")
+        do {
+            let extracted = try await extractor.extractMedia(
+                from: work.url,
+                mode: .audio,
+                onDownloadStart: {
+                    Task { @MainActor in work.onDownloadStart() }
+                },
+                onProgress: { fraction in
+                    Task { @MainActor in work.onProgress(fraction) }
+                }
+            )
+            // Move the file out of the shared work dir so the next job can't
+            // touch it while the preview is playing.
+            let ext = extracted.fileURL.pathExtension.isEmpty ? "m4a" : extracted.fileURL.pathExtension
+            let safeURL = AppPaths.previews.appendingPathComponent("\(work.id.uuidString).\(ext)")
+            try? FileManager.default.removeItem(at: safeURL)
+            try FileManager.default.moveItem(at: extracted.fileURL, to: safeURL)
+            let media = ExtractedMedia(fileURL: safeURL,
+                                       title: extracted.title,
+                                       duration: extracted.duration,
+                                       isVideo: extracted.isVideo,
+                                       chapters: extracted.chapters)
+            appLog("Preview ready: \"\(media.title)\"", level: .success, category: "Browse")
+            work.continuation.resume(returning: media)
+        } catch {
+            if isCancellation(error) {
+                appLog("Preview cancelled.", level: .warning, category: "Browse")
+            } else {
+                appLog("Preview failed: \(error.localizedDescription)", level: .error, category: "Browse")
+            }
+            work.continuation.resume(throwing: error)
+        }
     }
 
     private func run(_ job: DownloadJob) async {

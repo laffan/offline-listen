@@ -10,7 +10,7 @@ locked.
 
 ## What's here
 
-Three screens (tabs):
+Five screens (tabs):
 
 1. **Download** — paste one or more URLs (whitespace/line-break separated; any
    http(s) link is queued and the rest of a pasted blob is skipped), choose
@@ -34,7 +34,13 @@ Three screens (tabs):
    not playlists. Resolving the entry list uses the on-device yt-dlp module, so —
    like chapter capture — it works only once that module has been fetched by a
    prior download.
-2. **Library** — downloaded tracks; tap to play. A **filter** (All / Music /
+2. **Browse** — keeps tabs on and curates different audio **sources** (see
+   [Browse: keeping tabs on audio sources](#browse-keeping-tabs-on-audio-sources)).
+   Add YouTube channels/playlists, RSS feeds, or AI-curated Artist/Genre/Country
+   lists; each refresh surfaces YouTube links with title and description, and
+   every item offers **Download** (sends it to the download queue) and
+   **Preview** (a listen-first modal with **Save** / **Discard**).
+3. **Library** — downloaded tracks; tap to play. A **filter** (All / Music /
    Podcasts / Video) sits directly beneath the **Tracks** header. Swipe **left**
    for Delete/Share/Archive (and bulk versions via **Select**); swipe **right**
    on an audio track to classify it **Song** or **Podcast**. Songs start from the
@@ -83,14 +89,14 @@ Three screens (tabs):
    Order you set the sequence by hand — **touch and hold a folder and drag** it
    into place; the order persists to `folders.json`. Folders persist to
    `Documents/folders.json`.
-3. **Player** — artwork, scrubber, play/pause, skip, next/previous — the same
+4. **Player** — artwork, scrubber, play/pause, skip, next/previous — the same
    control suite for audio and video. Video is edge-to-edge in portrait and
    goes fullscreen automatically when the phone rotates to landscape (tap the
    picture to toggle the floating controls). Drives the lock screen and
    Control Center. For a chaptered track, small **dots** sit along the scrubber
    at each chapter's start and the **current chapter title** shows on its own
    line beneath the title/artist, updating as playback crosses a marker.
-4. **Settings** — AI configuration on top, the **Log** as a section beneath it.
+5. **Settings** — AI configuration on top, the **Log** as a section beneath it.
    - **AI model & API key.** Pick **Haiku** (fast/cheap) or **Sonnet** (more
      capable), paste an Anthropic API key, and **Verify & Save** — the key is
      checked against the API and, on success, stored in the device **Keychain**
@@ -120,6 +126,58 @@ A title the AI rewrites records the original, so **Edit Metadata → Reset to
 Original Title** still restores the download title. AI work is best-effort and runs off the
 download queue — failures are logged, never fatal. No key, no AI: everything else
 is unchanged.
+
+## Browse: keeping tabs on audio sources
+
+The **Browse** tab watches a set of user-configured **sources** and turns what
+they surface into a curated to-listen list. Every source, whatever its type,
+produces the same thing: **YouTube links with metadata** — a title, a
+description when one exists, and two actions per item:
+
+- **Download** — sends the link straight to the download queue (Audio mode),
+  exactly as if it had been pasted into the Download tab.
+- **Preview** — opens a modal that downloads the audio and plays it in its own
+  **mini player** (scrubber, play/pause — separate from the main Player, which
+  it pauses while auditioning), with **Save** and **Discard** buttons. Save
+  files the already-downloaded audio into the library as a normal track (it
+  lands in the Inbox and gets the same best-effort AI organization as any
+  download); Discard deletes the file and hides the item for good. Dismissing
+  the modal without deciding deletes the temp file and leaves the item
+  untouched.
+
+Six **source types**, in two families:
+
+| Type | How it works |
+|------|--------------|
+| **YouTube Channel** | Scrape/RSS: watches the channel's upload feed (`/feeds/videos.xml`). Accepts a channel URL, `@handle`, or bare `UC…` id — a handle/vanity URL is resolved to its channel id by scraping the channel page once, then cached. |
+| **YouTube Playlist** | Scrape/RSS: watches the playlist's feed. Accepts a playlist URL (anything with `list=`) or a bare playlist id. |
+| **RSS Feed** | RSS reader: parses any RSS/Atom feed and keeps **only the posts that contain YouTube links** (a music blog's roundups, a newsletter's song-of-the-day). A post with several links yields one item per video. |
+| **Artist** | AI: the model suggests the artist's popular/essential songs. |
+| **Genre** | AI: popular songs in a genre, across artists. |
+| **Country** | AI: popular songs from a country, across eras and artists. |
+
+The AI types use the **Anthropic key from Settings** (they're unavailable until
+one is saved). The model is asked for real, well-known songs — title, artist,
+and a one-line note that becomes the item's description — and is deliberately
+**never trusted to produce YouTube links** (it hallucinates video ids); each
+suggestion is instead resolved to a real video by scraping the top result of a
+YouTube search. On a refresh, the model is told what it already suggested so it
+digs deeper instead of repeating itself.
+
+**Curation state persists** (`Documents/browse.json`): every item remembers
+whether it's new, sent to Downloads, saved, or discarded — so a refresh never
+resurrects something you've already dealt with, and the source list shows a
+badge with each source's count of new items. Items that fall out of a feed's
+window are kept: Browse is a running log to curate, not a mirror of the feed.
+Sources refresh on demand (per-source, or pull-to-refresh / the toolbar button
+for everything); refresh errors show on the source row and in the **Log**
+(category `Browse`).
+
+Preview downloads run through the **same serial pipeline** as the download
+queue — two concurrent yt-dlp extractions risk crashing the embedded Python —
+but jump ahead of queued jobs, since the user is sitting in the modal waiting.
+While a download holds the pipeline the modal says so ("Waiting for the
+download queue to free up…").
 
 ### Pipeline
 
@@ -155,7 +213,15 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `AISettings.swift` | `AISettingsStore` (model/key/assist, Keychain-backed), `AIModel`, `Keychain` helper. |
 | `AnthropicClient.swift` | Minimal Anthropic Messages API client (verify + single-shot completion) over URLSession. |
 | `AIOrganizer.swift` | Builds the prompt, calls the API, writes music/podcast + clean metadata back to the library. |
-| `*View.swift` | The four SwiftUI screens (Download, Library, Player, Settings — which embeds the Log). |
+| `BrowseModels.swift` | `BrowseSourceKind`, `BrowseSource`, `BrowseItem` + status — the Browse tab's data model. |
+| `BrowseStore.swift` | Persists sources/items to `Documents/browse.json`; orchestrates refreshes and the new/downloaded/saved/discarded lifecycle. |
+| `FeedParser.swift` | Minimal RSS 2.0 + Atom parser (XMLParser) shared by the YouTube feeds and the generic RSS reader. |
+| `BrowseFetchers.swift` | YouTube channel/playlist feed fetch (+ channel-id resolution by page scrape), the YouTube-link-filtered RSS reader, and the search-result resolver. |
+| `AIDiscovery.swift` | AI song discovery for Artist/Genre/Country sources (suggestions via the Messages API, links via the search resolver). |
+| `BrowseView.swift` | The Browse tab: sources grouped by type, add-source sheet, refresh. |
+| `BrowseSourceView.swift` | One source's items with per-row Download/Preview/Discard. |
+| `BrowsePreviewView.swift` | The preview modal: pipeline download, mini player, Save/Discard. |
+| `*View.swift` | The five SwiftUI screens (Download, Browse, Library, Player, Settings — which embeds the Log). |
 | `FolderView.swift` | Folder detail (tap-to-play, reorder) and Inbox screens. |
 | `WatchFolderView.swift` | The phone's **Watch** virtual-folder screen (manage what's been sent to the watch). |
 | `WatchManifest.swift` | Wire format shared by the iPhone and watch targets (the sync manifest, the remote-control `RemoteNowPlaying`/`RemoteCommand` types, + WC keys). |

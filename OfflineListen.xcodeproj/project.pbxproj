@@ -58,6 +58,14 @@
 		1B00000000000000000001E1 /* POTokenMinter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000001E1 /* POTokenMinter.swift */; };
 		1B00000000000000000001E2 /* PythonBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000001E2 /* PythonBridge.swift */; };
 		1B00000000000000000001E3 /* ytdlp in Resources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000001E3 /* ytdlp */; };
+		1B00000000000000000002E1 /* BrowseModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E1 /* BrowseModels.swift */; };
+		1B00000000000000000002E2 /* BrowseStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E2 /* BrowseStore.swift */; };
+		1B00000000000000000002E3 /* FeedParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E3 /* FeedParser.swift */; };
+		1B00000000000000000002E4 /* BrowseFetchers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E4 /* BrowseFetchers.swift */; };
+		1B00000000000000000002E5 /* AIDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E5 /* AIDiscovery.swift */; };
+		1B00000000000000000002E6 /* BrowseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E6 /* BrowseView.swift */; };
+		1B00000000000000000002E7 /* BrowseSourceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E7 /* BrowseSourceView.swift */; };
+		1B00000000000000000002E8 /* BrowsePreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E8 /* BrowsePreviewView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -132,6 +140,14 @@
 		1A00000000000000000001E1 /* POTokenMinter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = POTokenMinter.swift; sourceTree = "<group>"; };
 		1A00000000000000000001E2 /* PythonBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PythonBridge.swift; sourceTree = "<group>"; };
 		1A00000000000000000001E3 /* ytdlp */ = {isa = PBXFileReference; lastKnownFileType = folder; path = ytdlp; sourceTree = "<group>"; };
+		1A00000000000000000002E1 /* BrowseModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseModels.swift; sourceTree = "<group>"; };
+		1A00000000000000000002E2 /* BrowseStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseStore.swift; sourceTree = "<group>"; };
+		1A00000000000000000002E3 /* FeedParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedParser.swift; sourceTree = "<group>"; };
+		1A00000000000000000002E4 /* BrowseFetchers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseFetchers.swift; sourceTree = "<group>"; };
+		1A00000000000000000002E5 /* AIDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIDiscovery.swift; sourceTree = "<group>"; };
+		1A00000000000000000002E6 /* BrowseView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseView.swift; sourceTree = "<group>"; };
+		1A00000000000000000002E7 /* BrowseSourceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseSourceView.swift; sourceTree = "<group>"; };
+		1A00000000000000000002E8 /* BrowsePreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowsePreviewView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -182,6 +198,14 @@
 				1A00000000000000000000A7 /* PlaybackManager.swift */,
 				1A00000000000000000000A8 /* RootView.swift */,
 				1A00000000000000000000A9 /* DownloadView.swift */,
+				1A00000000000000000002E1 /* BrowseModels.swift */,
+				1A00000000000000000002E2 /* BrowseStore.swift */,
+				1A00000000000000000002E3 /* FeedParser.swift */,
+				1A00000000000000000002E4 /* BrowseFetchers.swift */,
+				1A00000000000000000002E5 /* AIDiscovery.swift */,
+				1A00000000000000000002E6 /* BrowseView.swift */,
+				1A00000000000000000002E7 /* BrowseSourceView.swift */,
+				1A00000000000000000002E8 /* BrowsePreviewView.swift */,
 				1A00000000000000000000AA /* LibraryView.swift */,
 				1A00000000000000000000B6 /* FolderView.swift */,
 				1A00000000000000000000B7 /* ChapterFetcher.swift */,
@@ -425,6 +449,14 @@
 				1B00000000000000000000B7 /* PlaybackManager.swift in Sources */,
 				1B00000000000000000000B8 /* RootView.swift in Sources */,
 				1B00000000000000000000B9 /* DownloadView.swift in Sources */,
+				1B00000000000000000002E1 /* BrowseModels.swift in Sources */,
+				1B00000000000000000002E2 /* BrowseStore.swift in Sources */,
+				1B00000000000000000002E3 /* FeedParser.swift in Sources */,
+				1B00000000000000000002E4 /* BrowseFetchers.swift in Sources */,
+				1B00000000000000000002E5 /* AIDiscovery.swift in Sources */,
+				1B00000000000000000002E6 /* BrowseView.swift in Sources */,
+				1B00000000000000000002E7 /* BrowseSourceView.swift in Sources */,
+				1B00000000000000000002E8 /* BrowsePreviewView.swift in Sources */,
 				1B00000000000000000000BA /* LibraryView.swift in Sources */,
 				1B00000000000000000000C8 /* FolderView.swift in Sources */,
 				1B00000000000000000000C9 /* ChapterFetcher.swift in Sources */,

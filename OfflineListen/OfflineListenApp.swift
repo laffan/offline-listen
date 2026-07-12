@@ -7,6 +7,7 @@ struct OfflineListenApp: App {
     @StateObject private var playback: PlaybackManager
     @StateObject private var aiSettings: AISettingsStore
     @StateObject private var aiOrganizer: AIOrganizer
+    @StateObject private var browse: BrowseStore
 
     @Environment(\.scenePhase) private var scenePhase
 
@@ -18,6 +19,7 @@ struct OfflineListenApp: App {
         _aiSettings = StateObject(wrappedValue: aiSettings)
         _aiOrganizer = StateObject(wrappedValue: aiOrganizer)
         _downloads = StateObject(wrappedValue: DownloadManager(library: library, aiOrganizer: aiOrganizer))
+        _browse = StateObject(wrappedValue: BrowseStore(aiSettings: aiSettings))
         let playback = PlaybackManager(library: library)
         _playback = StateObject(wrappedValue: playback)
 
@@ -53,6 +55,7 @@ struct OfflineListenApp: App {
                 .environmentObject(playback)
                 .environmentObject(aiSettings)
                 .environmentObject(aiOrganizer)
+                .environmentObject(browse)
                 .environmentObject(LogStore.shared)
                 .task { playback.restoreLastSession() }
                 .onAppear { importShared() }
