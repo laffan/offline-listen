@@ -595,14 +595,21 @@ client YouTube hasn't gated yet — the plan is
   dormant and extraction is unchanged.
 
 Both providers are strictly best-effort: any failure logs a `.warning` and
-extraction proceeds exactly as it did before. Registration is deferred to a safe
-point — the start of a job once Python is bootstrapped and the interpreter is
-idle — so the plugin import never races a running extraction (that re-entrancy
-crashed an early version). In practice the runtime activates from the second
-extraction of a session onward, or a retry of a first hard video. Each failed
-job also logs a single `Failure class: …` line (`nsig` | `po-token` |
-`bot-check` | `http-403` | `timeout` | `hls-only` | …) so a week of diagnostics
-logs can be tallied by failure mode.
+extraction proceeds exactly as it did before. For YouTube the runtime is started
+and registered **up front** — Python is bootstrapped directly via
+`PythonSupport.initialize()` (no extraction needed) at the start of the job, so
+the very first web extraction solves nsig on device instead of grinding the
+pure-Python path that hangs (and used to orphan a thread and crash the fallback).
+Registration only runs with the interpreter idle, so the plugin import never
+races a running extraction. Each failed job also logs a single `Failure class: …`
+line (`nsig` | `po-token` | `bot-check` | `http-403` | `timeout` | `hls-only` |
+…) so a week of diagnostics logs can be tallied by failure mode.
+
+> This early bootstrap needs **PythonSupport** (a transitive dependency of
+> YoutubeDL-iOS) importable from the app target; add it as an explicit package
+> dependency alongside PythonKit if `import PythonSupport` doesn't resolve.
+> Without it the runtime falls back to activating from the second extraction of a
+> session.
 
 The remaining gap — age-gated / members-only content needing a signed-in
 session — is scoped as optional cookie import (Phase 3) in the plan.

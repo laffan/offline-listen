@@ -1171,11 +1171,24 @@ final class YoutubeDLExtractor: MediaExtractor {
             appLog("Initializing yt-dlp…", level: .debug, category: category)
             let youtubeDL = YoutubeDL()
 
-            // If a prior extraction this session already bootstrapped Python and
-            // the interpreter is idle, register the on-device JS-runtime providers
-            // *before* this job's default web extraction — so it solves nsig on
-            // device (resolving instead of hanging) and mints a PO token. Safe:
-            // it only runs plugin imports with no other extraction in flight.
+            // Register the on-device JS runtime *before* this job's default web
+            // extraction, so the web client solves nsig on device (resolving in a
+            // couple of seconds) instead of grinding the pure-Python path that
+            // hangs on hard videos — which orphans a GIL-holding thread and
+            // crashes the forced-client fallback when it runs a second
+            // `extract_info` concurrently.
+            //
+            // For YouTube we can start Python ourselves (PythonSupport) and wire
+            // the runtime up front, on the very first download. Gated on an idle
+            // interpreter (no orphan from a prior job) so the plugin import never
+            // races a running extraction. Non-YouTube sites, or builds without
+            // PythonSupport, fall back to the lazy path (registers once a prior
+            // extraction has bootstrapped Python).
+            #if canImport(PythonKit)
+            if Self.isYouTubeURL(url), orphanedDefaultExtraction == nil {
+                PythonBridge.bootstrapAndConfigure(pythonAlreadyInitialized: Self.pythonBootstrapped)
+            }
+            #endif
             await wireJSRuntimeIfSafe(category: category)
 
             // The default web-client extraction (`extractInfo`) must run first: it
@@ -1217,11 +1230,21 @@ final class YoutubeDLExtractor: MediaExtractor {
                 #if canImport(PythonKit)
                 appLog("Default extraction failed (\(error.localizedDescription)) — retrying with forced fast player clients…",
                        level: .warning, category: category)
-                await waitForOrphanedExtraction(category: category)
-                if let media = try await extractViaForcedClients(
-                    url: url, mode: mode, category: category,
-                    onDownloadStart: onDownloadStart, onProgress: onProgress) {
-                    return media
+                // The forced clients drive Python directly. Running a second
+                // `extract_info` while the timed-out one is still executing in the
+                // interpreter is the concurrent-Python fault that crashes the app,
+                // so only proceed once the orphan has genuinely settled (waiting a
+                // generous window for a slow-but-finishing nsig). If it won't
+                // settle, fail cleanly rather than risk the crash.
+                if await waitForOrphanedExtraction(category: category, cap: 30) {
+                    if let media = try await extractViaForcedClients(
+                        url: url, mode: mode, category: category,
+                        onDownloadStart: onDownloadStart, onProgress: onProgress) {
+                        return media
+                    }
+                } else {
+                    appLog("Skipping forced-client recovery — the timed-out extraction is still running in the interpreter; a second concurrent one risks a crash.",
+                           level: .error, category: category)
                 }
                 #endif
                 throw error
@@ -1256,12 +1279,17 @@ final class YoutubeDLExtractor: MediaExtractor {
                 appLog("Download failed after a successful extraction (\(error.localizedDescription)) — retrying with forced player clients…",
                        level: .warning, category: category)
                 // A timed-out mid-download refresh may have orphaned a Python
-                // extract_info; let it settle before starting new Python work.
-                await waitForOrphanedExtraction(category: category)
-                if let media = try await extractViaForcedClients(
-                    url: url, mode: mode, category: category,
-                    onDownloadStart: onDownloadStart, onProgress: onProgress) {
-                    return media
+                // extract_info; only start new Python work once it has settled, so
+                // two extractions never run concurrently in the interpreter.
+                if await waitForOrphanedExtraction(category: category, cap: 30) {
+                    if let media = try await extractViaForcedClients(
+                        url: url, mode: mode, category: category,
+                        onDownloadStart: onDownloadStart, onProgress: onProgress) {
+                        return media
+                    }
+                } else {
+                    appLog("Skipping forced-client recovery — a prior extraction is still running in the interpreter; a second concurrent one risks a crash.",
+                           level: .error, category: category)
                 }
                 #endif
                 throw error

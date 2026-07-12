@@ -3,6 +3,18 @@ import Foundation
 #if canImport(PythonKit)
 import PythonKit
 #endif
+#if canImport(YoutubeDL)
+import YoutubeDL
+#endif
+// PythonSupport (a transitive dependency of YoutubeDL-iOS) exposes
+// `initialize()`, the call that actually starts the embedded interpreter. Being
+// able to run it directly is what lets us bootstrap Python *without* a hanging
+// extraction. If it doesn't resolve, add it as an explicit package dependency on
+// the app target (like PythonKit); guarded by `canImport`, so without it the
+// early-bootstrap path compiles out and we fall back to lazy wiring.
+#if canImport(PythonSupport)
+import PythonSupport
+#endif
 
 /// Wires the on-device JavaScript runtime into yt-dlp.
 ///
@@ -26,6 +38,54 @@ import PythonKit
 ///    `plugin_dirs` from options.
 enum PythonBridge {
     private(set) static var isConfigured = false
+
+    /// Whether we've started the embedded Python interpreter ourselves.
+    private(set) static var didBootstrapPython = false
+
+    /// Starts the embedded Python interpreter **without** running an extraction,
+    /// then registers the providers — so the very first web extraction can solve
+    /// nsig on device instead of grinding the pure-Python path (which hangs on
+    /// hard videos, orphans a GIL-holding thread, and crashes the forced-client
+    /// fallback that then runs a second `extract_info` concurrently).
+    ///
+    /// This mirrors what `YoutubeDL-iOS`'s own `loadPythonModule` does on first
+    /// use — `PythonSupport.initialize()` then insert the yt-dlp module dir into
+    /// `sys.path` — minus the `injectFakePopen` ffmpeg shim, which this app never
+    /// needs (it downloads with its own chunked fetcher, not yt-dlp). Requires the
+    /// yt-dlp module to already be on disk (the caller ensures that first) and no
+    /// extraction to be running (the caller gates on an idle interpreter). No-op
+    /// without `PythonSupport`, or once already configured.
+    /// - Parameter pythonAlreadyInitialized: pass true if a prior extraction has
+    ///   already started the interpreter, so we don't call
+    ///   `PythonSupport.initialize()` a second time (double-init could fault).
+    static func bootstrapAndConfigure(pythonAlreadyInitialized: Bool) {
+        #if canImport(PythonKit) && canImport(YoutubeDL) && canImport(PythonSupport)
+        guard !isConfigured else { return }
+        let category = "JS-runtime"
+        do {
+            if !didBootstrapPython && !pythonAlreadyInitialized {
+                PythonSupport.initialize()
+                didBootstrapPython = true
+                appLog("Bootstrapped the embedded Python runtime early (before extraction).",
+                       level: .debug, category: category)
+            }
+            // Ensure the yt-dlp module dir is importable (the wrapper inserts this
+            // on its first extraction; harmless to repeat, required if we init'd).
+            let sys = Python.import("sys")
+            let modulePath = YoutubeDL.pythonModuleURL.path
+            let paths = (Array(sys.path) ?? []).compactMap { String($0) }
+            if !paths.contains(modulePath) {
+                sys.path.insert(1, PythonObject(modulePath))
+            }
+            _ = try Python.attemptImport("yt_dlp")
+            configureIfNeeded()
+        } catch {
+            // Best-effort: fall back to lazy wiring on the normal path.
+            appLog("Early Python bootstrap failed (\(error.localizedDescription)) — falling back to lazy wiring.",
+                   level: .warning, category: category)
+        }
+        #endif
+    }
 
     /// Installs the callbacks and registers the plugin. Call at the top of the
     /// forced-client path. No-op after the first successful run.

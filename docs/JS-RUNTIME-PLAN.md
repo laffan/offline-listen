@@ -37,18 +37,43 @@ What still needs an **on-device** run: a live nsig solve against a real
 `base.js`, and the live BotGuard round-trip (Create → VM → GenerateIT → mint) in
 the WKWebView.
 
-## Safe registration (why the plugin loads when it does)
+## Early bootstrap (breaking the chicken-and-egg)
 
-`load_all_plugins()` (the plugin import) must never run while another
-`extract_info` is executing in the embedded interpreter — that re-entrancy
-crashed an early mid-recovery attempt. So the runtime is wired only at a **calm
-point**: the start of a job (serial queue) once Python is bootstrapped *and*
-`waitForOrphanedExtraction` confirms no extraction is still running
-(`wireJSRuntimeIfSafe`). Consequence: the runtime activates from the second
-extraction of a session onward (or right after the first successful one). A
-first-ever hard video that times out on the default path still falls through to
-the forced clients exactly as before — then a retry, with the runtime now
-active, solves nsig on device and mints a PO token so the web client works.
+The web client hangs on hard videos *because* nsig isn't solved on device — but
+the runtime can only register after Python is up, which used to happen only by
+running that same hanging extraction. That circular dependency meant a
+first-ever hard video would time out, orphan a GIL-holding nsig thread, and
+crash the forced-client fallback when it ran a second `extract_info`
+concurrently.
+
+`YoutubeDL-iOS` bootstraps Python lazily via `PythonSupport.initialize()` inside
+`loadPythonModule` — **not** by running an extraction. So we call that ourselves
+(`PythonBridge.bootstrapAndConfigure`) at the very start of a YouTube job, insert
+the yt-dlp module dir into `sys.path`, and register the providers *before* the
+first web extraction. The web client then solves nsig on device (resolving in a
+couple of seconds) and mints a PO token — no hang, no orphan, no crash — on the
+**first** download. (We skip the wrapper's `injectFakePopen` ffmpeg shim: this
+app never invokes yt-dlp's ffmpeg path.)
+
+Guards that keep it safe:
+
+- `load_all_plugins()` (the plugin import) must never run while another
+  `extract_info` is executing in the interpreter — that re-entrancy is the
+  crash. Registration only runs with the interpreter idle:
+  `orphanedDefaultExtraction == nil` at the start of a job, or
+  `wireJSRuntimeIfSafe` after `waitForOrphanedExtraction` confirms settlement.
+- `waitForOrphanedExtraction` now returns whether the interpreter is idle and
+  clears its handle **only** when the orphan truly settled (it used to clear
+  unconditionally, falsely reading as idle).
+- The forced-client fallback no longer runs concurrently with an unsettled
+  orphan: it waits a generous window and, if the orphan won't settle, fails
+  cleanly instead of risking the concurrent-`extract_info` crash.
+
+Requires **PythonSupport** (a transitive dependency of YoutubeDL-iOS) to be
+importable from the app target — add it as an explicit package dependency
+alongside PythonKit if `canImport(PythonSupport)` is false. Without it the early
+bootstrap compiles out and the runtime falls back to lazy wiring (activates from
+the second extraction of a session).
 
 ## Why this is the structural fix
 
