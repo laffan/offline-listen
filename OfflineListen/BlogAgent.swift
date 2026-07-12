@@ -5,7 +5,10 @@ import Foundation
 /// of the page's links are recent articles (telling posts apart from nav/
 /// category/about links is exactly the judgement call heuristics get wrong),
 /// reads each article, and harvests the YouTube links inside — one Browse item
-/// per video, titled after its article.
+/// per video, titled after its article. An article with **no** YouTube links
+/// isn't a dead end: the agent extracts the tracks the text mentions and
+/// resolves them on YouTube via the search scraper; only a post that mentions
+/// no tracks at all is skipped.
 ///
 /// Sites behind bot protection (Cloudflare-style challenges, 403s for
 /// non-browser clients) are detected and surfaced as the distinct
@@ -74,12 +77,29 @@ enum BlogAgent {
             }
             fetchedCount += 1
 
-            let videoIDs = BrowseHTTP.youTubeVideoIDs(in: page.html)
-            guard !videoIDs.isEmpty else { continue }
-
             let articleTitle = pageTitle(in: page.html) ?? articleURL.lastPathComponent
             let description = pageDescription(in: page.html) ?? ""
             let published = pagePublishedDate(in: page.html)
+
+            let videoIDs = BrowseHTTP.youTubeVideoIDs(in: page.html)
+            guard !videoIDs.isEmpty else {
+                // No links in the post — find the tracks it *mentions* on
+                // YouTube instead. A post that mentions none is skipped.
+                let mentioned = await findMentionedTracks(in: page.html,
+                                                          articleTitle: articleTitle,
+                                                          published: published,
+                                                          settings: settings)
+                if mentioned.isEmpty {
+                    appLog("Blog agent: no YouTube links or track mentions in \"\(articleTitle)\" — skipping.",
+                           level: .debug, category: "Browse")
+                } else {
+                    appLog("Blog agent: \"\(articleTitle)\" has no YouTube links — resolved \(mentioned.count) mentioned track(s) via search.",
+                           category: "Browse")
+                }
+                items.append(contentsOf: mentioned)
+                continue
+            }
+
             for (index, videoID) in videoIDs.enumerated() {
                 let title = videoIDs.count == 1
                     ? articleTitle
@@ -235,6 +255,82 @@ enum BlogAgent {
             .compactMap { $0 as? String }
             .filter { offered.contains($0) }
             .compactMap { URL(string: $0) }
+    }
+
+    // MARK: - Mentioned-track fallback
+
+    /// For a post with no YouTube links: ask the model which songs the article
+    /// text actually mentions, then resolve each to a real video via the
+    /// search scraper (the same never-trust-the-model-with-links rule as
+    /// `AIDiscovery`). Best-effort — a failure here just means the post is
+    /// skipped, never that the whole refresh fails.
+    private static func findMentionedTracks(in html: String,
+                                            articleTitle: String,
+                                            published: Date?,
+                                            settings: AISettingsStore) async -> [FetchedBrowseItem] {
+        let text = articleText(from: html)
+        guard !text.isEmpty else { return [] }
+
+        let client = await AnthropicClient(apiKey: settings.apiKey, model: settings.model)
+        let raw: String
+        do {
+            raw = try await client.complete(
+                system: """
+                You extract music tracks from a blog article. List only songs \
+                the article text actually mentions or discusses — never guess, \
+                pad, or add songs the article doesn't name. An article that \
+                mentions no identifiable songs gets an empty array.
+
+                Respond with ONLY a JSON array and nothing else — no markdown, \
+                no commentary. At most 12 elements, each:
+                {"artist": string, "title": string, "note": string}
+
+                "note" is one short phrase on how the article mentions the \
+                song. Do not include YouTube links or video ids — they will be \
+                looked up separately.
+                """,
+                userText: "Article title: \(articleTitle)\n\nArticle text:\n\(text)",
+                maxTokens: 1000
+            )
+        } catch {
+            if !isCancellation(error) {
+                appLog("Blog agent: track extraction failed for \"\(articleTitle)\": \(error.localizedDescription)",
+                       level: .warning, category: "Browse")
+            }
+            return []
+        }
+
+        var items: [FetchedBrowseItem] = []
+        for suggestion in AIDiscovery.parse(raw) {
+            if Task.isCancelled { break }
+            let query = "\(suggestion.artist) \(suggestion.title)"
+            guard let videoID = await YouTubeSearchResolver.firstVideoID(matching: query) else {
+                appLog("No YouTube result for \"\(query)\" — skipping.", level: .warning, category: "Browse")
+                continue
+            }
+            let mention = "Mentioned in \"\(articleTitle)\""
+            items.append(FetchedBrowseItem(
+                title: "\(suggestion.artist) — \(suggestion.title)",
+                detail: suggestion.note.isEmpty ? mention : "\(suggestion.note) — mentioned in \"\(articleTitle)\"",
+                url: BrowseHTTP.watchURL(forVideoID: videoID),
+                videoID: videoID,
+                datePublished: published
+            ))
+        }
+        return items
+    }
+
+    /// The article's readable text for the model: script/style/nav chrome
+    /// removed, tags stripped, capped so a sprawling page can't blow the
+    /// prompt budget.
+    static func articleText(from html: String, maxLength: Int = 12_000) -> String {
+        var t = html
+        for tag in ["script", "style", "noscript", "svg", "form", "nav", "header", "footer"] {
+            t = t.replacingOccurrences(of: "<\(tag)[\\s\\S]*?</\(tag)>",
+                                       with: " ",
+                                       options: [.regularExpression, .caseInsensitive])
+        }
+        return String(t.strippedHTML.prefix(maxLength))
     }
 
     // MARK: - Article metadata scraping
