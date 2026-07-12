@@ -40,23 +40,26 @@ struct BrowseSourceView: View {
                 .frame(maxHeight: .infinity)
             } else {
                 List {
-                    Section {
-                        ForEach(items) { item in
-                            BrowseItemRow(
-                                item: item,
-                                onDownload: { download(item) },
-                                onPreview: { previewItem = item }
-                            )
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                Button(role: .destructive) {
-                                    browse.markDiscarded(item)
-                                } label: {
-                                    Label("Discard", systemImage: "xmark.bin")
-                                }
+                    if source?.kind == .blogAgent {
+                        // Blog Agent lists group tracks under the post they
+                        // were found in, newest post first.
+                        Section {
+                        } header: {
+                            header(count: items.count)
+                        }
+                        ForEach(postGroups(of: items)) { group in
+                            Section {
+                                ForEach(group.items) { itemRow($0) }
+                            } header: {
+                                postHeader(group)
                             }
                         }
-                    } header: {
-                        header(count: items.count)
+                    } else {
+                        Section {
+                            ForEach(items) { itemRow($0) }
+                        } header: {
+                            header(count: items.count)
+                        }
                     }
                 }
                 .listStyle(.plain)
@@ -81,6 +84,65 @@ struct BrowseSourceView: View {
         }
         .sheet(item: $previewItem) { item in
             BrowsePreviewView(item: item)
+        }
+    }
+
+    /// One item row with its discard swipe — shared by the flat and the
+    /// grouped-by-post layouts.
+    @ViewBuilder
+    private func itemRow(_ item: BrowseItem) -> some View {
+        BrowseItemRow(
+            item: item,
+            onDownload: { download(item) },
+            onPreview: { previewItem = item }
+        )
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) {
+                browse.markDiscarded(item)
+            } label: {
+                Label("Discard", systemImage: "xmark.bin")
+            }
+        }
+    }
+
+    /// Tracks bucketed under the post they were found in, preserving the
+    /// items' newest-first order (so the freshest post's group comes first).
+    private struct PostGroup: Identifiable {
+        let id: String
+        let title: String
+        let date: Date?
+        var items: [BrowseItem]
+    }
+
+    private func postGroups(of items: [BrowseItem]) -> [PostGroup] {
+        var order: [String] = []
+        var groups: [String: PostGroup] = [:]
+        for item in items {
+            // Items saved before post tracking existed have neither field;
+            // they gather under one catch-all group at their sort position.
+            let key = item.postURL ?? item.postTitle ?? ""
+            if groups[key] == nil {
+                groups[key] = PostGroup(id: key,
+                                        title: item.postTitle ?? "Other finds",
+                                        date: item.datePublished,
+                                        items: [])
+                order.append(key)
+            }
+            groups[key]?.items.append(item)
+        }
+        return order.compactMap { groups[$0] }
+    }
+
+    @ViewBuilder
+    private func postHeader(_ group: PostGroup) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(group.title)
+                .lineLimit(2)
+            Spacer()
+            if let date = group.date {
+                Text(date.formatted(date: .abbreviated, time: .omitted))
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 

@@ -97,7 +97,9 @@ Five screens (tabs):
    Control Center. For a chaptered track, small **dots** sit along the scrubber
    at each chapter's start and the **current chapter title** shows on its own
    line beneath the title/artist, updating as playback crosses a marker.
-5. **Settings** — AI configuration on top, the **Log** as a section beneath it.
+5. **Settings** — AI configuration on top, a **Blog Agent** section (posts per
+   refresh / songs per post limits for the Browse tab's Blog Agent sources),
+   and the **Log** as a section beneath them.
    - **AI model & API key.** Pick **Haiku** (fast/cheap) or **Sonnet** (more
      capable), paste an Anthropic API key, and **Verify & Save** — the key is
      checked against the API and, on success, stored in the device **Keychain**
@@ -153,7 +155,7 @@ Seven **source types**, in two families:
 | **YouTube Channel** | Scrape/RSS: watches the channel's upload feed (`/feeds/videos.xml`). Accepts a channel URL, `@handle`, or bare `UC…` id — a handle/vanity URL is resolved to its channel id by scraping the channel page once, then cached. |
 | **YouTube Playlist** | Scrape/RSS: watches the playlist's feed. Accepts a playlist URL (anything with `list=`) or a bare playlist id. |
 | **RSS Feed** | RSS reader: parses any RSS/Atom feed and keeps **only the posts that contain YouTube links** (a music blog's roundups, a newsletter's song-of-the-day). A post with several links yields one item per video. |
-| **Blog Agent** | AI agent: RSS-reader behaviour for blogs **without a feed**. The agent fetches the homepage, asks the model which of the page's links are individual recent articles (telling posts apart from nav/category/about links is exactly the judgement call heuristics get wrong — and the model may only *pick from* the links found on the page, never invent one), reads up to 8 of them, and pulls out the YouTube links inside — one item per video, titled after its article, with the article's `og:description` and publish date when present. A post with **no YouTube links** isn't a dead end: the agent extracts the **tracks the text mentions** (strictly what the article names — the model is told never to pad) and resolves each on YouTube via the search scraper, with a "mentioned in …" description; only a post that mentions no tracks at all is skipped. |
+| **Blog Agent** | AI agent: RSS-reader behaviour for blogs **without a feed**. The agent fetches the homepage, asks the model which of the page's links are individual recent articles (telling posts apart from nav/category/about links is exactly the judgement call heuristics get wrong — and the model may only *pick from* the links found on the page, never invent one), reads the most recent ones, and pulls out the YouTube links inside — one item per video, titled after its article, with the article's `og:description` and publish date when present. A post with **no YouTube links** isn't a dead end: the agent extracts the **tracks the text mentions** (strictly what the article names — the model is told never to pad) and resolves each on YouTube via the search scraper; only a post that mentions no tracks at all is skipped. A Blog Agent source's list is **grouped by post** — each post is a section header (title + date) with the tracks found in it beneath — and **Settings ▸ Blog Agent** caps how many **posts per refresh** are read and how many **songs per post** are taken (defaults 5 and 5), so a link-heavy blog can't flood the list. |
 | **Artist** | AI: the model suggests the artist's popular/essential songs. |
 | **Genre** | AI: popular songs in a genre, across artists. |
 | **Country** | AI: popular songs from a country, across eras and artists. |

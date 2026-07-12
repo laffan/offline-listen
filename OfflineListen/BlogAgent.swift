@@ -14,9 +14,35 @@ import Foundation
 /// non-browser clients) are detected and surfaced as the distinct
 /// `agentBlocked` error rather than a generic failure or a silent empty
 /// result.
-enum BlogAgent {
+/// The Blog Agent's user-tunable limits, persisted in UserDefaults and edited
+/// from Settings ▸ Blog Agent (via `@AppStorage` on the same keys). Reads
+/// clamp to sane ranges; 0 (never written) means "use the default".
+enum BlogAgentSettings {
+    static let maxPostsKey = "blogAgentMaxPosts"
+    static let maxSongsPerPostKey = "blogAgentMaxSongsPerPost"
+
+    static let defaultMaxPosts = 5
+    static let defaultMaxSongsPerPost = 5
+    static let postsRange = 1...20
+    static let songsRange = 1...20
+
     /// How many articles one refresh reads. Each costs a page fetch.
-    private static let articleLimit = 8
+    static var maxPosts: Int {
+        let stored = UserDefaults.standard.integer(forKey: maxPostsKey)
+        guard stored != 0 else { return defaultMaxPosts }
+        return min(max(stored, postsRange.lowerBound), postsRange.upperBound)
+    }
+
+    /// How many tracks one article may contribute (found links and mentioned
+    /// tracks alike).
+    static var maxSongsPerPost: Int {
+        let stored = UserDefaults.standard.integer(forKey: maxSongsPerPostKey)
+        guard stored != 0 else { return defaultMaxSongsPerPost }
+        return min(max(stored, songsRange.lowerBound), songsRange.upperBound)
+    }
+}
+
+enum BlogAgent {
     /// How many homepage links are offered to the model for triage.
     private static let anchorLimit = 150
 
@@ -48,7 +74,12 @@ enum BlogAgent {
         guard !anchors.isEmpty else {
             throw BrowseFetchError.badInput("No links found on that page — is it really the blog's homepage?")
         }
-        let articleURLs = try await selectArticleURLs(from: anchors, homeURL: home.finalURL, settings: settings)
+        let maxPosts = BlogAgentSettings.maxPosts
+        let maxSongs = BlogAgentSettings.maxSongsPerPost
+        let articleURLs = try await selectArticleURLs(from: anchors,
+                                                      homeURL: home.finalURL,
+                                                      limit: maxPosts,
+                                                      settings: settings)
         guard !articleURLs.isEmpty else {
             throw BrowseFetchError.badInput("The AI couldn't identify any article links on that page.")
         }
@@ -59,7 +90,7 @@ enum BlogAgent {
         var items: [FetchedBrowseItem] = []
         var blockedCount = 0
         var fetchedCount = 0
-        for articleURL in articleURLs.prefix(articleLimit) {
+        for articleURL in articleURLs.prefix(maxPosts) {
             if Task.isCancelled { break }
             let page: Page
             do {
@@ -81,13 +112,15 @@ enum BlogAgent {
             let description = pageDescription(in: page.html) ?? ""
             let published = pagePublishedDate(in: page.html)
 
-            let videoIDs = BrowseHTTP.youTubeVideoIDs(in: page.html)
+            let videoIDs = Array(BrowseHTTP.youTubeVideoIDs(in: page.html).prefix(maxSongs))
             guard !videoIDs.isEmpty else {
                 // No links in the post — find the tracks it *mentions* on
                 // YouTube instead. A post that mentions none is skipped.
                 let mentioned = await findMentionedTracks(in: page.html,
                                                           articleTitle: articleTitle,
+                                                          articleURL: articleURL,
                                                           published: published,
+                                                          limit: maxSongs,
                                                           settings: settings)
                 if mentioned.isEmpty {
                     appLog("Blog agent: no YouTube links or track mentions in \"\(articleTitle)\" — skipping.",
@@ -109,7 +142,9 @@ enum BlogAgent {
                     detail: description,
                     url: BrowseHTTP.watchURL(forVideoID: videoID),
                     videoID: videoID,
-                    datePublished: published
+                    datePublished: published,
+                    postTitle: articleTitle,
+                    postURL: articleURL.absoluteString
                 ))
             }
         }
@@ -217,9 +252,10 @@ enum BlogAgent {
 
     /// Asks the model which of the homepage's links are individual recent
     /// articles. Returns them newest-first as judged by the model, capped at
-    /// `articleLimit`.
+    /// `limit` (Settings ▸ Blog Agent ▸ posts per refresh).
     private static func selectArticleURLs(from anchors: [Anchor],
                                           homeURL: URL,
+                                          limit: Int,
                                           settings: AISettingsStore) async throws -> [URL] {
         let client = await AnthropicClient(apiKey: settings.apiKey, model: settings.model)
 
@@ -235,7 +271,7 @@ enum BlogAgent {
 
             Respond with ONLY a JSON array of URL strings and nothing else — no \
             markdown, no commentary. List the most recent-looking articles \
-            first, at most \(articleLimit). Use the URLs exactly as given. If \
+            first, at most \(limit). Use the URLs exactly as given. If \
             nothing looks like an article, return [].
             """,
             userText: "Blog homepage: \(homeURL.absoluteString)\n\nLinks (URL — link text):\n\(listing)",
@@ -266,7 +302,9 @@ enum BlogAgent {
     /// skipped, never that the whole refresh fails.
     private static func findMentionedTracks(in html: String,
                                             articleTitle: String,
+                                            articleURL: URL,
                                             published: Date?,
+                                            limit: Int,
                                             settings: AISettingsStore) async -> [FetchedBrowseItem] {
         let text = articleText(from: html)
         guard !text.isEmpty else { return [] }
@@ -282,7 +320,8 @@ enum BlogAgent {
                 mentions no identifiable songs gets an empty array.
 
                 Respond with ONLY a JSON array and nothing else — no markdown, \
-                no commentary. At most 12 elements, each:
+                no commentary. At most \(limit) elements (the most prominently \
+                featured songs first), each:
                 {"artist": string, "title": string, "note": string}
 
                 "note" is one short phrase on how the article mentions the \
@@ -301,20 +340,21 @@ enum BlogAgent {
         }
 
         var items: [FetchedBrowseItem] = []
-        for suggestion in AIDiscovery.parse(raw) {
+        for suggestion in AIDiscovery.parse(raw).prefix(limit) {
             if Task.isCancelled { break }
             let query = "\(suggestion.artist) \(suggestion.title)"
             guard let videoID = await YouTubeSearchResolver.firstVideoID(matching: query) else {
                 appLog("No YouTube result for \"\(query)\" — skipping.", level: .warning, category: "Browse")
                 continue
             }
-            let mention = "Mentioned in \"\(articleTitle)\""
             items.append(FetchedBrowseItem(
                 title: "\(suggestion.artist) — \(suggestion.title)",
-                detail: suggestion.note.isEmpty ? mention : "\(suggestion.note) — mentioned in \"\(articleTitle)\"",
+                detail: suggestion.note.isEmpty ? "Mentioned in \"\(articleTitle)\"" : suggestion.note,
                 url: BrowseHTTP.watchURL(forVideoID: videoID),
                 videoID: videoID,
-                datePublished: published
+                datePublished: published,
+                postTitle: articleTitle,
+                postURL: articleURL.absoluteString
             ))
         }
         return items

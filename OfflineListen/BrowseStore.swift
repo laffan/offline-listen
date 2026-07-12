@@ -179,13 +179,17 @@ final class BrowseStore: ObservableObject {
                 items[index].title = candidate.title
                 if !candidate.detail.isEmpty { items[index].detail = candidate.detail }
                 if let published = candidate.datePublished { items[index].datePublished = published }
+                if let postTitle = candidate.postTitle { items[index].postTitle = postTitle }
+                if let postURL = candidate.postURL { items[index].postURL = postURL }
             } else {
                 let item = BrowseItem(sourceID: sourceID,
                                       title: candidate.title,
                                       detail: candidate.detail,
                                       url: candidate.url,
                                       videoID: candidate.videoID,
-                                      datePublished: candidate.datePublished)
+                                      datePublished: candidate.datePublished,
+                                      postTitle: candidate.postTitle,
+                                      postURL: candidate.postURL)
                 items.append(item)
                 known[key] = items.count - 1
                 added += 1

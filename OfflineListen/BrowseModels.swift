@@ -162,6 +162,11 @@ struct BrowseItem: Identifiable, Codable, Hashable {
     var datePublished: Date?
     var dateFetched: Date
     var status: BrowseItemStatus
+    /// The post/article the item came from (Blog Agent sources), so the list
+    /// can group tracks under their post. Nil for sources without that
+    /// structure — and for items saved before these fields existed.
+    var postTitle: String?
+    var postURL: String?
 
     init(id: UUID = UUID(),
          sourceID: UUID,
@@ -171,7 +176,9 @@ struct BrowseItem: Identifiable, Codable, Hashable {
          videoID: String? = nil,
          datePublished: Date? = nil,
          dateFetched: Date = Date(),
-         status: BrowseItemStatus = .new) {
+         status: BrowseItemStatus = .new,
+         postTitle: String? = nil,
+         postURL: String? = nil) {
         self.id = id
         self.sourceID = sourceID
         self.title = title
@@ -181,6 +188,8 @@ struct BrowseItem: Identifiable, Codable, Hashable {
         self.datePublished = datePublished
         self.dateFetched = dateFetched
         self.status = status
+        self.postTitle = postTitle
+        self.postURL = postURL
     }
 
     /// Identity across refreshes: the video id when known, else the URL.
@@ -195,6 +204,9 @@ struct FetchedBrowseItem {
     var url: String
     var videoID: String?
     var datePublished: Date?
+    /// The post the item was found in (Blog Agent), for grouping.
+    var postTitle: String? = nil
+    var postURL: String? = nil
 }
 
 extension AppPaths {

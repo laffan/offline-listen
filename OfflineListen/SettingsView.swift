@@ -10,6 +10,13 @@ struct SettingsView: View {
     @State private var keyInput = ""
     @State private var verifyState: VerifyState = .idle
 
+    // The Blog Agent's limits — same keys `BlogAgentSettings` reads at
+    // refresh time, so a change here applies to the next refresh.
+    @AppStorage(BlogAgentSettings.maxPostsKey)
+    private var blogAgentMaxPosts = BlogAgentSettings.defaultMaxPosts
+    @AppStorage(BlogAgentSettings.maxSongsPerPostKey)
+    private var blogAgentMaxSongs = BlogAgentSettings.defaultMaxSongsPerPost
+
     private enum VerifyState: Equatable {
         case idle
         case verifying
@@ -20,9 +27,39 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 aiSection
+                blogAgentSection
                 logSection
             }
             .navigationTitle("Settings")
+        }
+    }
+
+    // MARK: - Blog Agent
+
+    private var blogAgentSection: some View {
+        Section {
+            Stepper(value: $blogAgentMaxPosts, in: BlogAgentSettings.postsRange) {
+                HStack {
+                    Text("Posts per refresh")
+                    Spacer()
+                    Text("\(blogAgentMaxPosts)")
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
+            Stepper(value: $blogAgentMaxSongs, in: BlogAgentSettings.songsRange) {
+                HStack {
+                    Text("Songs per post")
+                    Spacer()
+                    Text("\(blogAgentMaxSongs)")
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
+        } header: {
+            Text("Blog Agent")
+        } footer: {
+            Text("How many recent posts a Blog Agent source reads on each refresh, and how many tracks it may take from a single post (found links and mentioned tracks alike).")
         }
     }
 
