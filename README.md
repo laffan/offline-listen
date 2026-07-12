@@ -427,14 +427,16 @@ straight to yt-dlp, instead of logging a guaranteed failure:
    **must** run after it (calling it first crashes with `No module named
    'encodings'`).
 
-   **For YouTube, that first attempt gets only a short grace period (15s), not
-   the full 90s.** yt-dlp's default *web* client has to run YouTube's nsig
-   descrambling through the slow pure-Python JS interpreter on device; easy
-   videos resolve in a few seconds, but a video that needs descrambling would
-   otherwise stall the whole 90s. The short window lets easy videos (and the
-   Python bootstrap) through, then **falls to the forced fast player clients**,
-   one at a time, whose stream URLs need no descrambling — the same renditions
-   Safari plays — so the videos that hang the web path download quickly. The
+   **The default attempt gets a 60s window for YouTube (90s for other sites),
+   then falls to the forced fast player clients.** Modern yt-dlp (2026.x) with no
+   JS runtime resolves via the JS-less `android_vr` client — a plain network
+   call, no nsig — so there's no pure-Python descrambling to stall the
+   interpreter; the window just needs to be long enough for that network resolve
+   (an earlier, much shorter grace was cutting it off and turning perfectly
+   downloadable videos into timeouts). Once the on-device JS runtime is wired,
+   the web client's nsig is solved in JavaScriptCore in a couple of seconds, so
+   the longer window never reintroduces a stall. If the default still fails, it
+   **falls to the forced fast player clients**, one at a time. The
    client order is **mode-aware**: **audio** leads with the pre-signed
    `ios`/`android` clients (resolution is irrelevant and they dodge YouTube's
    `tv`-client DRM experiment, [yt-dlp #12563](https://github.com/yt-dlp/yt-dlp/issues/12563)),

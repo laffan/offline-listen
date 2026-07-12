@@ -760,24 +760,21 @@ final class YoutubeDLExtractor: MediaExtractor {
         // device they almost always fail the n-challenge (no JS runtime), so
         // they're a last resort. We accept the first client that yields a usable
         // stream, so this order is what decides quality and which client wins.
-        // NOTE: the on-device JS runtime is deliberately *not* wired here.
-        // Registering it runs `load_all_plugins()` (Python module imports), and
-        // this forced-client path is reached precisely when the default
-        // extraction timed out — which frequently leaves an orphaned
-        // `extract_info` still executing in the embedded interpreter
-        // (`waitForOrphanedExtraction` logs "proceeding anyway"). Importing
-        // modules while another thread runs Python is a re-entrancy crash. So the
-        // wiring happens only at a calm point — right after a *successful*
-        // default resolve (see `extractMedia`) — and, once registered for the
-        // session, it benefits every later default-web resolve. The forced
-        // clients here run exactly as they did before the JS-runtime work.
+        // Wire the on-device JS runtime for the forced clients below. This is
+        // safe here even though it runs `load_all_plugins()`: every path that
+        // reaches `extractViaForcedClients` first awaits `waitForOrphanedExtraction`
+        // and only proceeds once the interpreter is idle (no orphaned
+        // `extract_info` still running) — the exact condition that makes the
+        // plugin import non-re-entrant. Python is fully bootstrapped by the
+        // default `extractInfo` that preceded us. With the runtime live, the
+        // web-family clients below resolve their n-challenge in JavaScriptCore and
+        // get a minted PO token, instead of failing.
+        PythonBridge.configureIfNeeded()
 
         // The client order still leads with the pre-signed no-token clients
-        // (`tv` for video quality, `ios` for audio) because PO-token minting is
-        // a no-op until `botguard.js` is vendored (see POTokenMinter); the
-        // web-family clients — now resolvable thanks to nsig solving — remain the
-        // fallback tier. When PO minting is live, promote `web_safari`/`web` to
-        // the front for their higher-quality, least-gated renditions.
+        // (`tv` for video quality, `ios` for audio); the web-family clients —
+        // now resolvable thanks to on-device nsig solving + PO tokens — are the
+        // fallback tier.
         let clientSets: [[String]] = mode == .video
             ? [["tv"], ["ios"], ["android"], ["web_safari"], ["mweb"], ["web"]]
             : [["ios"], ["android"], ["tv"], ["web_safari"], ["mweb"], ["web"]]
@@ -1193,15 +1190,20 @@ final class YoutubeDLExtractor: MediaExtractor {
             // client recovery below drives Python directly, so running it before
             // any `extractInfo` crashes with "No module named 'encodings'".
             //
-            // But for YouTube we don't let that web path hang: when a video needs
-            // nsig descrambling, the web client grinds through the slow on-device
-            // pure-Python JS interpreter and would stall the full 90s. So YouTube
-            // gets only a short grace period — long enough for easy videos (and
-            // the Python bootstrap) to come through — after which we bail to the
-            // tv/ios/… clients, whose URLs need no descrambling. Non-YouTube sites
-            // have no such fast fallback and can legitimately be slow, so they keep
-            // the full timeout.
-            let infoTimeout: TimeInterval = Self.isYouTubeURL(url) ? 15 : 90
+            // The timeout used to be a *short* 15s for YouTube, on the theory
+            // that the default web client would grind nsig through the slow
+            // pure-Python JS interpreter and stall. But modern yt-dlp
+            // (2026.x) with no JS runtime no longer defaults to the web client —
+            // it uses the JS-less `android_vr` client, which needs no nsig and
+            // just makes a network call. The 15s grace was cutting that
+            // legitimate (occasionally slow) resolve off mid-flight, which is
+            // what produced the "timed out → orphan → crash" chain on videos that
+            // are otherwise perfectly downloadable. A network call can't hang the
+            // interpreter the way pure-Python nsig could, so YouTube now gets a
+            // generous window too. (Once the on-device JS runtime is wired, the
+            // web client's nsig is solved in JavaScriptCore in a couple of
+            // seconds, so this never reintroduces the old stall.)
+            let infoTimeout: TimeInterval = Self.isYouTubeURL(url) ? 60 : 90
 
             appLog("Extracting video info (running yt-dlp)…", category: category)
             let formats: [Format]
