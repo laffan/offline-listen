@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import UIKit
 
 /// The Browse preview modal: downloads the item's audio (through the same
 /// serial pipeline as the download queue), plays it in its own mini player,
@@ -17,21 +18,25 @@ struct BrowsePreviewView: View {
     @Environment(\.dismiss) private var dismiss
 
     @StateObject private var model = BrowsePreviewModel()
+    /// The artist just added via the selection menu's "Browse Artist" (drives
+    /// the confirmation alert).
+    @State private var addedArtist: String?
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 24) {
                 VStack(spacing: 6) {
-                    Text(item.title)
-                        .font(.headline)
-                        .multilineTextAlignment(.center)
-                        .lineLimit(3)
+                    SelectableText(text: item.title,
+                                   font: .preferredFont(forTextStyle: .headline),
+                                   color: .label,
+                                   maxLines: 3,
+                                   onBrowseArtist: browseArtist)
                     if !item.detail.isEmpty {
-                        Text(item.detail)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            .lineLimit(3)
+                        SelectableText(text: item.detail,
+                                       font: .preferredFont(forTextStyle: .caption1),
+                                       color: .secondaryLabel,
+                                       maxLines: 3,
+                                       onBrowseArtist: browseArtist)
                     }
                 }
                 .padding(.horizontal)
@@ -59,6 +64,22 @@ struct BrowsePreviewView: View {
         .onDisappear {
             model.teardown()
         }
+        .alert("Added to Browse",
+               isPresented: Binding(get: { addedArtist != nil },
+                                    set: { if !$0 { addedArtist = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Artist source \"\(addedArtist ?? "")\" was added and is refreshing in the background.")
+        }
+    }
+
+    /// The selection menu's "Browse Artist": adds an Artist source for the
+    /// selected text and kicks off its first refresh, exactly like typing it
+    /// into the add-source sheet.
+    private func browseArtist(_ text: String) {
+        let source = browse.addSource(kind: .artist, name: "", input: text)
+        Task { await browse.refresh(source) }
+        addedArtist = text
     }
 
     @ViewBuilder
@@ -178,6 +199,80 @@ struct BrowsePreviewView: View {
         browse.markSaved(item)
         Task { await aiOrganizer.organizeIfEnabled(track.id) }
         dismiss()
+    }
+}
+
+/// Selectable text for the preview modal, backed by a non-editable
+/// `UITextView` because SwiftUI's `Text` offers no way to extend its selection
+/// menu. Selecting text adds a **Browse Artist** action alongside the system
+/// ones — handing the selection (an artist name in a title like
+/// "Ali Farka Touré — Savane") to `onBrowseArtist`.
+struct SelectableText: UIViewRepresentable {
+    let text: String
+    let font: UIFont
+    let color: UIColor
+    let maxLines: Int
+    let onBrowseArtist: @MainActor (String) -> Void
+
+    func makeUIView(context: Context) -> UITextView {
+        let view = UITextView()
+        view.isEditable = false
+        view.isSelectable = true
+        view.isScrollEnabled = false
+        view.backgroundColor = .clear
+        view.textContainerInset = .zero
+        view.textContainer.lineFragmentPadding = 0
+        view.textContainer.maximumNumberOfLines = maxLines
+        view.textContainer.lineBreakMode = .byTruncatingTail
+        view.textAlignment = .center
+        view.delegate = context.coordinator
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return view
+    }
+
+    func updateUIView(_ view: UITextView, context: Context) {
+        view.text = text
+        view.font = font
+        view.textColor = color
+        context.coordinator.onBrowseArtist = onBrowseArtist
+    }
+
+    /// Non-scrolling UITextViews don't self-size cleanly inside SwiftUI;
+    /// answer the proposal explicitly with the wrapped text height.
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
+        guard let width = proposal.width, width.isFinite, width > 0 else { return nil }
+        let size = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+        return CGSize(width: width, height: size.height)
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onBrowseArtist: onBrowseArtist)
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var onBrowseArtist: @MainActor (String) -> Void
+
+        init(onBrowseArtist: @escaping @MainActor (String) -> Void) {
+            self.onBrowseArtist = onBrowseArtist
+        }
+
+        func textView(_ textView: UITextView,
+                      editMenuForTextIn range: NSRange,
+                      suggestedActions: [UIMenuElement]) -> UIMenu? {
+            guard range.length > 0,
+                  let text = textView.text,
+                  let selectedRange = Range(range, in: text) else { return nil }
+            let selected = String(text[selectedRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !selected.isEmpty else { return nil }
+
+            let browseArtist = UIAction(title: "Browse Artist",
+                                        image: UIImage(systemName: "music.mic")) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.onBrowseArtist(selected)
+                }
+            }
+            return UIMenu(children: suggestedActions + [browseArtist])
+        }
     }
 }
 

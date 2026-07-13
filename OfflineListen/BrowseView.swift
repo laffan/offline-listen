@@ -195,10 +195,11 @@ struct AddBrowseSourceView: View {
                             Button {
                                 showingCountryList = true
                             } label: {
-                                Image(systemName: "list.bullet.circle")
+                                Image(systemName: "globe")
                                     .foregroundStyle(Color.accentColor)
                             }
                             .buttonStyle(.borderless)
+                            .contentShape(Rectangle())
                             .accessibilityLabel("Choose from a list of countries")
                         }
                     }

@@ -141,7 +141,11 @@ description when one exists, and two actions per item:
   exactly as if it had been pasted into the Download tab.
 - **Preview** — opens a modal that downloads the audio and plays it in its own
   **mini player** (scrubber, play/pause — separate from the main Player, which
-  it pauses while auditioning), with **Save** and **Discard** buttons. Save
+  it pauses while auditioning), with **Save** and **Discard** buttons. The
+  modal's title and description are **selectable**, and the selection menu
+  gains a **Browse Artist** action: select an artist's name and it adds an
+  Artist source for it on the spot (first refresh included) — hear something
+  you like, select the name, and their catalogue starts filling in. Save
   files the already-downloaded audio into the library as a normal track (it
   lands in the Inbox and gets the same best-effort AI organization as any
   download); Discard deletes the file and hides the item for good. Dismissing
@@ -158,7 +162,7 @@ Seven **source types**, in two families:
 | **Blog Agent** | AI agent: RSS-reader behaviour for blogs **without a feed**. The agent fetches the homepage, asks the model which of the page's links are individual recent articles (telling posts apart from nav/category/about links is exactly the judgement call heuristics get wrong — and the model may only *pick from* the links found on the page, never invent one), reads the most recent ones, and pulls out the YouTube links inside — one item per video, titled after its article, with the article's `og:description` and publish date when present. A post with **no YouTube links** isn't a dead end: the agent extracts the **tracks the text mentions** (strictly what the article names — the model is told never to pad) and resolves each on YouTube via the search scraper; only a post that mentions no tracks at all is skipped. A Blog Agent source's list is **grouped by post** — each post is a section header (title + date) with the tracks found in it beneath — and **Settings ▸ Blog Agent** caps how many **posts per refresh** are read and how many **songs per post** are taken (defaults 5 and 5), so a link-heavy blog can't flood the list. |
 | **Artist** | AI: the model suggests the artist's popular/essential songs. |
 | **Genre** | AI: popular songs in a genre, across artists. |
-| **Country** | AI: popular songs from a country (by artists from that country). The country field has a **list button** that opens a searchable modal of every country (built from the system's localized ISO region list) in case the right name isn't obvious. |
+| **Country** | AI: popular songs from a country (by artists from that country). The country field has a **globe button** that opens a searchable modal of every country (built from the system's localized ISO region list) in case the right name isn't obvious. |
 
 All three AI music types can be scoped to an **era**: the add sheet offers an
 **Era** picker (Any era, or a decade from 1950s–2020s), the chosen decade
