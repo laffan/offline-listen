@@ -70,6 +70,15 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    /// Whether the source can be scoped to a decade (the AI music kinds:
+    /// early Dylan, 1980s synth-pop, 1970s Mali).
+    var supportsEra: Bool {
+        switch self {
+        case .artist, .genre, .country: return true
+        case .youtubeChannel, .youtubePlaylist, .rssFeed, .blogAgent: return false
+        }
+    }
+
     /// Placeholder for the add-source input field.
     var inputPlaceholder: String {
         switch self {
@@ -104,7 +113,7 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-/// The decades a Country source can be scoped to.
+/// The decades an AI music source (Artist/Genre/Country) can be scoped to.
 enum BrowseEra {
     static let decades = ["1950s", "1960s", "1970s", "1980s", "1990s", "2000s", "2010s", "2020s"]
 }
@@ -124,8 +133,9 @@ struct BrowseSource: Identifiable, Codable, Hashable {
     /// Cached YouTube channel id (`UC…`) once resolved from a handle/vanity URL,
     /// so later refreshes skip the page scrape.
     var resolvedChannelID: String?
-    /// The decade a Country source is scoped to (one of `BrowseEra.decades`).
-    /// Nil means any era — and nil for every other kind.
+    /// The decade an AI music source (Artist/Genre/Country) is scoped to
+    /// (one of `BrowseEra.decades`). Nil means any era — and nil for every
+    /// kind that doesn't support one.
     var era: String?
 
     init(id: UUID = UUID(),

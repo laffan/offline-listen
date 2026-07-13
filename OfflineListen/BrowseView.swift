@@ -175,8 +175,10 @@ struct AddBrowseSourceView: View {
 
     @State private var name = ""
     @State private var input = ""
-    /// Decade scope for a Country source; empty means any era.
+    /// Decade scope for an AI music source; empty means any era.
     @State private var era = ""
+    /// Presents the all-countries picker (Country kind only).
+    @State private var showingCountryList = false
 
     private var aiBlocked: Bool { kind.usesAI && !aiSettings.isAuthenticated }
 
@@ -184,11 +186,23 @@ struct AddBrowseSourceView: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField(kind.inputPlaceholder, text: $input)
-                        .textInputAutocapitalization(kind.inputIsURL ? .never : .words)
-                        .autocorrectionDisabled(kind.inputIsURL)
-                        .keyboardType(kind.inputIsURL ? .URL : .default)
-                    if kind == .country {
+                    HStack {
+                        TextField(kind.inputPlaceholder, text: $input)
+                            .textInputAutocapitalization(kind.inputIsURL ? .never : .words)
+                            .autocorrectionDisabled(kind.inputIsURL)
+                            .keyboardType(kind.inputIsURL ? .URL : .default)
+                        if kind == .country {
+                            Button {
+                                showingCountryList = true
+                            } label: {
+                                Image(systemName: "list.bullet.circle")
+                                    .foregroundStyle(Color.accentColor)
+                            }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("Choose from a list of countries")
+                        }
+                    }
+                    if kind.supportsEra {
                         Picker("Era", selection: $era) {
                             Text("Any era").tag("")
                             ForEach(BrowseEra.decades, id: \.self) { decade in
@@ -199,7 +213,7 @@ struct AddBrowseSourceView: View {
                     TextField(kind.inputIsURL ? "Name (optional — uses the site's title)" : "Name (optional)",
                               text: $name)
                 } footer: {
-                    Text(kind == .country
+                    Text(kind.supportsEra
                          ? "\(kind.help) Pick a decade to focus the suggestions on that era."
                          : kind.help)
                 }
@@ -225,6 +239,11 @@ struct AddBrowseSourceView: View {
                         .disabled(input.trimmingCharacters(in: .whitespaces).isEmpty || aiBlocked)
                 }
             }
+            .sheet(isPresented: $showingCountryList) {
+                CountryListView { country in
+                    input = country
+                }
+            }
         }
     }
 
@@ -236,5 +255,53 @@ struct AddBrowseSourceView: View {
         // First refresh happens right away so the source lands populated.
         Task { await browse.refresh(source) }
         dismiss()
+    }
+}
+
+/// A searchable list of every country, for the Country source's input field —
+/// handy when the spelling the model expects isn't obvious. Built from the
+/// system's ISO region list (localized names), so nothing is hard-coded.
+struct CountryListView: View {
+    let onSelect: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var search = ""
+
+    /// Localized names for the two-letter ISO regions (skipping the "unknown
+    /// region" placeholder), sorted for scanning.
+    private static let countries: [String] = {
+        let codes = Locale.Region.isoRegions
+            .map(\.identifier)
+            .filter { $0.count == 2 && $0.allSatisfy(\.isLetter) && $0 != "ZZ" }
+        let names = codes.compactMap { Locale.current.localizedString(forRegionCode: $0) }
+        return Set(names).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }()
+
+    private var filtered: [String] {
+        let query = search.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return Self.countries }
+        return Self.countries.filter { $0.localizedCaseInsensitiveContains(query) }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List(filtered, id: \.self) { country in
+                Button {
+                    onSelect(country)
+                    dismiss()
+                } label: {
+                    Text(country)
+                        .foregroundStyle(.primary)
+                }
+            }
+            .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always))
+            .navigationTitle("Choose a Country")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
     }
 }

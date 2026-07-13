@@ -158,7 +158,13 @@ Seven **source types**, in two families:
 | **Blog Agent** | AI agent: RSS-reader behaviour for blogs **without a feed**. The agent fetches the homepage, asks the model which of the page's links are individual recent articles (telling posts apart from nav/category/about links is exactly the judgement call heuristics get wrong — and the model may only *pick from* the links found on the page, never invent one), reads the most recent ones, and pulls out the YouTube links inside — one item per video, titled after its article, with the article's `og:description` and publish date when present. A post with **no YouTube links** isn't a dead end: the agent extracts the **tracks the text mentions** (strictly what the article names — the model is told never to pad) and resolves each on YouTube via the search scraper; only a post that mentions no tracks at all is skipped. A Blog Agent source's list is **grouped by post** — each post is a section header (title + date) with the tracks found in it beneath — and **Settings ▸ Blog Agent** caps how many **posts per refresh** are read and how many **songs per post** are taken (defaults 5 and 5), so a link-heavy blog can't flood the list. |
 | **Artist** | AI: the model suggests the artist's popular/essential songs. |
 | **Genre** | AI: popular songs in a genre, across artists. |
-| **Country** | AI: popular songs from a country — across eras and artists by default, or scoped to a **decade**: the add sheet offers an **Era** picker (Any era, 1950s–2020s), the chosen decade steers the suggestions, and a blank name auto-fills as e.g. "Mali (1970s)". |
+| **Country** | AI: popular songs from a country (by artists from that country). The country field has a **list button** that opens a searchable modal of every country (built from the system's localized ISO region list) in case the right name isn't obvious. |
+
+All three AI music types can be scoped to an **era**: the add sheet offers an
+**Era** picker (Any era, or a decade from 1950s–2020s), the chosen decade
+steers the suggestions — early Dylan, 1980s synth-pop, 1970s Mali — and a
+blank name auto-fills with the era folded in, e.g. "Mali (1970s)", so two
+eras of the same subject read apart in the source list.
 
 The AI types use the **Anthropic key from Settings** (they're unavailable until
 one is saved). For Artist/Genre/Country the model is asked for real, well-known
