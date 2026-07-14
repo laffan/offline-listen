@@ -2,28 +2,26 @@ import SwiftUI
 import UIKit
 import PhotosUI
 
-// MARK: - Fonts
+// MARK: - Colors
 
-/// The curated title fonts the cover editor offers. All are iOS system-bundled
-/// faces, so nothing needs embedding; `Font.custom` falls back to the system
-/// font if a name ever goes missing.
-struct MixtapeFontChoice: Identifiable, Hashable {
-    let displayName: String
-    /// PostScript name, nil for the system font.
-    let fontName: String?
+extension Color {
+    /// Parses "#RRGGBB" (leading # optional). Nil for anything else.
+    init?(mixtapeHex hex: String) {
+        var value = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.hasPrefix("#") { value.removeFirst() }
+        guard value.count == 6, let rgb = UInt64(value, radix: 16) else { return nil }
+        self.init(red: Double((rgb >> 16) & 0xFF) / 255,
+                  green: Double((rgb >> 8) & 0xFF) / 255,
+                  blue: Double(rgb & 0xFF) / 255)
+    }
 
-    var id: String { fontName ?? "system" }
-
-    static let all: [MixtapeFontChoice] = [
-        MixtapeFontChoice(displayName: "System", fontName: nil),
-        MixtapeFontChoice(displayName: "Serif", fontName: "Georgia-Bold"),
-        MixtapeFontChoice(displayName: "Typewriter", fontName: "AmericanTypewriter-Bold"),
-        MixtapeFontChoice(displayName: "Marker", fontName: "MarkerFelt-Wide"),
-        MixtapeFontChoice(displayName: "Futura", fontName: "Futura-Medium"),
-        MixtapeFontChoice(displayName: "Script", fontName: "SnellRoundhand-Bold"),
-        MixtapeFontChoice(displayName: "Chalk", fontName: "Chalkduster"),
-        MixtapeFontChoice(displayName: "Mono", fontName: "Menlo-Bold"),
-    ]
+    /// "#RRGGBB" for this color (alpha dropped), nil if it can't be resolved.
+    var mixtapeHex: String? {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard UIColor(self).getRed(&r, green: &g, blue: &b, alpha: &a) else { return nil }
+        func byte(_ c: CGFloat) -> Int { Int((max(0, min(1, c)) * 255).rounded()) }
+        return String(format: "#%02X%02X%02X", byte(r), byte(g), byte(b))
+    }
 }
 
 extension MixtapeStyle {
@@ -33,6 +31,17 @@ extension MixtapeStyle {
             return .custom(fontName, size: size)
         }
         return .system(size: size, weight: .bold)
+    }
+
+    /// The title colour: the user's pick, or white — except on a tape chip,
+    /// where the unpicked default flips to black so it stays readable.
+    var titleColor: Color {
+        if let hex = textColorHex, let color = Color(mixtapeHex: hex) { return color }
+        return tape ? .black : .white
+    }
+
+    var tapeColor: Color {
+        Color(mixtapeHex: tapeColorHex ?? Self.defaultTapeHex) ?? .white
     }
 }
 
@@ -55,14 +64,16 @@ enum MixtapeCoverLoader {
     }
 }
 
-// MARK: - Banner background
+// MARK: - Banner building blocks
 
-/// The cover image cropped per the mixtape's style — non-destructively: the
-/// image aspect-fills the banner, then the style's zoom and pan choose which
+/// The cover image cropped non-destructively: it aspect-fills the frame, then
+/// `zoom`/`offsetX`/`offsetY` (from one of the style's two crops) choose which
 /// part shows. Without an image, a quiet gradient stands in.
 struct MixtapeBackground: View {
     let image: UIImage?
-    let style: MixtapeStyle
+    let zoom: Double
+    let offsetX: Double
+    let offsetY: Double
 
     var body: some View {
         GeometryReader { geo in
@@ -72,9 +83,9 @@ struct MixtapeBackground: View {
                         .resizable()
                         .scaledToFill()
                         .frame(width: geo.size.width, height: geo.size.height)
-                        .scaleEffect(max(style.zoom, 1))
-                        .offset(x: style.offsetX * geo.size.width,
-                                y: style.offsetY * geo.size.height)
+                        .scaleEffect(max(zoom, 1))
+                        .offset(x: offsetX * geo.size.width,
+                                y: offsetY * geo.size.height)
                 } else {
                     LinearGradient(colors: [Color.accentColor.opacity(0.55), Color.indigo.opacity(0.7)],
                                    startPoint: .topLeading, endPoint: .bottomTrailing)
@@ -86,6 +97,100 @@ struct MixtapeBackground: View {
             .frame(width: geo.size.width, height: geo.size.height)
             .clipped()
         }
+    }
+}
+
+/// A mixtape title in its chosen font and colour, sitting on the tape chip
+/// when the style asks for one.
+struct MixtapeTitle: View {
+    let text: String
+    let style: MixtapeStyle
+    let size: CGFloat
+    var lineLimit: Int = 1
+
+    var body: some View {
+        Text(text)
+            .font(style.titleFont(size: size))
+            .foregroundStyle(style.titleColor)
+            .lineLimit(lineLimit)
+            .shadow(color: style.tape ? .clear : .black.opacity(0.5),
+                    radius: size > 20 ? 3 : 2, y: 1)
+            .padding(.horizontal, style.tape ? size * 0.4 : 0)
+            .padding(.vertical, style.tape ? size * 0.14 : 0)
+            .background {
+                if style.tape {
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(style.tapeColor.opacity(0.94))
+                        .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
+                }
+            }
+    }
+}
+
+/// The mixtape treatment for a folder-list row, at the row's own crop and
+/// justification. Rendering is shared with the editor's list-row preview so
+/// what you position there is exactly what the list shows.
+struct MixtapeRowContent: View {
+    let title: String
+    let style: MixtapeStyle
+    let image: UIImage?
+    var count: Int?
+    var showsSync: Bool = false
+    var playingHere: Bool = false
+
+    var body: some View {
+        ZStack {
+            MixtapeBackground(image: image, zoom: style.rowZoom,
+                              offsetX: style.rowOffsetX, offsetY: style.rowOffsetY)
+            if style.centered {
+                MixtapeTitle(text: title, style: style, size: 17)
+                    .padding(.horizontal, 34)
+            }
+            HStack(spacing: 8) {
+                if showsSync {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.85))
+                }
+                if playingHere {
+                    Image(systemName: "speaker.wave.2.fill")
+                        .font(.caption)
+                        .foregroundStyle(.white)
+                }
+                if !style.centered {
+                    MixtapeTitle(text: title, style: style, size: 17)
+                }
+                Spacer()
+                if let count {
+                    Text("\(count)")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.85))
+                        .monospacedDigit()
+                }
+            }
+            .padding(.horizontal, 12)
+        }
+        .frame(height: 52)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+/// The tall banner treatment for a mixtape's own screen, at the header crop.
+struct MixtapeHeaderContent: View {
+    let title: String
+    let style: MixtapeStyle
+    let image: UIImage?
+    var height: CGFloat = 150
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            MixtapeBackground(image: image, zoom: style.zoom,
+                              offsetX: style.offsetX, offsetY: style.offsetY)
+            MixtapeTitle(text: title, style: style, size: 28, lineLimit: 2)
+                .padding(14)
+        }
+        .frame(height: height)
+        .clipped()
     }
 }
 
@@ -103,7 +208,13 @@ struct FolderRowLabel: View {
 
     var body: some View {
         if folder.isMixtape {
-            mixtapeRow
+            MixtapeRowContent(title: folder.name,
+                              style: folder.mixtape,
+                              image: MixtapeCoverLoader.image(for: folder),
+                              count: count,
+                              showsSync: folder.isSynced,
+                              playingHere: playingHere)
+                .padding(.vertical, 4)
         } else {
             plainRow
         }
@@ -125,67 +236,28 @@ struct FolderRowLabel: View {
         }
         .padding(.vertical, 4)
     }
-
-    private var mixtapeRow: some View {
-        ZStack {
-            MixtapeBackground(image: MixtapeCoverLoader.image(for: folder), style: folder.mixtape)
-            HStack(spacing: 8) {
-                if folder.isSynced {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.white.opacity(0.85))
-                }
-                if playingHere {
-                    Image(systemName: "speaker.wave.2.fill")
-                        .font(.caption)
-                        .foregroundStyle(.white)
-                }
-                Text(folder.name)
-                    .font(folder.mixtape.titleFont(size: 17))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .shadow(color: .black.opacity(0.5), radius: 2, y: 1)
-                Spacer()
-                Text("\(count)")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.85))
-                    .monospacedDigit()
-            }
-            .padding(.horizontal, 12)
-        }
-        .frame(height: 52)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .padding(.vertical, 4)
-    }
 }
 
-/// The tall banner at the top of a mixtape's own screen: the cover crop with
-/// the title in the chosen font.
+/// The banner at the top of a mixtape's own screen.
 struct MixtapeHeaderBanner: View {
     @EnvironmentObject private var library: LibraryStore
 
     let folder: Folder
 
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            MixtapeBackground(image: MixtapeCoverLoader.image(for: folder), style: folder.mixtape)
-            Text(folder.name)
-                .font(folder.mixtape.titleFont(size: 28))
-                .foregroundStyle(.white)
-                .lineLimit(2)
-                .shadow(color: .black.opacity(0.5), radius: 3, y: 1)
-                .padding(14)
-        }
-        .frame(height: 150)
-        .clipped()
+        MixtapeHeaderContent(title: folder.name,
+                             style: folder.mixtape,
+                             image: MixtapeCoverLoader.image(for: folder))
     }
 }
 
 // MARK: - Cover editor
 
-/// The "Edit Cover" sheet: pick an image, drag/pinch the banner preview to
-/// choose (non-destructively) what shows behind the title, and pick the title
-/// font. Nothing is written until Save.
+/// The "Edit Cover" sheet: pick an image, frame it separately for the tall
+/// header and the short list row (drag to pan; a zoom slider per preview —
+/// pinch also works on the big one), lay a tape chip behind the title, and
+/// pick the title's font, colour, and list-row justification. Nothing is
+/// written until Save.
 struct MixtapeCoverEditor: View {
     @EnvironmentObject private var library: LibraryStore
     @Environment(\.dismiss) private var dismiss
@@ -198,10 +270,22 @@ struct MixtapeCoverEditor: View {
     @State private var pickedImage: UIImage?
     @State private var pickedImageData: Data?
     @State private var pickerItem: PhotosPickerItem?
+    @State private var showFontPicker = false
 
     // Gesture baselines so drag/pinch compose with the committed style.
     @State private var panBase: CGSize?
     @State private var zoomBase: Double?
+
+    /// Preset tape colours; the colour well beside them takes anything else.
+    private static let tapeSwatches: [String] = [
+        MixtapeStyle.defaultTapeHex, // masking-tape white
+        "#F7E08B", // yellow
+        "#F2B8C6", // pink
+        "#AFCBE8", // blue
+        "#B8D8B0", // green
+        "#C9A87C", // kraft
+        "#3A3A3C", // black
+    ]
 
     init(folder: Folder) {
         self.folder = folder
@@ -215,35 +299,10 @@ struct MixtapeCoverEditor: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    preview
-                        .listRowInsets(EdgeInsets())
-                } header: {
-                    Text("Cover")
-                } footer: {
-                    Text(previewImage == nil
-                         ? "Pick an image to show behind the mixtape's title."
-                         : "Drag to position the image; pinch to zoom. The original image is kept — the crop can be changed any time.")
-                }
-
-                Section {
-                    PhotosPicker(selection: $pickerItem, matching: .images) {
-                        Label(previewImage == nil ? "Choose Image" : "Choose Different Image",
-                              systemImage: "photo")
-                    }
-                    if previewImage != nil {
-                        Button("Reset Crop") {
-                            style.zoom = 1
-                            style.offsetX = 0
-                            style.offsetY = 0
-                        }
-                        .disabled(style.zoom == 1 && style.offsetX == 0 && style.offsetY == 0)
-                    }
-                }
-
-                Section("Title Font") {
-                    fontPicker
-                }
+                coverSection
+                listRowSection
+                tapeSection
+                fontSection
             }
             .navigationTitle("Edit Cover")
             .navigationBarTitleDisplayMode(.inline)
@@ -262,79 +321,184 @@ struct MixtapeCoverEditor: View {
                 guard let item else { return }
                 Task { await loadPicked(item) }
             }
-        }
-    }
-
-    /// The live banner preview, driven by the same rendering the rows use, so
-    /// what you position here is exactly what shows.
-    private var preview: some View {
-        ZStack(alignment: .bottomLeading) {
-            GeometryReader { geo in
-                MixtapeBackground(image: previewImage, style: style)
-                    .gesture(
-                        DragGesture()
-                            .onChanged { value in
-                                let base = panBase ?? CGSize(width: style.offsetX, height: style.offsetY)
-                                panBase = base
-                                style.offsetX = clamp(base.width + value.translation.width / geo.size.width)
-                                style.offsetY = clamp(base.height + value.translation.height / geo.size.height)
-                            }
-                            .onEnded { _ in panBase = nil }
-                    )
-                    .simultaneousGesture(
-                        MagnificationGesture()
-                            .onChanged { value in
-                                let base = zoomBase ?? style.zoom
-                                zoomBase = base
-                                style.zoom = min(max(base * value, 1), 4)
-                            }
-                            .onEnded { _ in zoomBase = nil }
-                    )
+            .sheet(isPresented: $showFontPicker) {
+                MixtapeFontPicker(fontName: $style.fontName)
             }
-            Text(folder.name)
-                .font(style.titleFont(size: 28))
-                .foregroundStyle(.white)
-                .lineLimit(2)
-                .shadow(color: .black.opacity(0.5), radius: 3, y: 1)
-                .padding(14)
-                .allowsHitTesting(false)
         }
-        .frame(height: 170)
-        .clipped()
     }
 
-    private var fontPicker: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                ForEach(MixtapeFontChoice.all) { choice in
-                    let selected = choice.fontName == style.fontName
-                    Button {
-                        style.fontName = choice.fontName
-                    } label: {
-                        VStack(spacing: 4) {
-                            Text("Abc")
-                                .font(MixtapeStyle(fontName: choice.fontName).titleFont(size: 22))
-                            Text(choice.displayName)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(minWidth: 64)
-                        .padding(.vertical, 8)
-                        .padding(.horizontal, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(selected ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.08))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 1.5)
-                        )
-                    }
-                    .buttonStyle(.plain)
+    // MARK: Sections
+
+    private var coverSection: some View {
+        Section {
+            headerPreview
+                .listRowInsets(EdgeInsets())
+            zoomSlider(value: $style.zoom)
+            PhotosPicker(selection: $pickerItem, matching: .images) {
+                Label(previewImage == nil ? "Choose Image" : "Choose Different Image",
+                      systemImage: "photo")
+            }
+        } header: {
+            Text("Cover")
+        } footer: {
+            Text(previewImage == nil
+                 ? "Pick an image to show behind the mixtape's title."
+                 : "Drag to position the image (pinch or slide to zoom). The original image is kept — the framing can be changed any time.")
+        }
+    }
+
+    private var listRowSection: some View {
+        Section {
+            rowPreview
+                .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                .listRowSeparator(.hidden)
+            zoomSlider(value: rowZoomBinding)
+            Picker("Title Alignment", selection: $style.centered) {
+                Text("Left").tag(false)
+                Text("Center").tag(true)
+            }
+            .pickerStyle(.segmented)
+        } header: {
+            Text("List Row")
+        } footer: {
+            Text("The folder list shows a much shorter slice of the image, so it gets its own framing and title alignment.")
+        }
+    }
+
+    private var tapeSection: some View {
+        Section {
+            Toggle("Add Tape", isOn: $style.tape)
+            if style.tape {
+                tapeColorRow
+            }
+        } header: {
+            Text("Tape")
+        } footer: {
+            Text("Lays a tape-like chip behind the title.")
+        }
+    }
+
+    private var fontSection: some View {
+        Section("Title") {
+            Button {
+                showFontPicker = true
+            } label: {
+                HStack {
+                    Text("Font")
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Text(style.fontName ?? "System")
+                        .font(style.titleFont(size: 17))
+                        .foregroundStyle(.secondary)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
             }
-            .padding(.vertical, 2)
+            ColorPicker("Text Color", selection: textColorBinding, supportsOpacity: false)
         }
+    }
+
+    // MARK: Previews
+
+    private var headerPreview: some View {
+        MixtapeHeaderContent(title: folder.name, style: style, image: previewImage, height: 170)
+            .contentShape(Rectangle())
+            .gesture(panGesture(offsetX: $style.offsetX, offsetY: $style.offsetY))
+            .simultaneousGesture(
+                MagnificationGesture()
+                    .onChanged { value in
+                        let base = zoomBase ?? style.zoom
+                        zoomBase = base
+                        style.zoom = min(max(base * value, 1), 4)
+                    }
+                    .onEnded { _ in zoomBase = nil }
+            )
+    }
+
+    private var rowPreview: some View {
+        MixtapeRowContent(title: folder.name, style: style, image: previewImage,
+                          count: library.tracks(in: folder.id).count,
+                          showsSync: folder.isSynced)
+            .contentShape(Rectangle())
+            .gesture(panGesture(offsetX: rowOffsetXBinding, offsetY: rowOffsetYBinding))
+    }
+
+    /// Drag-to-pan over a preview: translation maps to the crop's normalized
+    /// offsets against that preview's own size.
+    private func panGesture(offsetX: Binding<Double>, offsetY: Binding<Double>) -> some Gesture {
+        DragGesture(coordinateSpace: .local)
+            .onChanged { value in
+                let base = panBase ?? CGSize(width: offsetX.wrappedValue, height: offsetY.wrappedValue)
+                panBase = base
+                // Normalise against the gesture's own travel bounds; the row
+                // is short, so vertical pans move it proportionally faster.
+                offsetX.wrappedValue = clamp(base.width + value.translation.width / 320)
+                offsetY.wrappedValue = clamp(base.height + value.translation.height / 120)
+            }
+            .onEnded { _ in panBase = nil }
+    }
+
+    private func zoomSlider(value: Binding<Double>) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "minus.magnifyingglass")
+                .foregroundStyle(.secondary)
+            Slider(value: value, in: 1...4)
+            Image(systemName: "plus.magnifyingglass")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: Tape colors
+
+    private var tapeColorRow: some View {
+        HStack(spacing: 10) {
+            ForEach(Self.tapeSwatches, id: \.self) { hex in
+                let selected = (style.tapeColorHex ?? MixtapeStyle.defaultTapeHex) == hex
+                Button {
+                    style.tapeColorHex = hex
+                } label: {
+                    Circle()
+                        .fill(Color(mixtapeHex: hex) ?? .white)
+                        .frame(width: 26, height: 26)
+                        .overlay(Circle().strokeBorder(
+                            selected ? Color.accentColor : Color.secondary.opacity(0.3),
+                            lineWidth: selected ? 2 : 1))
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer()
+            ColorPicker("", selection: tapeColorBinding, supportsOpacity: false)
+                .labelsHidden()
+        }
+    }
+
+    // MARK: Bindings
+
+    private var rowZoomBinding: Binding<Double> {
+        Binding(get: { style.rowZoom }, set: { style.rowZoom = $0 })
+    }
+
+    private var rowOffsetXBinding: Binding<Double> {
+        Binding(get: { style.rowOffsetX }, set: { style.rowOffsetX = $0 })
+    }
+
+    private var rowOffsetYBinding: Binding<Double> {
+        Binding(get: { style.rowOffsetY }, set: { style.rowOffsetY = $0 })
+    }
+
+    private var textColorBinding: Binding<Color> {
+        Binding(
+            get: { style.titleColor },
+            set: { style.textColorHex = $0.mixtapeHex }
+        )
+    }
+
+    private var tapeColorBinding: Binding<Color> {
+        Binding(
+            get: { style.tapeColor },
+            set: { style.tapeColorHex = $0.mixtapeHex }
+        )
     }
 
     private func clamp(_ value: Double) -> Double {
@@ -358,9 +522,63 @@ struct MixtapeCoverEditor: View {
         guard let jpeg = image.jpegData(compressionQuality: 0.85) else { return }
         pickedImage = image
         pickedImageData = jpeg
-        // A fresh image starts from a clean crop.
+        // A fresh image starts from clean crops.
         style.zoom = 1
         style.offsetX = 0
         style.offsetY = 0
+        style.rowZoom = 1
+        style.rowOffsetX = 0
+        style.rowOffsetY = 0
+    }
+}
+
+// MARK: - Font picker
+
+/// Every font family on the system (plus System itself), each row rendered in
+/// the font it names, with the title colour picked separately in the editor.
+struct MixtapeFontPicker: View {
+    @Binding var fontName: String?
+    @Environment(\.dismiss) private var dismiss
+
+    private let families = UIFont.familyNames.sorted {
+        $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                fontRow(name: nil, displayName: "System")
+                ForEach(families, id: \.self) { family in
+                    fontRow(name: family, displayName: family)
+                }
+            }
+            .listStyle(.plain)
+            .navigationTitle("Title Font")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func fontRow(name: String?, displayName: String) -> some View {
+        Button {
+            fontName = name
+            dismiss()
+        } label: {
+            HStack {
+                Text(displayName)
+                    .font(name.map { Font.custom($0, size: 19) } ?? Font.system(size: 19, weight: .bold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Spacer()
+                if fontName == name {
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+        }
     }
 }

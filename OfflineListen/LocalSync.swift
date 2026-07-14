@@ -45,11 +45,10 @@ final class LocalSyncStore: ObservableObject {
     init(library: LibraryStore) {
         self.library = library
         resolveBookmark()
+        // rescan() itself defers the walk and the reconcile off the current
+        // turn, so kicking it from init (inside a view update) is safe.
         if rootURL != nil {
-            // The store is created lazily during a view update (StateObject),
-            // so the first reconcile — which publishes library changes — must
-            // wait for the next main-actor turn.
-            Task { [weak self] in self?.rescan() }
+            rescan()
         }
     }
 
@@ -135,24 +134,33 @@ final class LocalSyncStore: ObservableObject {
     }
 
     /// Scans the tree and reconciles the library, then rebuilds the directory
-    /// monitors (new subdirectories need watching too).
+    /// monitors (new subdirectories need watching too). The walk runs off the
+    /// main actor: a cloud-backed file-provider directory (Dropbox, iCloud
+    /// Drive, …) can block on the network while listing, and that must never
+    /// freeze the UI.
     func rescan() {
         guard let root = rootURL else { return }
-        let snapshot = Self.scan(root: root)
-        library.applySyncSnapshot(snapshot)
-        startMonitoring(root: root, directories: snapshot.directories.map { $0.relativePath })
+        Task { [weak self] in
+            let snapshot = await Task.detached(priority: .utility) {
+                Self.scan(root: root)
+            }.value
+            guard let self, self.rootURL == root else { return }
+            self.library.applySyncSnapshot(snapshot)
+            self.startMonitoring(root: root, directories: snapshot.directories.map { $0.relativePath })
+        }
     }
 
     /// Walks the sync tree. Hidden files and directories are skipped, except
     /// that a `.mixtapedata` directory marks its *parent* as a mixtape and
-    /// contributes its style.
-    private static func scan(root: URL) -> SyncSnapshot {
+    /// contributes its style. `nonisolated` so the walk really runs on the
+    /// detached task, not the main actor.
+    nonisolated private static func scan(root: URL) -> SyncSnapshot {
         var snapshot = SyncSnapshot()
         scanDirectory(root, root: root, into: &snapshot)
         return snapshot
     }
 
-    private static func scanDirectory(_ dir: URL, root: URL, into snapshot: inout SyncSnapshot) {
+    nonisolated private static func scanDirectory(_ dir: URL, root: URL, into snapshot: inout SyncSnapshot) {
         let fm = FileManager.default
         guard let entries = try? fm.contentsOfDirectory(
             at: dir, includingPropertiesForKeys: [.isDirectoryKey],
@@ -176,7 +184,7 @@ final class LocalSyncStore: ObservableObject {
     /// Reads a directory's `.mixtapedata/style.json`, if the hidden mixtape
     /// data folder exists. A present `.mixtapedata` with an unreadable style
     /// still counts as a mixtape (default style) — the marker is the folder.
-    private static func mixtapeStyle(inDirectory dir: URL) -> MixtapeStyle? {
+    nonisolated private static func mixtapeStyle(inDirectory dir: URL) -> MixtapeStyle? {
         let dataDir = dir.appendingPathComponent(AppPaths.mixtapeDataDirName, isDirectory: true)
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: dataDir.path, isDirectory: &isDir), isDir.boolValue else {
@@ -190,7 +198,7 @@ final class LocalSyncStore: ObservableObject {
         return MixtapeStyle()
     }
 
-    private static func relativePath(of url: URL, from root: URL) -> String {
+    nonisolated private static func relativePath(of url: URL, from root: URL) -> String {
         let rootPath = root.standardizedFileURL.path
         let path = url.standardizedFileURL.path
         guard path.hasPrefix(rootPath + "/") else { return url.lastPathComponent }

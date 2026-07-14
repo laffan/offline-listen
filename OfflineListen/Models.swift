@@ -247,35 +247,71 @@ enum PlayableMedia {
 
 /// How a mixtape folder draws its title banner: which part of the cover image
 /// shows behind the title (a non-destructive crop — the original image is kept
-/// untouched) and which font the title uses. Persisted in `folders.json` and,
-/// for synced mixtapes, mirrored to the folder's `.mixtapedata/style.json` so
-/// the look travels with the files.
+/// untouched, separately framed for the tall header and the short list row),
+/// which font/colour the title uses, whether it sits on a tape chip, and how
+/// it's justified in the list row. Persisted in `folders.json` and, for synced
+/// mixtapes, mirrored to the folder's `.mixtapedata/style.json` so the look
+/// travels with the files.
 struct MixtapeStyle: Codable, Hashable {
-    /// PostScript font name for the title, nil for the system font.
+    /// Font family/PostScript name for the title, nil for the system font.
     var fontName: String?
-    /// Zoom applied on top of aspect-fill, 1…4.
+    /// Title colour as "#RRGGBB", nil for white.
+    var textColorHex: String?
+    /// True to centre the title in the folder-list row (default left).
+    var centered: Bool
+    /// True to draw a tape-like chip behind the title.
+    var tape: Bool
+    /// Tape colour as "#RRGGBB", nil for masking-tape white.
+    var tapeColorHex: String?
+    /// Header-banner crop: zoom applied on top of aspect-fill (1…4) and pan as
+    /// a fraction of the banner's size (-1…1 each).
     var zoom: Double
-    /// Pan as a fraction of the banner's size, -1…1 each.
     var offsetX: Double
     var offsetY: Double
+    /// The list row's own crop — the row is much shorter than the header, so
+    /// it gets its own framing.
+    var rowZoom: Double
+    var rowOffsetX: Double
+    var rowOffsetY: Double
 
-    init(fontName: String? = nil, zoom: Double = 1, offsetX: Double = 0, offsetY: Double = 0) {
+    /// The default tape colour: masking-tape white.
+    static let defaultTapeHex = "#F2EBDC"
+
+    init(fontName: String? = nil, textColorHex: String? = nil,
+         centered: Bool = false, tape: Bool = false, tapeColorHex: String? = nil,
+         zoom: Double = 1, offsetX: Double = 0, offsetY: Double = 0,
+         rowZoom: Double = 1, rowOffsetX: Double = 0, rowOffsetY: Double = 0) {
         self.fontName = fontName
+        self.textColorHex = textColorHex
+        self.centered = centered
+        self.tape = tape
+        self.tapeColorHex = tapeColorHex
         self.zoom = zoom
         self.offsetX = offsetX
         self.offsetY = offsetY
+        self.rowZoom = rowZoom
+        self.rowOffsetX = rowOffsetX
+        self.rowOffsetY = rowOffsetY
     }
 
     private enum CodingKeys: String, CodingKey {
-        case fontName, zoom, offsetX, offsetY
+        case fontName, textColorHex, centered, tape, tapeColorHex
+        case zoom, offsetX, offsetY, rowZoom, rowOffsetX, rowOffsetY
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         fontName = try c.decodeIfPresent(String.self, forKey: .fontName)
+        textColorHex = try c.decodeIfPresent(String.self, forKey: .textColorHex)
+        centered = try c.decodeIfPresent(Bool.self, forKey: .centered) ?? false
+        tape = try c.decodeIfPresent(Bool.self, forKey: .tape) ?? false
+        tapeColorHex = try c.decodeIfPresent(String.self, forKey: .tapeColorHex)
         zoom = try c.decodeIfPresent(Double.self, forKey: .zoom) ?? 1
         offsetX = try c.decodeIfPresent(Double.self, forKey: .offsetX) ?? 0
         offsetY = try c.decodeIfPresent(Double.self, forKey: .offsetY) ?? 0
+        rowZoom = try c.decodeIfPresent(Double.self, forKey: .rowZoom) ?? 1
+        rowOffsetX = try c.decodeIfPresent(Double.self, forKey: .rowOffsetX) ?? 0
+        rowOffsetY = try c.decodeIfPresent(Double.self, forKey: .rowOffsetY) ?? 0
     }
 }
 

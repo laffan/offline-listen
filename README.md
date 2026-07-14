@@ -279,10 +279,14 @@ one is set:
 mixtape: the folder's name draws over a **cover-image banner** — in the folder
 list and as a header inside the folder — in a font of your choosing. Inside a
 mixtape, an **Edit Cover** button at the bottom of the track list opens the
-editor: pick an image from Photos, **drag/pinch** the live banner preview to
-choose which part of the image sits behind the title (a **non-destructive
-crop** — only zoom/pan values are stored, the image is kept whole, so the
-framing can be changed any time), and pick one of eight bundled title fonts.
+editor: pick an image from Photos and frame it — **separately for the tall
+header and the short list row** (drag to pan, a zoom slider per preview, pinch
+also works on the big one), as a **non-destructive crop**: only zoom/pan
+values are stored, the image is kept whole, so the framing can be changed any
+time. The title gets a **font picker listing every system font family** (each
+name rendered in its own face), a **text colour**, **left/center
+justification** for the list row, and an optional **tape chip** behind it —
+masking-tape white by default, with preset swatches and a free colour well.
 **Convert to Folder** reverts it, discarding cover and style. Mixtapes can't
 contain folders, so only childless folders offer the conversion.
 

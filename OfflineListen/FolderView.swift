@@ -136,6 +136,9 @@ struct FolderDetailView: View {
                             .frame(maxWidth: .infinity)
                     }
                     .padding(.vertical, 4)
+                    // No trailing rule under the last row — with one it reads
+                    // as inset rather than centered.
+                    .listRowSeparator(.hidden)
                 }
             }
         }
