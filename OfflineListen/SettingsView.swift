@@ -1,14 +1,17 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The Settings tab. Top section configures AI-assisted organization (model +
-/// API key + the assist opt-in); the Log lives below it as its own section,
-/// opened in a pushed screen.
+/// API key + the assist opt-in); Local Sync and the Blog Agent's limits sit
+/// below it, and the Log is a section beneath them, opened in a pushed screen.
 struct SettingsView: View {
     @EnvironmentObject private var ai: AISettingsStore
+    @EnvironmentObject private var localSync: LocalSyncStore
     @EnvironmentObject private var log: LogStore
 
     @State private var keyInput = ""
     @State private var verifyState: VerifyState = .idle
+    @State private var showFolderPicker = false
 
     // The Blog Agent's limits — same keys `BlogAgentSettings` reads at
     // refresh time, so a change here applies to the next refresh.
@@ -27,10 +30,46 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 aiSection
+                localSyncSection
                 blogAgentSection
                 logSection
             }
             .navigationTitle("Settings")
+            .fileImporter(isPresented: $showFolderPicker, allowedContentTypes: [.folder]) { result in
+                if case .success(let url) = result {
+                    localSync.setRoot(url)
+                }
+            }
+        }
+    }
+
+    // MARK: - Local Sync
+
+    private var localSyncSection: some View {
+        Section {
+            if let root = localSync.rootURL {
+                HStack {
+                    Label(root.lastPathComponent, systemImage: "arrow.triangle.2.circlepath")
+                    Spacer()
+                    Button("Remove", role: .destructive) {
+                        localSync.clearRoot()
+                    }
+                    .font(.callout)
+                }
+                Button("Change Folder…") {
+                    showFolderPicker = true
+                }
+            } else {
+                Button {
+                    showFolderPicker = true
+                } label: {
+                    Label("Choose Sync Folder…", systemImage: "arrow.triangle.2.circlepath")
+                }
+            }
+        } header: {
+            Text("Local Sync")
+        } footer: {
+            Text("Pick a folder (in Files, iCloud Drive, …) to sync with. \"Sync to Local\" moves a track or folder there, playable files already in it appear in your library with the sync icon, and changes made to the folder from outside the app show up immediately. Removing the sync folder keeps its files — they just leave the library.")
         }
     }
 

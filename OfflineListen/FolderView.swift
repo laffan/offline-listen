@@ -1,7 +1,9 @@
 import SwiftUI
 
 /// A user folder: its tracks with tap-to-play and swipe actions, plus
-/// drag-to-reorder via the Reorder toolbar toggle.
+/// drag-to-reorder via the Reorder toolbar toggle. Folders can nest — any
+/// subfolders list above the tracks — and a mixtape folder shows its cover
+/// banner up top and an Edit Cover button below its tracks.
 struct FolderDetailView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var playback: PlaybackManager
@@ -15,36 +17,41 @@ struct FolderDetailView: View {
     @State private var editingTrack: Track?
     @State private var chapterContext: ChapterContext?
     @State private var splittingTrack: Track?
+    @State private var showNewFolder = false
+    @State private var newFolderName = ""
+    @State private var renamingFolder: Folder?
+    @State private var renameText = ""
+    @State private var editingCover = false
 
     private var folder: Folder? {
         library.folders.first { $0.id == folderID }
+    }
+
+    private var isMixtape: Bool {
+        folder?.isMixtape ?? false
     }
 
     private var tracks: [Track] {
         library.tracks(in: folderID)
     }
 
+    private var subfolders: [Folder] {
+        library.childFolders(of: folderID)
+    }
+
     var body: some View {
         Group {
-            if tracks.isEmpty {
+            if tracks.isEmpty && subfolders.isEmpty && !isMixtape {
                 ContentUnavailableViewCompat(
                     title: "Empty folder",
                     systemImage: "folder",
                     description: "Touch and hold a track in your library and choose Move to Folder to add it here."
                 )
             } else {
-                List {
-                    ForEach(tracks) { track in
-                        row(for: track)
-                    }
-                    .onMove { source, destination in
-                        library.moveTracks(in: folderID, fromOffsets: source, toOffset: destination)
-                    }
-                }
-                .listStyle(.plain)
+                folderList
             }
         }
-        .navigationTitle(folder?.name ?? "Folder")
+        .navigationTitle(isMixtape ? "" : (folder?.name ?? "Folder"))
         .navigationBarTitleDisplayMode(.inline)
         .environment(\.editMode, $editMode)
         .editMetadataSheet(for: $editingTrack)
@@ -52,8 +59,35 @@ struct FolderDetailView: View {
         .sheet(item: $chapterContext) { context in
             ChapterListView(track: context.track, queue: context.queue, onPlay: onPlay)
         }
+        .sheet(isPresented: $editingCover) {
+            if let folder {
+                MixtapeCoverEditor(folder: folder)
+            }
+        }
+        .alert("New Folder", isPresented: $showNewFolder) {
+            TextField("Folder name", text: $newFolderName)
+            Button("Create") {
+                library.createFolder(named: newFolderName, parent: folderID)
+                newFolderName = ""
+            }
+            Button("Cancel", role: .cancel) { newFolderName = "" }
+        }
+        .alert("Rename Folder", isPresented: renameAlertPresented, presenting: renamingFolder) { subfolder in
+            TextField("Folder name", text: $renameText)
+            Button("Rename") { library.renameFolder(subfolder, to: renameText) }
+            Button("Cancel", role: .cancel) {}
+        }
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
+                // Mixtapes can't contain folders, so no subfolder creation there.
+                if !isMixtape && !editMode.isEditing {
+                    Button {
+                        newFolderName = ""
+                        showNewFolder = true
+                    } label: {
+                        Label("New Folder", systemImage: "folder.badge.plus")
+                    }
+                }
                 Button(editMode.isEditing ? "Done" : "Reorder") {
                     withAnimation {
                         editMode = editMode.isEditing ? .inactive : .active
@@ -62,6 +96,86 @@ struct FolderDetailView: View {
                 .disabled(tracks.count < 2 && !editMode.isEditing)
             }
         }
+    }
+
+    private var renameAlertPresented: Binding<Bool> {
+        Binding(
+            get: { renamingFolder != nil },
+            set: { if !$0 { renamingFolder = nil } }
+        )
+    }
+
+    private var folderList: some View {
+        List {
+            if let folder, folder.isMixtape {
+                Section {
+                    MixtapeHeaderBanner(folder: folder)
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
+                }
+            }
+            if !subfolders.isEmpty {
+                Section("Folders") {
+                    ForEach(subfolders) { subfolder in
+                        subfolderRow(subfolder)
+                    }
+                }
+            }
+            Section {
+                ForEach(tracks) { track in
+                    row(for: track)
+                }
+                .onMove { source, destination in
+                    library.moveTracks(in: folderID, fromOffsets: source, toOffset: destination)
+                }
+                if isMixtape {
+                    Button {
+                        editingCover = true
+                    } label: {
+                        Label("Edit Cover", systemImage: "photo")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+        .listStyle(.plain)
+    }
+
+    private func subfolderRow(_ subfolder: Folder) -> some View {
+        NavigationLink(value: LibraryRoute.folder(subfolder.id)) {
+            FolderRowLabel(folder: subfolder,
+                           count: library.tracks(in: subfolder.id).count,
+                           playingHere: isPlaying(in: subfolder))
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) {
+                library.deleteFolder(subfolder)
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+            Button {
+                renameText = subfolder.name
+                renamingFolder = subfolder
+            } label: {
+                Label("Rename", systemImage: "pencil")
+            }
+            .tint(.orange)
+            Button {
+                library.setFolderArchived(subfolder, true)
+            } label: {
+                Label("Archive", systemImage: "archivebox")
+            }
+            .tint(.indigo)
+        }
+        .contextMenu {
+            FolderContextMenu(folder: subfolder)
+        }
+    }
+
+    private func isPlaying(in subfolder: Folder) -> Bool {
+        guard let id = playback.currentTrack?.id else { return false }
+        return library.tracks(in: subfolder.id).contains { $0.id == id }
     }
 
     @ViewBuilder
@@ -135,6 +249,7 @@ struct FolderDetailView: View {
                 } label: {
                     Label("Move to Folder", systemImage: "folder")
                 }
+                SyncToLocalButton(track: track)
                 SendToWatchButton(track: track)
                 AIOrganizeButton(track: track)
                 if track.hasChapters {
@@ -248,6 +363,7 @@ struct InboxView: View {
                                         Label("Move to Folder", systemImage: "folder")
                                     }
                                 }
+                                SyncToLocalButton(track: track)
                                 SendToWatchButton(track: track)
                                 AIOrganizeButton(track: track)
                                 if track.hasChapters {
