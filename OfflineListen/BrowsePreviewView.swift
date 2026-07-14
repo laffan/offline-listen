@@ -4,9 +4,10 @@ import UIKit
 
 /// The Browse preview modal: downloads the item's audio (through the same
 /// serial pipeline as the download queue), plays it in its own mini player,
-/// and offers **Save** (file it into the library) or **Discard** (delete it
-/// and hide the item). Dismissing without deciding deletes the temp file and
-/// leaves the item untouched.
+/// and offers **Save** (file it into the library — mid-play, the song hands
+/// off to the main player at the same position and keeps going) or
+/// **Discard** (delete it and hide the item). Dismissing without deciding
+/// deletes the temp file and leaves the item untouched.
 struct BrowsePreviewView: View {
     let item: BrowseItem
 
@@ -194,9 +195,17 @@ struct BrowsePreviewView: View {
 
     /// Files the previewed audio into the library as a normal track (it lands
     /// in the Inbox like any fresh download) and lets the AI organizer at it.
+    /// Saving mid-listen doesn't cut the song off: playback hands off to the
+    /// main player at the same position (now in the background, like any
+    /// library track), so browsing continues with the music still going.
     private func save() {
+        let handoffTime = model.currentTime
+        let wasPlaying = model.isPlaying
         guard let track = model.saveToLibrary(as: item, library: library) else { return }
         browse.markSaved(item)
+        if wasPlaying {
+            playback.play(track, in: library.activeTracks, startAt: handoffTime)
+        }
         Task { await aiOrganizer.organizeIfEnabled(track.id) }
         dismiss()
     }

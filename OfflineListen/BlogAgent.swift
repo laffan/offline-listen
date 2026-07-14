@@ -322,10 +322,9 @@ enum BlogAgent {
                 Respond with ONLY a JSON array and nothing else — no markdown, \
                 no commentary. At most \(limit) elements (the most prominently \
                 featured songs first), each:
-                {"artist": string, "title": string, "note": string}
+                {"artist": string, "title": string}
 
-                "note" is one short phrase on how the article mentions the \
-                song. Do not include YouTube links or video ids — they will be \
+                Do not include YouTube links or video ids — they will be \
                 looked up separately.
                 """,
                 userText: "Article title: \(articleTitle)\n\nArticle text:\n\(text)",
@@ -349,7 +348,7 @@ enum BlogAgent {
             }
             items.append(FetchedBrowseItem(
                 title: "\(suggestion.artist) — \(suggestion.title)",
-                detail: suggestion.note.isEmpty ? "Mentioned in \"\(articleTitle)\"" : suggestion.note,
+                detail: "",
                 url: BrowseHTTP.watchURL(forVideoID: videoID),
                 videoID: videoID,
                 datePublished: published,

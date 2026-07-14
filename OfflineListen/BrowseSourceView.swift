@@ -186,8 +186,10 @@ struct BrowseSourceView: View {
     }
 }
 
-/// One discovered item: title, optional description, publish date, and the
-/// Download / Preview buttons (replaced by a status line once acted on).
+/// One discovered item: artist/song title, publish date, and the Download /
+/// Preview buttons (replaced by a status line once acted on). Descriptions
+/// deliberately don't show here — the row stays a compact artist + title line
+/// (the preview modal still surfaces the detail when one exists).
 private struct BrowseItemRow: View {
     let item: BrowseItem
     let onDownload: () -> Void
@@ -198,13 +200,6 @@ private struct BrowseItemRow: View {
             Text(item.title)
                 .font(.subheadline.weight(.medium))
                 .lineLimit(2)
-
-            if !item.detail.isEmpty {
-                Text(item.detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
-            }
 
             HStack(spacing: 12) {
                 statusOrActions

@@ -19,6 +19,15 @@ Five screens (tabs):
    just YouTube. Swipe a row for **Cancel** (active/queued), **Restart**, or
    **Clear**; tap a finished row to play it.
 
+   **Search.** The same single input field doubles as a search box: type
+   anything that *isn't* a link and the button flips from **Download** to
+   **Search**. It scrapes YouTube's results page and returns the **top 5
+   videos** in a popup styled like a Browse list — title, channel, and
+   **Download** / **Preview** per row. Download queues the pick in the tab's
+   current Audio/Video mode; Preview opens the same listen-first modal Browse
+   uses (Save files it into the library). A URL still behaves exactly as
+   before — the process only changes when no link is detected.
+
    **Playlists.** Paste a **YouTube playlist** link — either the dedicated
    `…/playlist?list=…` page or a `watch?v=…&list=…` link opened from inside a
    playlist — and the app resolves its entries and shows a **selection popup**
@@ -38,7 +47,8 @@ Five screens (tabs):
    [Browse: keeping tabs on audio sources](#browse-keeping-tabs-on-audio-sources)).
    Add YouTube channels/playlists, RSS feeds, a **Blog Agent** for blogs
    without a feed, or AI-curated Artist/Genre/Country
-   lists; each refresh surfaces YouTube links with title and description, and
+   lists; each refresh surfaces YouTube links, shown as compact
+   artist/song-title rows, and
    every item offers **Download** (sends it to the download queue) and
    **Preview** (a listen-first modal with **Save** / **Discard**).
 3. **Library** — downloaded tracks; tap to play. A **filter** (All / Music /
@@ -134,8 +144,9 @@ is unchanged.
 
 The **Browse** tab watches a set of user-configured **sources** and turns what
 they surface into a curated to-listen list. Every source, whatever its type,
-produces the same thing: **YouTube links with metadata** — a title, a
-description when one exists, and two actions per item:
+produces the same thing: **YouTube links with metadata** — each shown as a
+compact row of just the artist/song title (no description clutter) and two
+actions per item:
 
 - **Download** — sends the link straight to the download queue (Audio mode),
   exactly as if it had been pasted into the Download tab.
@@ -148,7 +159,10 @@ description when one exists, and two actions per item:
   you like, select the name, and their catalogue starts filling in. Save
   files the already-downloaded audio into the library as a normal track (it
   lands in the Inbox and gets the same best-effort AI organization as any
-  download); Discard deletes the file and hides the item for good. Dismissing
+  download) — and saving **mid-listen doesn't cut the song off**: playback
+  hands off to the main Player at the same position and keeps going in the
+  background while you carry on browsing. Discard deletes the file and hides
+  the item for good. Dismissing
   the modal without deciding deletes the temp file and leaves the item
   untouched.
 
@@ -172,7 +186,7 @@ eras of the same subject read apart in the source list.
 
 The AI types use the **Anthropic key from Settings** (they're unavailable until
 one is saved). For Artist/Genre/Country the model is asked for real, well-known
-songs — title, artist, and a one-line note that becomes the item's description —
+songs — title and artist —
 and is deliberately **never trusted to produce YouTube links** (it hallucinates
 video ids); each suggestion is instead resolved to a real video by scraping the
 top result of a YouTube search. On a refresh, the model is told what it already

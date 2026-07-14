@@ -248,9 +248,21 @@ enum RSSBrowseFeed {
     }
 }
 
-/// Resolves a free-text query ("Ali Farka Touré Savane") to the first YouTube
-/// search result by scraping the results page's initial data blob. Best-effort:
-/// returns nil rather than throwing when the page shape changes.
+/// One organic result scraped off a YouTube search page: enough to show a
+/// pickable row (title + channel) and to build the watch URL.
+struct YouTubeSearchResult: Identifiable, Hashable {
+    let videoID: String
+    let title: String
+    /// The uploading channel's name — usually the artist for music results.
+    let channel: String
+
+    var id: String { videoID }
+    var url: String { BrowseHTTP.watchURL(forVideoID: videoID) }
+}
+
+/// Resolves a free-text query ("Ali Farka Touré Savane") to YouTube search
+/// results by scraping the results page's initial data blob. Best-effort:
+/// returns nil/empty rather than throwing when the page shape changes.
 enum YouTubeSearchResolver {
     static func firstVideoID(matching query: String) async -> String? {
         let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
@@ -269,5 +281,62 @@ enum YouTubeSearchResolver {
                    level: .warning, category: "Browse")
             return nil
         }
+    }
+
+    /// The top organic video results for a query, with titles — what the
+    /// Download tab's search shows for picking. Empty on failure.
+    static func topVideos(matching query: String, limit: Int = 5) async -> [YouTubeSearchResult] {
+        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        guard let url = URL(string: "https://www.youtube.com/results?search_query=\(encoded)") else { return [] }
+        do {
+            let data = try await BrowseHTTP.get(url)
+            let html = String(decoding: data, as: UTF8.self)
+            return parseResults(in: html, limit: limit)
+        } catch {
+            appLog("YouTube search failed for \"\(query)\": \(error.localizedDescription)",
+                   level: .warning, category: "Browse")
+            return []
+        }
+    }
+
+    /// Walks each `"videoRenderer":{"videoId":"…"` occurrence in the page's
+    /// ytInitialData and reads the title/channel out of the JSON that follows
+    /// it (the renderer's own fields sit within a few KB of its opening).
+    static func parseResults(in html: String, limit: Int) -> [YouTubeSearchResult] {
+        guard limit > 0,
+              let regex = try? NSRegularExpression(pattern: #""videoRenderer":\{"videoId":"([0-9A-Za-z_-]{11})""#) else {
+            return []
+        }
+        let ns = html as NSString
+        var seen = Set<String>()
+        var results: [YouTubeSearchResult] = []
+        for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+            guard results.count < limit else { break }
+            guard match.numberOfRanges > 1 else { continue }
+            let videoID = ns.substring(with: match.range(at: 1))
+            guard seen.insert(videoID).inserted else { continue }
+
+            let start = match.range.location
+            let window = ns.substring(with: NSRange(location: start, length: min(8000, ns.length - start)))
+            let stringBody = #"((?:[^"\\]|\\.)*)"#
+            guard let rawTitle = BrowseHTTP.firstMatch(#""title":\{"runs":\[\{"text":""# + stringBody + #"""#, in: window) else {
+                continue
+            }
+            let rawChannel = BrowseHTTP.firstMatch(#""ownerText":\{"runs":\[\{"text":""# + stringBody + #"""#, in: window)
+                ?? BrowseHTTP.firstMatch(#""longBylineText":\{"runs":\[\{"text":""# + stringBody + #"""#, in: window)
+            let title = decodeJSONStringBody(rawTitle)
+            guard !title.isEmpty else { continue }
+            results.append(YouTubeSearchResult(videoID: videoID,
+                                               title: title,
+                                               channel: decodeJSONStringBody(rawChannel ?? "")))
+        }
+        return results
+    }
+
+    /// Un-escapes the body of a JSON string literal ("Beyoncé & JAY-Z").
+    private static func decodeJSONStringBody(_ raw: String) -> String {
+        guard raw.contains("\\") else { return raw }
+        let data = Data("\"\(raw)\"".utf8)
+        return (try? JSONDecoder().decode(String.self, from: data)) ?? raw
     }
 }

@@ -1,10 +1,10 @@
 import Foundation
 
 /// AI-driven song discovery for the Browse tab's Artist / Genre / Country
-/// sources: the model suggests popular songs (title + artist + a one-line
-/// note), and each suggestion is resolved to a real YouTube link via the
-/// search scraper — the model is never trusted to produce video ids or URLs,
-/// which it happily hallucinates.
+/// sources: the model suggests popular songs (title + artist), and each
+/// suggestion is resolved to a real YouTube link via the search scraper —
+/// the model is never trusted to produce video ids or URLs, which it happily
+/// hallucinates.
 enum AIDiscovery {
     /// How many songs to ask for per refresh. Each one costs a YouTube search
     /// request, so this stays modest.
@@ -38,7 +38,7 @@ enum AIDiscovery {
             }
             items.append(FetchedBrowseItem(
                 title: "\(suggestion.artist) — \(suggestion.title)",
-                detail: suggestion.note,
+                detail: "",
                 url: BrowseHTTP.watchURL(forVideoID: videoID),
                 videoID: videoID,
                 datePublished: nil
@@ -52,7 +52,6 @@ enum AIDiscovery {
     struct Suggestion {
         var artist: String
         var title: String
-        var note: String
     }
 
     private static let systemPrompt = """
@@ -61,11 +60,10 @@ enum AIDiscovery {
 
     Respond with ONLY a JSON array and nothing else — no markdown, no \
     commentary. Each element:
-    {"artist": string, "title": string, "note": string}
+    {"artist": string, "title": string}
 
-    "note" is one short sentence on why the song matters (its era, style, or \
-    significance). Do not include YouTube links or video ids — they will be \
-    looked up separately.
+    Do not include YouTube links or video ids — they will be looked up \
+    separately.
     """
 
     private static func userPrompt(source: BrowseSource, excludingTitles: [String]) -> String {
@@ -110,8 +108,7 @@ enum AIDiscovery {
             guard let artist = (entry["artist"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
                   let title = (entry["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !artist.isEmpty, !title.isEmpty else { return nil }
-            let note = (entry["note"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return Suggestion(artist: artist, title: title, note: note)
+            return Suggestion(artist: artist, title: title)
         }
     }
 }
