@@ -11,7 +11,25 @@ struct BrowseView: View {
 
     var body: some View {
         NavigationStack {
-            Group {
+            VStack(spacing: 0) {
+                // The Audio/Video toggle beneath the title (kept out of the
+                // toolbar so it doesn't crowd the add button): every item's
+                // Download and Preview act in this mode, mirroring the
+                // Download tab's own toggle.
+                HStack {
+                    Picker("Mode", selection: $browse.downloadMode) {
+                        ForEach(DownloadMode.allCases) { m in
+                            Text(m.displayName).tag(m)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 200)
+
+                    Spacer()
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 4)
+
                 if browse.sources.isEmpty {
                     emptyState
                 } else {
@@ -29,18 +47,7 @@ struct BrowseView: View {
                     .disabled(browse.sources.isEmpty || !browse.refreshing.isEmpty)
                     .accessibilityLabel("Refresh all sources")
                 }
-                // The Audio/Video toggle beside the title: every item's
-                // Download and Preview act in this mode, mirroring the
-                // Download tab's own toggle.
-                ToolbarItemGroup(placement: .navigationBarTrailing) {
-                    Picker("Mode", selection: $browse.downloadMode) {
-                        ForEach(DownloadMode.allCases) { m in
-                            Text(m.displayName).tag(m)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 140)
-
+                ToolbarItem(placement: .navigationBarTrailing) {
                     addMenu
                 }
             }

@@ -25,6 +25,18 @@ struct BrowsePreviewView: View {
     /// The artist just added via the selection menu's "Browse Artist" (drives
     /// the confirmation alert).
     @State private var addedArtist: String?
+    /// The video-quality preference, remembered across previews. Changing it
+    /// mid-preview restarts the download at the new quality.
+    @AppStorage("previewVideoQuality") private var qualityRaw: String = VideoQuality.best.rawValue
+
+    private var quality: VideoQuality {
+        VideoQuality(rawValue: qualityRaw) ?? .best
+    }
+
+    private var qualityBinding: Binding<VideoQuality> {
+        Binding(get: { VideoQuality(rawValue: qualityRaw) ?? .best },
+                set: { qualityRaw = $0.rawValue })
+    }
 
     var body: some View {
         NavigationStack {
@@ -45,6 +57,25 @@ struct BrowsePreviewView: View {
                 }
                 .padding(.horizontal)
 
+                // Video previews get a quality picker; changing it restarts
+                // the download at the chosen resolution (bounded by what the
+                // source actually offers in a playable codec).
+                if mode == .video {
+                    Picker("Quality", selection: qualityBinding) {
+                        ForEach(VideoQuality.allCases) { q in
+                            Text(q.displayName).tag(q)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal)
+                    .onChange(of: qualityRaw) { _ in
+                        Task {
+                            await model.restart(item: item, mode: mode, quality: quality,
+                                                downloads: downloads, mainPlayback: playback)
+                        }
+                    }
+                }
+
                 phaseContent
                     .frame(maxHeight: .infinity)
 
@@ -61,9 +92,12 @@ struct BrowsePreviewView: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        // A video preview needs the room for its picture; audio keeps the
+        // half-height option.
+        .presentationDetents(mode == .video ? [.large] : [.medium, .large])
         .task {
-            await model.start(item: item, mode: mode, downloads: downloads, mainPlayback: playback)
+            await model.start(item: item, mode: mode, quality: quality,
+                              downloads: downloads, mainPlayback: playback)
         }
         .onDisappear {
             model.teardown()
@@ -133,7 +167,10 @@ struct BrowsePreviewView: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
                 Button("Try Again") {
-                    Task { await model.start(item: item, mode: mode, downloads: downloads, mainPlayback: playback) }
+                    Task {
+                        await model.start(item: item, mode: mode, quality: quality,
+                                          downloads: downloads, mainPlayback: playback)
+                    }
                 }
                 .buttonStyle(.bordered)
             }
@@ -144,12 +181,14 @@ struct BrowsePreviewView: View {
         VStack(spacing: 16) {
             // Video previews get a picture above the transport controls; the
             // same AVPlayer drives both, so scrub/play-pause stay in sync.
+            // The height is fixed to a 16:9 slice of the pane's full width —
+            // a flexible aspect-ratio frame would let the surrounding VStack
+            // squeeze the picture down to a sliver when vertical space is
+            // tight (the "minuscule rectangle" bug).
             if model.isVideo, let player = model.player {
                 NativeVideoPlayer(player: player, allowsPiP: false)
-                    .aspectRatio(16 / 9, contentMode: .fit)
-                    .frame(maxWidth: .infinity, maxHeight: 220)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .padding(.horizontal, 24)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: UIScreen.main.bounds.width * 9 / 16)
             }
 
             Slider(
@@ -340,7 +379,8 @@ final class BrowsePreviewModel: ObservableObject {
     /// Kicks off (or retries) the preview download and, on success, starts the
     /// mini player — pausing the app's main playback so they don't talk over
     /// each other.
-    func start(item: BrowseItem, mode: DownloadMode, downloads: DownloadManager, mainPlayback: PlaybackManager) async {
+    func start(item: BrowseItem, mode: DownloadMode, quality: VideoQuality = .best,
+               downloads: DownloadManager, mainPlayback: PlaybackManager) async {
         guard downloadTask == nil, media == nil else { return }
         phase = .waiting
         generation += 1
@@ -350,6 +390,7 @@ final class BrowsePreviewModel: ObservableObject {
                 let media = try await downloads.downloadPreview(
                     urlString: item.url,
                     mode: mode,
+                    quality: quality,
                     onBegin: { [weak self] in self?.phase = .preparing },
                     onDownloadStart: { [weak self] in self?.phase = .downloading(0) },
                     onProgress: { [weak self] fraction in self?.phase = .downloading(fraction) }
@@ -372,6 +413,26 @@ final class BrowsePreviewModel: ObservableObject {
         }
         downloadTask = task
         await task.value
+    }
+
+    /// Re-runs the preview at a different quality: cancels whatever is in
+    /// flight, discards the current file/player, and starts over. Bumping the
+    /// generation first means the cancelled task can't clear the new task's
+    /// handle or resurrect its file.
+    func restart(item: BrowseItem, mode: DownloadMode, quality: VideoQuality,
+                 downloads: DownloadManager, mainPlayback: PlaybackManager) async {
+        generation += 1
+        downloadTask?.cancel()
+        downloadTask = nil
+        stopPlayer()
+        deleteTempFile()
+        isVideo = false
+        currentTime = 0
+        duration = 0
+        phase = .waiting
+        appLog("Preview restarting at \(quality.displayName) quality…", category: "Browse")
+        await start(item: item, mode: mode, quality: quality,
+                    downloads: downloads, mainPlayback: mainPlayback)
     }
 
     private func attachPlayer(to media: ExtractedMedia, mainPlayback: PlaybackManager) {

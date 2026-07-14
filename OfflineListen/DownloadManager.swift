@@ -121,6 +121,8 @@ private struct PreviewWork {
     let url: URL
     /// Audio (the default) or video — the Browse toggle / Download tab mode.
     let mode: DownloadMode
+    /// Preferred video resolution (ignored for audio).
+    let quality: VideoQuality
     /// Invoked when the pipeline actually picks the preview up (it may sit
     /// behind an in-flight download first).
     let onBegin: @MainActor () -> Void
@@ -322,11 +324,13 @@ final class DownloadManager: ObservableObject {
     /// Downloads the media for `urlString` through the serial pipeline and
     /// returns it *without* adding it to the library — the Browse preview
     /// modal plays it and then saves or discards it. `mode` picks audio or
-    /// video, mirroring the download queue's own modes. The file lands in the
-    /// previews scratch directory; the caller owns it from there. Honours task
-    /// cancellation (dismissing the modal cancels the work).
+    /// video, mirroring the download queue's own modes, and `quality` steers
+    /// the video resolution (the preview modal's quality picker). The file
+    /// lands in the previews scratch directory; the caller owns it from there.
+    /// Honours task cancellation (dismissing the modal cancels the work).
     func downloadPreview(urlString: String,
                          mode: DownloadMode = .audio,
+                         quality: VideoQuality = .best,
                          onBegin: @escaping @MainActor () -> Void = {},
                          onDownloadStart: @escaping @MainActor () -> Void = {},
                          onProgress: @escaping @MainActor (Double) -> Void = { _ in }) async throws -> ExtractedMedia {
@@ -339,6 +343,7 @@ final class DownloadManager: ObservableObject {
                 previewQueue.append(PreviewWork(id: id,
                                                 url: url,
                                                 mode: mode,
+                                                quality: quality,
                                                 onBegin: onBegin,
                                                 onDownloadStart: onDownloadStart,
                                                 onProgress: onProgress,
@@ -370,6 +375,7 @@ final class DownloadManager: ObservableObject {
             let extracted = try await extractor.extractMedia(
                 from: work.url,
                 mode: work.mode,
+                quality: work.quality,
                 onDownloadStart: {
                     Task { @MainActor in work.onDownloadStart() }
                 },

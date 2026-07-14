@@ -52,7 +52,7 @@ Five screens (tabs):
    artist/song-title rows, and
    every item offers **Download** (sends it to the download queue) and
    **Preview** (a listen-first modal with **Save** / **Discard**). An
-   **Audio/Video toggle** beside the Browse title — the same one the Download
+   **Audio/Video toggle** beneath the Browse title — the same one the Download
    tab has — sets which mode both buttons act in.
 3. **Library** — downloaded tracks; tap to play. A **filter** (All / Music /
    Podcasts / Video) sits directly beneath the **Tracks** header. Swipe **left**
@@ -150,14 +150,21 @@ they surface into a curated to-listen list. Every source, whatever its type,
 produces the same thing: **YouTube links with metadata** — each shown as a
 compact row of just the artist/song title (no description clutter) and two
 actions per item, both acting in the mode set by the **Audio/Video toggle**
-beside the Browse title:
+beneath the Browse title:
 
 - **Download** — sends the link straight to the download queue in the
   toggle's mode, exactly as if it had been pasted into the Download tab.
 - **Preview** — opens a modal that downloads the audio — or, in Video mode,
-  the video, showing its picture above the controls — and plays it in its own
+  the video, its picture spanning the full width of the pane — and plays it in
+  its own
   **mini player** (scrubber, play/pause — separate from the main Player, which
-  it pauses while auditioning), with **Save** and **Discard** buttons. The
+  it pauses while auditioning), with **Save** and **Discard** buttons. A video
+  preview also carries a **quality picker** (Best / 1080p / 720p / 480p /
+  360p, remembered between previews): changing it restarts the preview at the
+  chosen resolution, and Save files whatever was downloaded. The preference is
+  always bounded by what the source offers in a device-playable codec — a
+  capped tier takes the tallest rendition at or below it, and if everything on
+  offer is above the cap the smallest available is used. The
   modal's title and description are **selectable**, and the selection menu
   gains a **Browse Artist** action: select an artist's name and it adds an
   Artist source for it on the spot (first refresh included) — hear something

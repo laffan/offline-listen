@@ -51,6 +51,57 @@ enum DownloadMode: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// Preferred resolution for a video download (the preview modal's quality
+/// picker). `best` takes the tallest stream offered; a capped tier takes the
+/// tallest at or below its height. Always constrained by what the source
+/// actually offers in a device-playable codec — a preference can't conjure a
+/// rendition YouTube didn't serve.
+enum VideoQuality: String, Codable, CaseIterable, Identifiable {
+    case best
+    case p1080
+    case p720
+    case p480
+    case p360
+
+    var id: String { rawValue }
+
+    /// The resolution cap, nil for `best`.
+    var maxHeight: Int? {
+        switch self {
+        case .best: return nil
+        case .p1080: return 1080
+        case .p720: return 720
+        case .p480: return 480
+        case .p360: return 360
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .best: return "Best"
+        case .p1080: return "1080p"
+        case .p720: return "720p"
+        case .p480: return "480p"
+        case .p360: return "360p"
+        }
+    }
+
+    /// The candidate that best honours this preference: the tallest at or
+    /// below the cap, or — when everything on offer is above it — the lowest
+    /// offered, so a strict cap degrades to "smallest available" rather than
+    /// failing.
+    func pick<T>(from candidates: [T], height: (T) -> Int) -> T? {
+        guard let cap = maxHeight else {
+            return candidates.max(by: { height($0) < height($1) })
+        }
+        let within = candidates.filter { height($0) <= cap }
+        if !within.isEmpty {
+            return within.max(by: { height($0) < height($1) })
+        }
+        return candidates.min(by: { height($0) < height($1) })
+    }
+}
+
 /// Library list filter.
 enum LibraryFilter: String, CaseIterable, Identifiable {
     case all

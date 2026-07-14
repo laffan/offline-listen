@@ -19,6 +19,7 @@ final class CompositeExtractor: MediaExtractor {
 
     func extractMedia(from url: URL,
                       mode: DownloadMode,
+                      quality: VideoQuality,
                       onDownloadStart: @escaping () -> Void,
                       onProgress: @escaping (Double) -> Void) async throws -> ExtractedMedia {
         // Skip the primary entirely for URLs it can't handle (e.g. the native
@@ -26,13 +27,13 @@ final class CompositeExtractor: MediaExtractor {
         // fallback avoids a noisy, guaranteed failure in the log.
         guard primary.canHandle(url) else {
             appLog("\(primaryName) doesn't handle this URL — using \(fallbackName).", category: "Extract")
-            return try await fallback.extractMedia(from: url, mode: mode,
+            return try await fallback.extractMedia(from: url, mode: mode, quality: quality,
                                                    onDownloadStart: onDownloadStart,
                                                    onProgress: onProgress)
         }
         do {
             appLog("Trying \(primaryName)…", category: "Extract")
-            return try await primary.extractMedia(from: url, mode: mode,
+            return try await primary.extractMedia(from: url, mode: mode, quality: quality,
                                                   onDownloadStart: onDownloadStart,
                                                   onProgress: onProgress)
         } catch {
@@ -45,7 +46,7 @@ final class CompositeExtractor: MediaExtractor {
             // player change — which is what distinguishes a video that works
             // from one that doesn't.
             appLog("\(primaryName) error detail: \(String(describing: error))", level: .debug, category: "Extract")
-            return try await fallback.extractMedia(from: url, mode: mode,
+            return try await fallback.extractMedia(from: url, mode: mode, quality: quality,
                                                    onDownloadStart: onDownloadStart,
                                                    onProgress: onProgress)
         }

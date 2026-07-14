@@ -44,10 +44,12 @@ final class YouTubeKitExtractor: MediaExtractor {
     /// can't decode the webm/opus streams YouTube also offers, so a webm pick
     /// would download completely and then fail verification; videos with no
     /// m4a audio route to the muxed-mp4 + extraction fallback instead.
-    private static func pickBestVideo(_ videoFormats: [VideoDownloadFormat]) -> VideoDownloadFormat? {
-        videoFormats
-            .filter { $0.url != nil && ($0.mimeType ?? "").contains("mp4") && PlayableVideoCodec.isPlayable(mimeType: $0.mimeType) }
-            .max(by: { ($0.height ?? 0) < ($1.height ?? 0) })
+    private static func pickBestVideo(_ videoFormats: [VideoDownloadFormat],
+                                      quality: VideoQuality) -> VideoDownloadFormat? {
+        let playable = videoFormats.filter {
+            $0.url != nil && ($0.mimeType ?? "").contains("mp4") && PlayableVideoCodec.isPlayable(mimeType: $0.mimeType)
+        }
+        return quality.pick(from: playable, height: { $0.height ?? 0 })
     }
 
     private static func pickBestAudio(_ audioFormats: [AudioOnlyFormat]) -> AudioOnlyFormat? {
@@ -76,6 +78,7 @@ final class YouTubeKitExtractor: MediaExtractor {
     /// downloader's Content-Range consistency check backstops that case.
     private func freshMediaRequest(videoID: String,
                                    kind: StreamKind,
+                                   quality: VideoQuality,
                                    matchingLength: Int?,
                                    category: String) async throws -> URLRequest? {
         appLog("Re-resolving \(videoID) via YouTubeKit for a fresh stream URL…", category: category)
@@ -106,7 +109,7 @@ final class YouTubeKitExtractor: MediaExtractor {
 
         let streamURL: URL?
         switch kind {
-        case .video: streamURL = Self.pickBestVideo(videoFormats)?.url
+        case .video: streamURL = Self.pickBestVideo(videoFormats, quality: quality)?.url
         case .muxedSmallest: streamURL = Self.pickSmallestMuxed(videoFormats)?.url
         case .audioOnly: streamURL = Self.pickBestAudio(audioFormats)?.url
         }
@@ -116,6 +119,7 @@ final class YouTubeKitExtractor: MediaExtractor {
 
     func extractMedia(from url: URL,
                       mode: DownloadMode,
+                      quality: VideoQuality,
                       onDownloadStart: @escaping () -> Void,
                       onProgress: @escaping (Double) -> Void) async throws -> ExtractedMedia {
         let category = "YouTubeKit"
@@ -165,10 +169,11 @@ final class YouTubeKitExtractor: MediaExtractor {
         var extractAudioAfterDownload = false
 
         if mode == .video {
-            // Best MP4 with video AVFoundation can decode. AV1/VP9 streams (which
-            // YouTube often offers) play as a blank QuickTime placeholder on iOS,
-            // so restrict to H.264/HEVC. If video-only, VideoMerger adds audio.
-            guard let video = Self.pickBestVideo(videoFormats), let videoURL = video.url else {
+            // Best MP4 with video AVFoundation can decode, honouring the
+            // quality preference. AV1/VP9 streams (which YouTube often offers)
+            // play as a blank QuickTime placeholder on iOS, so restrict to
+            // H.264/HEVC. If video-only, VideoMerger adds audio.
+            guard let video = Self.pickBestVideo(videoFormats, quality: quality), let videoURL = video.url else {
                 let mp4Video = videoFormats.filter { $0.url != nil && ($0.mimeType ?? "").contains("mp4") }
                 let offered = Set(mp4Video.compactMap { $0.mimeType }).sorted().joined(separator: " | ")
                 appLog("No device-playable video stream (need H.264/HEVC) — offered: \(offered.isEmpty ? "none" : offered)",
@@ -216,7 +221,7 @@ final class YouTubeKitExtractor: MediaExtractor {
             to: dest,
             category: category,
             refresh: { [self] in
-                try await freshMediaRequest(videoID: videoID, kind: chosenKind,
+                try await freshMediaRequest(videoID: videoID, kind: chosenKind, quality: quality,
                                             matchingLength: expectedSize, category: category)
             },
             onProgress: onProgress
@@ -227,7 +232,7 @@ final class YouTubeKitExtractor: MediaExtractor {
             dest = try await VideoMerger.ensureAudio(
                 videoFile: dest, audioRequest: mergeAudioRequest,
                 audioRefresh: { [self] in
-                    try await freshMediaRequest(videoID: videoID, kind: .audioOnly,
+                    try await freshMediaRequest(videoID: videoID, kind: .audioOnly, quality: quality,
                                                 matchingLength: mergeAudioLength, category: category)
                 },
                 category: category)

@@ -130,13 +130,16 @@ enum MediaVerifier {
 /// Abstraction over the extraction step so the rest of the app is independent of
 /// the concrete library and can be unit-tested with a mock.
 protocol MediaExtractor {
-    /// Downloads the best audio-only stream (`.audio`) or the best muxed
-    /// video+audio MP4 (`.video`) for `url`.
+    /// Downloads the best audio-only stream (`.audio`) or a muxed video+audio
+    /// MP4 (`.video`) for `url`. `quality` steers which video rendition is
+    /// picked (ignored for audio); it's always bounded by what the source
+    /// offers in a device-playable codec.
     /// - Parameter onDownloadStart: invoked once the info has been resolved and
     ///   the actual download is about to begin.
     /// - Parameter onProgress: 0...1 download fraction (when the size is known).
     func extractMedia(from url: URL,
                       mode: DownloadMode,
+                      quality: VideoQuality,
                       onDownloadStart: @escaping () -> Void,
                       onProgress: @escaping (Double) -> Void) async throws -> ExtractedMedia
 
@@ -148,6 +151,15 @@ protocol MediaExtractor {
 
 extension MediaExtractor {
     func canHandle(_ url: URL) -> Bool { true }
+
+    /// Convenience without a quality preference — best available.
+    func extractMedia(from url: URL,
+                      mode: DownloadMode,
+                      onDownloadStart: @escaping () -> Void,
+                      onProgress: @escaping (Double) -> Void) async throws -> ExtractedMedia {
+        try await extractMedia(from: url, mode: mode, quality: .best,
+                               onDownloadStart: onDownloadStart, onProgress: onProgress)
+    }
 }
 
 /// Production implementation backed by kewlbear/YoutubeDL-iOS (yt-dlp on device).
@@ -479,6 +491,7 @@ final class YoutubeDLExtractor: MediaExtractor {
                                           youtubeDL: YoutubeDL,
                                           url: URL,
                                           mode: DownloadMode,
+                                          quality: VideoQuality,
                                           category: String,
                                           onDownloadStart: @escaping () -> Void,
                                           onProgress: @escaping (Double) -> Void) async throws -> ExtractedMedia {
@@ -572,7 +585,8 @@ final class YoutubeDLExtractor: MediaExtractor {
                 // H.264. Bypasses the rest of this method on success.
                 #if canImport(PythonKit)
                 if let recovered = try await extractViaForcedClients(
-                    url: url, mode: .video, category: category, offeredVideoHeight: offeredHeight,
+                    url: url, mode: .video, quality: quality, category: category,
+                    offeredVideoHeight: offeredHeight,
                     onDownloadStart: onDownloadStart, onProgress: onProgress) {
                     return recovered
                 }
@@ -581,13 +595,13 @@ final class YoutubeDLExtractor: MediaExtractor {
                        level: .error, category: category)
                 throw ExtractorError.unplayableVideoCodec(list)
             }
-            guard let video = playable.max(by: { ($0.height ?? 0) < ($1.height ?? 0) }) else {
+            guard let video = quality.pick(from: playable, height: { $0.height ?? 0 }) else {
                 throw ExtractorError.noVideoFormat
             }
             chosen = video
             mergeAudioRequest = bestAudio.flatMap(makeRequest)
             mergeAudioRefresh = bestAudio.map { refresher(formatID: $0.format_id) }
-            appLog("Selected video \(chosen.format_id) (\(chosen.height.map { "\($0)p" } ?? "?")) \(chosen.vcodec ?? "?") \(chosen.isVideoOnly ? "video-only — will merge audio" : "muxed")",
+            appLog("Selected video \(chosen.format_id) (\(chosen.height.map { "\($0)p" } ?? "?")\(quality.maxHeight.map { " · preference ≤\($0)p" } ?? "")) \(chosen.vcodec ?? "?") \(chosen.isVideoOnly ? "video-only — will merge audio" : "muxed")",
                    category: category)
         } else if let audio = bestAudio {
             chosen = audio
@@ -735,6 +749,7 @@ final class YoutubeDLExtractor: MediaExtractor {
     ///   codec limitation, not a silent quality bug.
     private func extractViaForcedClients(url: URL,
                                          mode: DownloadMode,
+                                         quality: VideoQuality = .best,
                                          category: String,
                                          offeredVideoHeight: Int? = nil,
                                          onDownloadStart: @escaping () -> Void,
@@ -807,6 +822,7 @@ final class YoutubeDLExtractor: MediaExtractor {
             do {
                 let media = mode == .video
                     ? try await downloadPlayable(from: info, client: label, url: url,
+                                                 quality: quality,
                                                  category: category, offeredVideoHeight: offeredVideoHeight,
                                                  onDownloadStart: onDownloadStart, onProgress: onProgress)
                     : try await downloadBestAudio(from: info, client: label, url: url,
@@ -945,6 +961,7 @@ final class YoutubeDLExtractor: MediaExtractor {
     private func downloadPlayable(from info: PythonObject,
                                   client: String,
                                   url: URL,
+                                  quality: VideoQuality = .best,
                                   category: String,
                                   offeredVideoHeight: Int? = nil,
                                   onDownloadStart: @escaping () -> Void,
@@ -986,9 +1003,9 @@ final class YoutubeDLExtractor: MediaExtractor {
             }
         }
 
-        guard let video = videos.max(by: { $0.height < $1.height }) else { return nil }
+        guard let video = quality.pick(from: videos, height: { $0.height }) else { return nil }
         let audio = audios.max(by: { $0.abr < $1.abr })
-        appLog("Recovery (\(client)) selected H.264 video \(video.height)p (\(video.vcodec))\(audio == nil ? " · no separate audio" : " + m4a audio")",
+        appLog("Recovery (\(client)) selected H.264 video \(video.height)p\(quality.maxHeight.map { " (preference ≤\($0)p)" } ?? "") (\(video.vcodec))\(audio == nil ? " · no separate audio" : " + m4a audio")",
                level: .success, category: category)
         // If YouTube offered the video at a notably higher resolution but only in
         // a codec this device can't decode (AV1/VP9), say so — otherwise a 360p
@@ -1139,6 +1156,7 @@ final class YoutubeDLExtractor: MediaExtractor {
 
     func extractMedia(from url: URL,
                       mode: DownloadMode,
+                      quality: VideoQuality,
                       onDownloadStart: @escaping () -> Void,
                       onProgress: @escaping (Double) -> Void) async throws -> ExtractedMedia {
         let category = "yt-dlp"
@@ -1239,7 +1257,7 @@ final class YoutubeDLExtractor: MediaExtractor {
                 // settle, fail cleanly rather than risk the crash.
                 if await waitForOrphanedExtraction(category: category, cap: 30) {
                     if let media = try await extractViaForcedClients(
-                        url: url, mode: mode, category: category,
+                        url: url, mode: mode, quality: quality, category: category,
                         onDownloadStart: onDownloadStart, onProgress: onProgress) {
                         return media
                     }
@@ -1263,7 +1281,7 @@ final class YoutubeDLExtractor: MediaExtractor {
             do {
                 return try await downloadUsingDefaultInfo(
                     formats: formats, info: info, youtubeDL: youtubeDL,
-                    url: url, mode: mode, category: category,
+                    url: url, mode: mode, quality: quality, category: category,
                     onDownloadStart: onDownloadStart, onProgress: onProgress)
             } catch {
                 if isCancellation(error) { throw error }
@@ -1284,7 +1302,7 @@ final class YoutubeDLExtractor: MediaExtractor {
                 // two extractions never run concurrently in the interpreter.
                 if await waitForOrphanedExtraction(category: category, cap: 30) {
                     if let media = try await extractViaForcedClients(
-                        url: url, mode: mode, category: category,
+                        url: url, mode: mode, quality: quality, category: category,
                         onDownloadStart: onDownloadStart, onProgress: onProgress) {
                         return media
                     }
@@ -1318,7 +1336,7 @@ final class YoutubeDLExtractor: MediaExtractor {
                        level: .warning, category: category)
                 if await Self.refreshEngine() {
                     Self.didAutoRefreshEngine = true
-                    return try await extractMedia(from: originalURL, mode: mode,
+                    return try await extractMedia(from: originalURL, mode: mode, quality: quality,
                                                   onDownloadStart: onDownloadStart, onProgress: onProgress)
                 }
             }
@@ -1336,6 +1354,7 @@ final class YoutubeDLExtractor: MediaExtractor {
 final class MockExtractor: MediaExtractor {
     func extractMedia(from url: URL,
                       mode: DownloadMode,
+                      quality: VideoQuality,
                       onDownloadStart: @escaping () -> Void,
                       onProgress: @escaping (Double) -> Void) async throws -> ExtractedMedia {
         appLog("Mock: extracting info…", category: "yt-dlp")
