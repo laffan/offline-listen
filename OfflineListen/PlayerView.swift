@@ -258,16 +258,19 @@ private struct CurrentChapterLabel: View {
 
 /// Native video surface backed by `AVPlayerViewController`, used purely for the
 /// picture and PiP — its system controls are disabled so the app's own control
-/// suite (the same one audio gets) drives playback.
-private struct NativeVideoPlayer: UIViewControllerRepresentable {
+/// suite (the same one audio gets) drives playback. Shared with the Browse
+/// preview modal, which turns PiP off (a transient temp-file preview shouldn't
+/// detach into a floating window).
+struct NativeVideoPlayer: UIViewControllerRepresentable {
     let player: AVPlayer
+    var allowsPiP = true
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let controller = AVPlayerViewController()
         controller.player = player
         controller.showsPlaybackControls = false
-        controller.allowsPictureInPicturePlayback = true
-        controller.canStartPictureInPictureAutomaticallyFromInline = true
+        controller.allowsPictureInPicturePlayback = allowsPiP
+        controller.canStartPictureInPictureAutomaticallyFromInline = allowsPiP
         controller.videoGravity = .resizeAspect
         return controller
     }

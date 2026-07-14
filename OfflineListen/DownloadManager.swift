@@ -119,6 +119,8 @@ final class PlaylistDecisionBox: @unchecked Sendable {
 private struct PreviewWork {
     let id: UUID
     let url: URL
+    /// Audio (the default) or video — the Browse toggle / Download tab mode.
+    let mode: DownloadMode
     /// Invoked when the pipeline actually picks the preview up (it may sit
     /// behind an in-flight download first).
     let onBegin: @MainActor () -> Void
@@ -317,12 +319,14 @@ final class DownloadManager: ObservableObject {
 
     // MARK: - Browse previews
 
-    /// Downloads the audio for `urlString` through the serial pipeline and
-    /// returns the extracted media *without* adding it to the library — the
-    /// Browse preview modal plays it and then saves or discards it. The file
-    /// lands in the previews scratch directory; the caller owns it from there.
-    /// Honours task cancellation (dismissing the modal cancels the work).
+    /// Downloads the media for `urlString` through the serial pipeline and
+    /// returns it *without* adding it to the library — the Browse preview
+    /// modal plays it and then saves or discards it. `mode` picks audio or
+    /// video, mirroring the download queue's own modes. The file lands in the
+    /// previews scratch directory; the caller owns it from there. Honours task
+    /// cancellation (dismissing the modal cancels the work).
     func downloadPreview(urlString: String,
+                         mode: DownloadMode = .audio,
                          onBegin: @escaping @MainActor () -> Void = {},
                          onDownloadStart: @escaping @MainActor () -> Void = {},
                          onProgress: @escaping @MainActor (Double) -> Void = { _ in }) async throws -> ExtractedMedia {
@@ -334,6 +338,7 @@ final class DownloadManager: ObservableObject {
             try await withCheckedThrowingContinuation { continuation in
                 previewQueue.append(PreviewWork(id: id,
                                                 url: url,
+                                                mode: mode,
                                                 onBegin: onBegin,
                                                 onDownloadStart: onDownloadStart,
                                                 onProgress: onProgress,
@@ -360,11 +365,11 @@ final class DownloadManager: ObservableObject {
 
     private func runPreview(_ work: PreviewWork) async {
         work.onBegin()
-        appLog("Preview extracting: \(work.url.absoluteString)", category: "Browse")
+        appLog("Preview extracting (\(work.mode.displayName)): \(work.url.absoluteString)", category: "Browse")
         do {
             let extracted = try await extractor.extractMedia(
                 from: work.url,
-                mode: .audio,
+                mode: work.mode,
                 onDownloadStart: {
                     Task { @MainActor in work.onDownloadStart() }
                 },
@@ -374,7 +379,9 @@ final class DownloadManager: ObservableObject {
             )
             // Move the file out of the shared work dir so the next job can't
             // touch it while the preview is playing.
-            let ext = extracted.fileURL.pathExtension.isEmpty ? "m4a" : extracted.fileURL.pathExtension
+            let ext = extracted.fileURL.pathExtension.isEmpty
+                ? (extracted.isVideo ? "mp4" : "m4a")
+                : extracted.fileURL.pathExtension
             let safeURL = AppPaths.previews.appendingPathComponent("\(work.id.uuidString).\(ext)")
             try? FileManager.default.removeItem(at: safeURL)
             try FileManager.default.moveItem(at: extracted.fileURL, to: safeURL)

@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// One source's discovered items: title, description, and per-row **Download**
+/// One source's discovered items: artist/song title with per-row **Download**
 /// (sends to the download queue) and **Preview** (opens the listen-first
-/// modal) actions. Swipe an item left to discard it without previewing.
+/// modal) actions, both in the mode set by the Browse tab's Audio/Video
+/// toggle. Swipe an item left to discard it without previewing.
 struct BrowseSourceView: View {
     let sourceID: UUID
 
@@ -83,7 +84,7 @@ struct BrowseSourceView: View {
             }
         }
         .sheet(item: $previewItem) { item in
-            BrowsePreviewView(item: item)
+            BrowsePreviewView(item: item, mode: browse.downloadMode)
         }
     }
 
@@ -178,10 +179,10 @@ struct BrowseSourceView: View {
         await browse.refresh(source)
     }
 
-    /// Sends the item to the download queue (Audio mode) and marks it so the
-    /// row shows where it went.
+    /// Sends the item to the download queue (in the Browse toggle's
+    /// Audio/Video mode) and marks it so the row shows where it went.
     private func download(_ item: BrowseItem) {
-        downloads.enqueue(urlString: item.url, mode: .audio)
+        downloads.enqueue(urlString: item.url, mode: browse.downloadMode)
         browse.markDownloaded(item)
     }
 }

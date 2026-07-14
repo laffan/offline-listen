@@ -364,8 +364,9 @@ struct DownloadSearchResults: Identifiable {
 
 /// The search-results modal: the top YouTube hits for the typed term, each row
 /// styled like a Browse item — title, channel, and **Download** / **Preview**.
-/// Download queues the video in the tab's current mode; Preview opens the same
-/// listen-first modal Browse uses (Save files it into the library).
+/// Both observe the tab's Audio/Video toggle: Download queues in that mode,
+/// and Preview opens the same listen-first modal Browse uses (audio or video —
+/// Save files it into the library).
 private struct SearchResultsView: View {
     let search: DownloadSearchResults
     let mode: DownloadMode
@@ -402,7 +403,7 @@ private struct SearchResultsView: View {
             }
         }
         .sheet(item: $previewItem) { item in
-            BrowsePreviewView(item: item)
+            BrowsePreviewView(item: item, mode: mode)
         }
     }
 

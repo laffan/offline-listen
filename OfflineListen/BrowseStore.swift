@@ -13,11 +13,20 @@ final class BrowseStore: ObservableObject {
     /// Most recent refresh error per source, cleared on the next success.
     @Published private(set) var lastError: [UUID: String] = [:]
 
+    /// The mode Browse's Download/Preview buttons act in — the Audio/Video
+    /// toggle beside the Browse title. Persisted so the choice sticks.
+    @Published var downloadMode: DownloadMode {
+        didSet { UserDefaults.standard.set(downloadMode.rawValue, forKey: Self.downloadModeKey) }
+    }
+    private static let downloadModeKey = "browseDownloadMode"
+
     /// Needed by the AI kinds (artist/genre/country) at refresh time.
     private let aiSettings: AISettingsStore
 
     init(aiSettings: AISettingsStore) {
         self.aiSettings = aiSettings
+        let storedMode = UserDefaults.standard.string(forKey: Self.downloadModeKey) ?? ""
+        downloadMode = DownloadMode(rawValue: storedMode) ?? .audio
         load()
     }
 

@@ -29,7 +29,18 @@ struct BrowseView: View {
                     .disabled(browse.sources.isEmpty || !browse.refreshing.isEmpty)
                     .accessibilityLabel("Refresh all sources")
                 }
-                ToolbarItem(placement: .navigationBarTrailing) {
+                // The Audio/Video toggle beside the title: every item's
+                // Download and Preview act in this mode, mirroring the
+                // Download tab's own toggle.
+                ToolbarItemGroup(placement: .navigationBarTrailing) {
+                    Picker("Mode", selection: $browse.downloadMode) {
+                        ForEach(DownloadMode.allCases) { m in
+                            Text(m.displayName).tag(m)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 140)
+
                     addMenu
                 }
             }

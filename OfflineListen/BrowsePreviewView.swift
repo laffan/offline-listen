@@ -2,14 +2,17 @@ import SwiftUI
 import AVFoundation
 import UIKit
 
-/// The Browse preview modal: downloads the item's audio (through the same
-/// serial pipeline as the download queue), plays it in its own mini player,
-/// and offers **Save** (file it into the library — mid-play, the song hands
-/// off to the main player at the same position and keeps going) or
-/// **Discard** (delete it and hide the item). Dismissing without deciding
-/// deletes the temp file and leaves the item untouched.
+/// The Browse preview modal: downloads the item's media (through the same
+/// serial pipeline as the download queue — audio or video per `mode`), plays
+/// it in its own mini player (with a picture for video), and offers **Save**
+/// (file it into the library — mid-play, playback hands off to the main
+/// player at the same position and keeps going) or **Discard** (delete it and
+/// hide the item). Dismissing without deciding deletes the temp file and
+/// leaves the item untouched.
 struct BrowsePreviewView: View {
     let item: BrowseItem
+    /// Audio (the default) or video — the Browse toggle / Download tab mode.
+    var mode: DownloadMode = .audio
 
     @EnvironmentObject private var browse: BrowseStore
     @EnvironmentObject private var downloads: DownloadManager
@@ -60,7 +63,7 @@ struct BrowsePreviewView: View {
         }
         .presentationDetents([.medium, .large])
         .task {
-            await model.start(item: item, downloads: downloads, mainPlayback: playback)
+            await model.start(item: item, mode: mode, downloads: downloads, mainPlayback: playback)
         }
         .onDisappear {
             model.teardown()
@@ -98,7 +101,7 @@ struct BrowsePreviewView: View {
         case .preparing:
             VStack(spacing: 10) {
                 ProgressView()
-                Text("Resolving audio…")
+                Text(mode == .video ? "Resolving video…" : "Resolving audio…")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -130,7 +133,7 @@ struct BrowsePreviewView: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
                 Button("Try Again") {
-                    Task { await model.start(item: item, downloads: downloads, mainPlayback: playback) }
+                    Task { await model.start(item: item, mode: mode, downloads: downloads, mainPlayback: playback) }
                 }
                 .buttonStyle(.bordered)
             }
@@ -139,6 +142,16 @@ struct BrowsePreviewView: View {
 
     private var miniPlayer: some View {
         VStack(spacing: 16) {
+            // Video previews get a picture above the transport controls; the
+            // same AVPlayer drives both, so scrub/play-pause stay in sync.
+            if model.isVideo, let player = model.player {
+                NativeVideoPlayer(player: player, allowsPiP: false)
+                    .aspectRatio(16 / 9, contentMode: .fit)
+                    .frame(maxWidth: .infinity, maxHeight: 220)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal, 24)
+            }
+
             Slider(
                 value: Binding(
                     get: { model.currentTime },
@@ -306,11 +319,14 @@ final class BrowsePreviewModel: ObservableObject {
     @Published private(set) var isPlaying = false
     @Published var currentTime: Double = 0
     @Published private(set) var duration: Double = 0
+    /// True when the previewed media is a video (the modal shows a picture).
+    @Published private(set) var isVideo = false
     /// Set by the slider while dragging so observer ticks don't fight the thumb.
     var isScrubbing = false
 
     private var media: ExtractedMedia?
-    private var player: AVPlayer?
+    /// Exposed (read-only) so the modal's video surface can render it.
+    private(set) var player: AVPlayer?
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
     private var downloadTask: Task<Void, Never>?
@@ -324,7 +340,7 @@ final class BrowsePreviewModel: ObservableObject {
     /// Kicks off (or retries) the preview download and, on success, starts the
     /// mini player — pausing the app's main playback so they don't talk over
     /// each other.
-    func start(item: BrowseItem, downloads: DownloadManager, mainPlayback: PlaybackManager) async {
+    func start(item: BrowseItem, mode: DownloadMode, downloads: DownloadManager, mainPlayback: PlaybackManager) async {
         guard downloadTask == nil, media == nil else { return }
         phase = .waiting
         generation += 1
@@ -333,6 +349,7 @@ final class BrowsePreviewModel: ObservableObject {
             do {
                 let media = try await downloads.downloadPreview(
                     urlString: item.url,
+                    mode: mode,
                     onBegin: { [weak self] in self?.phase = .preparing },
                     onDownloadStart: { [weak self] in self?.phase = .downloading(0) },
                     onProgress: { [weak self] fraction in self?.phase = .downloading(fraction) }
@@ -359,6 +376,7 @@ final class BrowsePreviewModel: ObservableObject {
 
     private func attachPlayer(to media: ExtractedMedia, mainPlayback: PlaybackManager) {
         self.media = media
+        isVideo = media.isVideo
         duration = media.duration
         if duration <= 0 {
             // Extractor metadata can lack a duration; read it off the file.
@@ -428,7 +446,9 @@ final class BrowsePreviewModel: ObservableObject {
         stopPlayer()
 
         let title = item.title.isEmpty ? media.title : item.title
-        let ext = media.fileURL.pathExtension.isEmpty ? "m4a" : media.fileURL.pathExtension
+        let ext = media.fileURL.pathExtension.isEmpty
+            ? (media.isVideo ? "mp4" : "m4a")
+            : media.fileURL.pathExtension
         let fileName = AppPaths.uniqueDocumentName(base: title.sanitizedFileName(), ext: ext)
         let destination = AppPaths.documents.appendingPathComponent(fileName)
         do {
@@ -444,7 +464,7 @@ final class BrowsePreviewModel: ObservableObject {
             fileName: fileName,
             sourceURL: item.url,
             duration: media.duration,
-            isVideo: false,
+            isVideo: media.isVideo,
             chapters: media.chapters
         )
         library.add(track)

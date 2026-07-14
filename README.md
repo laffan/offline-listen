@@ -23,10 +23,11 @@ Five screens (tabs):
    anything that *isn't* a link and the button flips from **Download** to
    **Search**. It scrapes YouTube's results page and returns the **top 5
    videos** in a popup styled like a Browse list — title, channel, and
-   **Download** / **Preview** per row. Download queues the pick in the tab's
-   current Audio/Video mode; Preview opens the same listen-first modal Browse
-   uses (Save files it into the library). A URL still behaves exactly as
-   before — the process only changes when no link is detected.
+   **Download** / **Preview** per row. Both observe the tab's **Audio/Video
+   toggle**: Download queues the pick in that mode, and Preview opens the same
+   listen-first modal Browse uses — with a picture, in Video mode — where Save
+   files it into the library. A URL still behaves exactly as before — the
+   process only changes when no link is detected.
 
    **Playlists.** Paste a **YouTube playlist** link — either the dedicated
    `…/playlist?list=…` page or a `watch?v=…&list=…` link opened from inside a
@@ -50,7 +51,9 @@ Five screens (tabs):
    lists; each refresh surfaces YouTube links, shown as compact
    artist/song-title rows, and
    every item offers **Download** (sends it to the download queue) and
-   **Preview** (a listen-first modal with **Save** / **Discard**).
+   **Preview** (a listen-first modal with **Save** / **Discard**). An
+   **Audio/Video toggle** beside the Browse title — the same one the Download
+   tab has — sets which mode both buttons act in.
 3. **Library** — downloaded tracks; tap to play. A **filter** (All / Music /
    Podcasts / Video) sits directly beneath the **Tracks** header. Swipe **left**
    for Delete/Share/Archive (and bulk versions via **Select**); swipe **right**
@@ -146,11 +149,13 @@ The **Browse** tab watches a set of user-configured **sources** and turns what
 they surface into a curated to-listen list. Every source, whatever its type,
 produces the same thing: **YouTube links with metadata** — each shown as a
 compact row of just the artist/song title (no description clutter) and two
-actions per item:
+actions per item, both acting in the mode set by the **Audio/Video toggle**
+beside the Browse title:
 
-- **Download** — sends the link straight to the download queue (Audio mode),
-  exactly as if it had been pasted into the Download tab.
-- **Preview** — opens a modal that downloads the audio and plays it in its own
+- **Download** — sends the link straight to the download queue in the
+  toggle's mode, exactly as if it had been pasted into the Download tab.
+- **Preview** — opens a modal that downloads the audio — or, in Video mode,
+  the video, showing its picture above the controls — and plays it in its own
   **mini player** (scrubber, play/pause — separate from the main Player, which
   it pauses while auditioning), with **Save** and **Discard** buttons. The
   modal's title and description are **selectable**, and the selection menu
