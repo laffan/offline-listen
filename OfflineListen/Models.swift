@@ -16,11 +16,23 @@ enum AppPaths {
         documents.appendingPathComponent("folders.json")
     }
 
-    /// The user-chosen local sync directory, resolved from its security-scoped
-    /// bookmark by `LocalSyncStore` at launch (nil until one is configured or
-    /// while the bookmark can't be resolved). Synced tracks/folders resolve
-    /// their on-disk locations against this root.
+    /// The user-chosen sync folder, resolved from its security-scoped bookmark
+    /// by `LocalSyncStore` at launch (nil until one is configured or while the
+    /// bookmark can't be resolved). This is the *replica*: the app never plays
+    /// from it — synced files are copied in and out of `syncLocalStore`, which
+    /// is what the library actually uses. Cloud providers (Dropbox, iCloud
+    /// Drive) serve placeholders and can evict files, so only a local copy is
+    /// dependable.
     static var syncRoot: URL?
+
+    /// The app-local home of synced files: `Documents/Synced/`, mirroring the
+    /// sync folder's directory structure. Synced tracks play from here —
+    /// always materialized, always offline.
+    static var syncLocalStore: URL {
+        let url = documents.appendingPathComponent("Synced", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
 
     /// Where cover images for *unsynced* mixtape folders live (a synced
     /// mixtape's cover lives in its directory's `.mixtapedata` instead).
@@ -371,25 +383,18 @@ struct Folder: Identifiable, Codable, Hashable {
         mixtape = try c.decodeIfPresent(MixtapeStyle.self, forKey: .mixtape) ?? MixtapeStyle()
     }
 
-    /// The synced folder's absolute directory URL, nil while unsynced or while
-    /// the sync root isn't available.
+    /// The synced folder's directory inside the app-local sync store
+    /// (`Documents/Synced/…`), nil while unsynced. The matching directory in
+    /// the replica (the user's sync folder) is maintained by the exporter.
     var syncedDirectoryURL: URL? {
-        guard isSynced, let path = syncedPath, let root = AppPaths.syncRoot else { return nil }
-        return root.appendingPathComponent(path, isDirectory: true)
+        guard isSynced, let path = syncedPath else { return nil }
+        return AppPaths.syncLocalStore.appendingPathComponent(path, isDirectory: true)
     }
 
-    /// The hidden `.mixtapedata` directory of a synced mixtape.
-    var mixtapeDataURL: URL? {
-        syncedDirectoryURL?.appendingPathComponent(AppPaths.mixtapeDataDirName, isDirectory: true)
-    }
-
-    /// Where this mixtape's cover image lives: inside `.mixtapedata` when
-    /// synced, otherwise in Documents/MixtapeCovers keyed by folder id.
+    /// Where this mixtape's cover image lives. Always app-local; a synced
+    /// mixtape's `.mixtapedata/cover.jpg` in the replica is an exported copy.
     var coverURL: URL? {
         guard isMixtape else { return nil }
-        if isSynced {
-            return mixtapeDataURL?.appendingPathComponent("cover.jpg")
-        }
         return AppPaths.mixtapeCovers.appendingPathComponent("\(id.uuidString).jpg")
     }
 }
@@ -425,9 +430,10 @@ struct Track: Identifiable, Codable, Hashable {
     /// listening. The phone is the source of truth; the "Watch" virtual folder
     /// lists every track where this is set (see `LibraryStore.watchTracks`).
     var sentToWatch: Bool
-    /// True when the track's file lives in the local sync folder instead of
-    /// Documents. `fileName` is then a path *relative to the sync root* (it may
-    /// contain directory components).
+    /// True when the track is mirrored to the sync folder. Its file lives in
+    /// the app-local sync store (`Documents/Synced/…`) and `fileName` is a
+    /// path relative to that store (it may contain directory components); the
+    /// same relative path names its exported copy in the replica.
     var isSynced: Bool
 
     init(id: UUID = UUID(),
@@ -493,12 +499,11 @@ struct Track: Identifiable, Codable, Hashable {
     }
 
     /// Absolute on-disk location resolved at access time. A synced track lives
-    /// under the local sync root; everything else lives in Documents. (When the
-    /// sync root is unavailable the synced path still resolves against
-    /// Documents so the failure is a missing file, not a crash.)
+    /// in the app-local sync store (`Documents/Synced/…`) — never in the
+    /// user's sync folder itself, whose files may be cloud placeholders.
     var fileURL: URL {
-        if isSynced, let root = AppPaths.syncRoot {
-            return root.appendingPathComponent(fileName)
+        if isSynced {
+            return AppPaths.syncLocalStore.appendingPathComponent(fileName)
         }
         return AppPaths.documents.appendingPathComponent(fileName)
     }

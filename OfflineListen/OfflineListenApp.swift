@@ -14,8 +14,8 @@ struct OfflineListenApp: App {
 
     init() {
         let library = LibraryStore()
-        // Resolves the sync-folder bookmark (so synced tracks' files resolve)
-        // and reconciles the library against what's on disk.
+        // Resolves the sync-folder bookmark and kicks the first sync pass
+        // (export any journaled changes, then reconcile against the folder).
         _localSync = StateObject(wrappedValue: LocalSyncStore(library: library))
         let aiSettings = AISettingsStore()
         let aiOrganizer = AIOrganizer(library: library, settings: aiSettings)

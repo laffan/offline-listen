@@ -56,6 +56,7 @@ struct SettingsView: View {
                     }
                     .font(.callout)
                 }
+                syncStatusRow
                 Button("Change Folder…") {
                     showFolderPicker = true
                 }
@@ -69,8 +70,31 @@ struct SettingsView: View {
         } header: {
             Text("Local Sync")
         } footer: {
-            Text("Pick a folder (in Files, iCloud Drive, …) to sync with. \"Sync to Local\" moves a track or folder there, playable files already in it appear in your library with the sync icon, and changes made to the folder from outside the app show up immediately. Removing the sync folder keeps its files — they just leave the library.")
+            Text("Pick a folder (in Files, iCloud Drive, Dropbox, …) to mirror with. \"Sync to Local\" copies a track or folder there, and playable files in the folder are copied into the app — so everything keeps playing offline — appearing with the sync icon and disappearing when removed from the folder. Removing the sync folder keeps everything: synced items just become regular local tracks, and the folder's files are untouched.")
         }
+    }
+
+    /// A quiet one-line status for the mirror: syncing, waiting to copy out
+    /// changes (folder unreachable), or up to date.
+    private var syncStatusRow: some View {
+        HStack(spacing: 8) {
+            if localSync.isSyncing {
+                ProgressView()
+                Text("Syncing…")
+                    .foregroundStyle(.secondary)
+            } else if localSync.pendingOpCount > 0 {
+                Image(systemName: "clock.arrow.circlepath")
+                    .foregroundStyle(.orange)
+                Text("\(localSync.pendingOpCount) change\(localSync.pendingOpCount == 1 ? "" : "s") waiting to copy")
+                    .foregroundStyle(.secondary)
+            } else {
+                Image(systemName: "checkmark.circle")
+                    .foregroundStyle(.green)
+                Text("Up to date")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .font(.callout)
     }
 
     // MARK: - Blog Agent

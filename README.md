@@ -248,30 +248,49 @@ download queue to free up…").
 ## Local sync: a folder that mirrors part of the library
 
 Settings ▸ **Local Sync** lets you pick a folder — anything the Files app can
-reach (On My iPhone, iCloud Drive, another provider) — as a **local sync
-path**. Access persists across launches via a security-scoped bookmark. Once
-one is set:
+reach (On My iPhone, iCloud Drive, Dropbox, any file provider) — to mirror
+with. Access persists across launches via a security-scoped bookmark.
 
-- Touch-and-hold any track or folder for **Sync to Local**, which **moves** the
-  file (or the folder's whole directory tree) into the sync folder. Synced
-  items wear a **sync icon** (`arrow.triangle.2.circlepath`) but otherwise
-  behave exactly like everything else — tap to play, reorder, classify,
-  archive, send to the watch.
-- The mirror runs **both ways**: any playable file already in (or later added
-  to) the folder appears in the library **immediately**, and a file removed
-  from it disappears immediately. Directories become (nested) folders, so a
-  playlist tree dropped into the sync folder arrives as playlists. The app
-  watches the whole tree with kqueue-backed dispatch sources and rescans on
-  any event (and on returning to the foreground).
-- Because the sync folder is a mirror, structural edits are physical: moving a
-  track into a synced folder moves its file into that directory; moving it out
-  (or to the Inbox) moves the file back to Documents; renaming a synced folder
-  renames the directory. **Deleting** a synced folder keeps the app's promise
-  that deleting a folder never deletes tracks — its files move back to
-  Documents first, then the directory is removed.
-- Removing the sync path in Settings drops the synced entries from the library
-  but touches no files. Playable types: `m4a`/`mp3`/`aac`/`wav`/`aiff` audio
-  and `mp4`/`mov`/`m4v` video; hidden files and folders are ignored.
+The folder is a **replica, not live storage**: cloud providers serve
+*placeholder* files that must be downloaded through file coordination before
+they're readable, and can evict them again — so the app never plays from the
+folder directly. Synced files live app-local in `Documents/Synced/`
+(mirroring the folder's directory structure) and always play offline; two
+background workers keep the two sides identical:
+
+- The **importer** scans the folder (off the main thread — a cloud directory
+  can block on the network) and compares each file's size/mtime **stamp**
+  against a persisted manifest (`Documents/sync-manifest.json`). New or
+  changed files are copied in with a coordinated read — which is what makes a
+  provider download its placeholder — and each track appears as its copy
+  lands. Files that vanished from the folder leave the library (and the local
+  store). Directories become (nested) folders, playlist trees arrive as
+  playlists.
+- The **exporter** drains a persisted journal (`Documents/sync-pending.json`)
+  of write-through ops produced by in-app changes: **Sync to Local** copies a
+  track or folder out, moves/renames/deletes of synced items update the
+  replica, mixtape edits rewrite `.mixtapedata`. If the folder is unreachable
+  the ops wait and retry on the next pass — the in-app change never fails or
+  blocks. Reconciliation is skipped while exports are pending, so a stale
+  replica can't undo the changes waiting to be written. Settings shows the
+  mirror's state (Syncing… / N changes waiting / Up to date).
+
+Synced items wear a **sync icon** (`arrow.triangle.2.circlepath`) but
+otherwise behave exactly like everything else — tap to play, reorder,
+classify, archive, send to the watch. Passes run on filesystem events
+(kqueue, for local folders), on returning to the foreground, and after every
+in-app change; cloud providers don't reliably signal, so foregrounding the
+app is what picks up remote edits there.
+
+**Deleting** a synced folder keeps the app's promise that deleting a folder
+never deletes tracks: its files move into the plain library first, then the
+directory (and its replica copy) is removed. **Removing the sync path** in
+Settings keeps everything too — synced items become regular local tracks and
+the folder's files are untouched. Playable types:
+`m4a`/`mp3`/`aac`/`wav`/`aiff` audio and `mp4`/`mov`/`m4v` video; hidden
+files and folders are ignored. The trade-off of the copy model is deliberate:
+each synced file exists twice (app copy + provider copy) — that's what makes
+playback offline-proof.
 
 ## Mixtape folders
 
@@ -290,12 +309,14 @@ masking-tape white by default, with preset swatches and a free colour well.
 **Convert to Folder** reverts it, discarding cover and style. Mixtapes can't
 contain folders, so only childless folders offer the conversion.
 
-Style (crop + font) persists in `folders.json`; the cover JPEG lives in
-`Documents/MixtapeCovers/<folder-id>.jpg`. A mixtape **synced to local**
-instead carries a hidden **`.mixtapedata`** directory inside its synced
-directory — `cover.jpg` plus `style.json` — so the mixtape travels with its
-files: sync-scanning a directory that contains `.mixtapedata` brings it into
-the library *as* a mixtape, cover, crop, font and all.
+Style (crop, font, colours, tape, justification) persists in `folders.json`;
+the cover JPEG lives in `Documents/MixtapeCovers/<folder-id>.jpg`. A mixtape
+**synced to local** additionally exports a hidden **`.mixtapedata`** directory
+(`cover.jpg` + `style.json`) into its replica directory, so the mixtape
+travels with its files: importing a directory that contains `.mixtapedata`
+brings it into the library *as* a mixtape, cover, crop, font and all. Remote
+`.mixtapedata` changes are adopted only when its stamps actually changed, so
+a stale replica can't undo an in-app style edit.
 
 ### Pipeline
 
@@ -311,8 +332,8 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 |------|------|
 | `OfflineListenApp.swift` | App entry; wires up the shared stores. |
 | `Models.swift` | `Track`, `Folder`, `DownloadMode`, `LibraryFilter`, `FolderSort`, paths, helpers. |
-| `LibraryStore.swift` | Persists the library to `Documents/library.json` and folders to `Documents/folders.json`; owns the physical moves across the local-sync boundary, the sync-scan reconcile, and the mixtape conversions. |
-| `LocalSync.swift` | `LocalSyncStore` — the sync folder's security-scoped bookmark, kqueue directory monitoring, and the tree scan (incl. reading `.mixtapedata`). |
+| `LibraryStore.swift` | Persists the library to `Documents/library.json` and folders to `Documents/folders.json`; owns the local moves across the sync boundary (queueing replica ops), the importer's reconcile primitives, and the mixtape conversions. |
+| `LocalSync.swift` | `LocalSyncStore` — the sync folder's security-scoped bookmark, the stamped manifest + journaled exporter, the coordinated importer (placeholder-aware copies), kqueue monitoring, and the off-main tree scan. |
 | `DownloadManager.swift` | Serial download queue + `DownloadJob`. |
 | `YouTubeExtractor.swift` | `MediaExtractor` protocol + YoutubeDL-iOS impl + a mock. |
 | `YouTubeKitExtractor.swift` | Native-Swift (b5i/YouTubeKit) primary extractor. |
