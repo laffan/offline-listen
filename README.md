@@ -247,16 +247,21 @@ download queue to free up…").
 
 ## Local sync: a folder that mirrors part of the library
 
-Settings ▸ **Local Sync** lets you pick a folder — anything the Files app can
+Settings ▸ **Local Sync** lets you pick folders — anything the Files app can
 reach (On My iPhone, iCloud Drive, Dropbox, any file provider) — to mirror
-with. Access persists across launches via a security-scoped bookmark.
+with. **Several sync folders can be configured at once** (each is a *root*
+with its own id; with more than one, "Sync to Local" becomes a submenu naming
+them). Access persists across launches via security-scoped bookmarks; a root
+whose provider is unreachable shows a warning icon in Settings and simply
+pauses until it's back.
 
-The folder is a **replica, not live storage**: cloud providers serve
+Each folder is a **replica, not live storage**: cloud providers serve
 *placeholder* files that must be downloaded through file coordination before
-they're readable, and can evict them again — so the app never plays from the
-folder directly. Synced files live app-local in `Documents/Synced/`
-(mirroring the folder's directory structure) and always play offline; two
-background workers keep the two sides identical:
+they're readable, and can evict them again — so the app never plays from a
+sync folder directly. Synced files live app-local in
+`Documents/Synced/<root-id>/` (mirroring that folder's directory structure)
+and always play offline; per root, two background workers keep the two sides
+identical:
 
 - The **importer** scans the folder (off the main thread — a cloud directory
   can block on the network) and compares each file's size/mtime **stamp**
@@ -284,9 +289,11 @@ app is what picks up remote edits there.
 
 **Deleting** a synced folder keeps the app's promise that deleting a folder
 never deletes tracks: its files move into the plain library first, then the
-directory (and its replica copy) is removed. **Removing the sync path** in
-Settings keeps everything too — synced items become regular local tracks and
-the folder's files are untouched. Playable types:
+directory (and its replica copy) is removed. **Removing a sync folder** in
+Settings, though, removes its synced content: the library only mirrors
+folders it's still connected to, so that root's tracks and folders leave the
+library and its local store is deleted — the sync folder's own files are
+never touched. Playable types:
 `m4a`/`mp3`/`aac`/`wav`/`aiff` audio and `mp4`/`mov`/`m4v` video; hidden
 files and folders are ignored. The trade-off of the copy model is deliberate:
 each synced file exists twice (app copy + provider copy) — that's what makes

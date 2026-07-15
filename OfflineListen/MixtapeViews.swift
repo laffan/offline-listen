@@ -68,15 +68,29 @@ enum MixtapeCoverLoader {
 
 /// The cover image cropped non-destructively: it aspect-fills the frame, then
 /// `zoom`/`offsetX`/`offsetY` (from one of the style's two crops) choose which
-/// part shows. Without an image, a quiet gradient stands in.
+/// part shows. Offsets are clamped at render to the image's actual overflow,
+/// so a pan can reach — but never pass — the image's edges in any frame.
+/// Without an image, a quiet gradient stands in.
 struct MixtapeBackground: View {
     let image: UIImage?
     let zoom: Double
     let offsetX: Double
     let offsetY: Double
 
+    /// How far (as a fraction of the frame's size) the aspect-filled, zoomed
+    /// image can pan in each axis before its edge enters the frame. Zero when
+    /// there's no overflow (or no image).
+    static func offsetLimits(image: UIImage?, zoom: Double, frame: CGSize) -> CGSize {
+        guard let size = image?.size, size.width > 0, size.height > 0,
+              frame.width > 0, frame.height > 0 else { return .zero }
+        let scale = max(frame.width / size.width, frame.height / size.height) * max(zoom, 1)
+        return CGSize(width: max(0, size.width * scale - frame.width) / 2 / frame.width,
+                      height: max(0, size.height * scale - frame.height) / 2 / frame.height)
+    }
+
     var body: some View {
         GeometryReader { geo in
+            let limits = Self.offsetLimits(image: image, zoom: zoom, frame: geo.size)
             ZStack {
                 if let image {
                     Image(uiImage: image)
@@ -84,8 +98,8 @@ struct MixtapeBackground: View {
                         .scaledToFill()
                         .frame(width: geo.size.width, height: geo.size.height)
                         .scaleEffect(max(zoom, 1))
-                        .offset(x: offsetX * geo.size.width,
-                                y: offsetY * geo.size.height)
+                        .offset(x: min(max(offsetX, -limits.width), limits.width) * geo.size.width,
+                                y: min(max(offsetY, -limits.height), limits.height) * geo.size.height)
                 } else {
                     LinearGradient(colors: [Color.accentColor.opacity(0.55), Color.indigo.opacity(0.7)],
                                    startPoint: .topLeading, endPoint: .bottomTrailing)
@@ -402,39 +416,52 @@ struct MixtapeCoverEditor: View {
     // MARK: Previews
 
     private var headerPreview: some View {
-        MixtapeHeaderContent(title: folder.name, style: style, image: previewImage, height: 170)
-            .contentShape(Rectangle())
-            .gesture(panGesture(offsetX: $style.offsetX, offsetY: $style.offsetY))
-            .simultaneousGesture(
-                MagnificationGesture()
-                    .onChanged { value in
-                        let base = zoomBase ?? style.zoom
-                        zoomBase = base
-                        style.zoom = min(max(base * value, 1), 4)
-                    }
-                    .onEnded { _ in zoomBase = nil }
-            )
+        GeometryReader { geo in
+            MixtapeHeaderContent(title: folder.name, style: style, image: previewImage,
+                                 height: geo.size.height)
+                .contentShape(Rectangle())
+                .gesture(panGesture(offsetX: $style.offsetX, offsetY: $style.offsetY,
+                                    zoom: style.zoom, frame: geo.size))
+                .simultaneousGesture(
+                    MagnificationGesture()
+                        .onChanged { value in
+                            let base = zoomBase ?? style.zoom
+                            zoomBase = base
+                            style.zoom = min(max(base * value, 1), 4)
+                        }
+                        .onEnded { _ in zoomBase = nil }
+                )
+        }
+        .frame(height: 170)
     }
 
     private var rowPreview: some View {
-        MixtapeRowContent(title: folder.name, style: style, image: previewImage,
-                          count: library.tracks(in: folder.id).count,
-                          showsSync: folder.isSynced)
-            .contentShape(Rectangle())
-            .gesture(panGesture(offsetX: rowOffsetXBinding, offsetY: rowOffsetYBinding))
+        GeometryReader { geo in
+            MixtapeRowContent(title: folder.name, style: style, image: previewImage,
+                              count: library.tracks(in: folder.id).count,
+                              showsSync: folder.isSynced)
+                .contentShape(Rectangle())
+                .gesture(panGesture(offsetX: rowOffsetXBinding, offsetY: rowOffsetYBinding,
+                                    zoom: style.rowZoom, frame: geo.size))
+        }
+        .frame(height: 52)
     }
 
     /// Drag-to-pan over a preview: translation maps to the crop's normalized
-    /// offsets against that preview's own size.
-    private func panGesture(offsetX: Binding<Double>, offsetY: Binding<Double>) -> some Gesture {
+    /// offsets against that preview's own measured size, clamped to the
+    /// image's actual overflow in that frame — a short row can pan much
+    /// further than ±1 frame-height, all the way to the image's edges.
+    private func panGesture(offsetX: Binding<Double>, offsetY: Binding<Double>,
+                            zoom: Double, frame: CGSize) -> some Gesture {
         DragGesture(coordinateSpace: .local)
             .onChanged { value in
                 let base = panBase ?? CGSize(width: offsetX.wrappedValue, height: offsetY.wrappedValue)
                 panBase = base
-                // Normalise against the gesture's own travel bounds; the row
-                // is short, so vertical pans move it proportionally faster.
-                offsetX.wrappedValue = clamp(base.width + value.translation.width / 320)
-                offsetY.wrappedValue = clamp(base.height + value.translation.height / 120)
+                let limits = MixtapeBackground.offsetLimits(image: previewImage, zoom: zoom, frame: frame)
+                offsetX.wrappedValue = clamp(base.width + value.translation.width / max(frame.width, 1),
+                                             to: limits.width)
+                offsetY.wrappedValue = clamp(base.height + value.translation.height / max(frame.height, 1),
+                                             to: limits.height)
             }
             .onEnded { _ in panBase = nil }
     }
@@ -501,8 +528,8 @@ struct MixtapeCoverEditor: View {
         )
     }
 
-    private func clamp(_ value: Double) -> Double {
-        min(max(value, -1), 1)
+    private func clamp(_ value: Double, to limit: Double) -> Double {
+        min(max(value, -limit), limit)
     }
 
     /// Loads the picked photo, downscales it to a sane size, and re-encodes it

@@ -1,15 +1,15 @@
 import Foundation
 
-/// A file's identity in the sync folder — enough to detect changes between
+/// A file's identity in a sync folder — enough to detect changes between
 /// scans without hashing content.
 struct SyncStamp: Codable, Equatable {
     var size: Int64
     var mtime: TimeInterval
 }
 
-/// What a scan of the sync folder (the replica) found: every playable file and
+/// What a scan of one sync folder (a replica) found: every playable file and
 /// every directory, with stamps for change detection and any `.mixtapedata`
-/// style. Paths are relative to the sync root.
+/// style. Paths are relative to that sync root.
 struct SyncSnapshot {
     struct File {
         let relativePath: String
@@ -30,14 +30,14 @@ struct SyncSnapshot {
     var directories: [Directory] = []
 }
 
-/// A write-through operation queued for the replica. In-app changes apply to
+/// A write-through operation queued for a replica. In-app changes apply to
 /// the app-local sync store immediately and enqueue one of these; the exporter
 /// drains the journal with coordinated file operations, retrying later if the
 /// sync folder is unreachable. Ops are self-healing: one whose precondition
 /// has been superseded (source vanished, target already gone) drops out
 /// instead of blocking the queue.
 enum SyncOp: Codable, Equatable {
-    /// Copy `Synced/rel` from the local store into the replica at `rel`.
+    /// Copy the file at `rel` from the root's local store into its replica.
     case copyOut(rel: String)
     /// Remove the file or directory at `rel` from the replica.
     case removeRemote(rel: String)
@@ -51,165 +51,270 @@ enum SyncOp: Codable, Equatable {
     case removeMixtapeData(dir: String)
 }
 
-/// Owns the sync folder: persists its security-scoped bookmark, and keeps the
-/// app-local sync store (`Documents/Synced/`) and the user's folder (the
-/// *replica*) mirroring each other.
+/// A journaled op tagged with the sync root it applies to.
+struct PendingSyncOp: Codable, Equatable {
+    let rootID: UUID
+    let op: SyncOp
+}
+
+/// A configured sync folder as persisted: its id, display name, and
+/// security-scoped bookmark.
+struct SyncRootRecord: Codable, Identifiable {
+    let id: UUID
+    var name: String
+    var bookmark: Data
+}
+
+/// A configured sync folder as the UI sees it. `url` is nil while the
+/// bookmark can't be resolved (provider offline, folder deleted).
+struct SyncRootState: Identifiable, Equatable {
+    let id: UUID
+    let name: String
+    let url: URL?
+}
+
+/// Owns the sync folders: persists their security-scoped bookmarks, and keeps
+/// each folder (a *replica*) mirroring its app-local sync store
+/// (`Documents/Synced/<root-id>/`).
 ///
-/// The library always plays from the local store — cloud providers (Dropbox,
+/// The library always plays from the local stores — cloud providers (Dropbox,
 /// iCloud Drive, …) serve placeholder files that must be downloaded through
-/// file coordination before they're readable, and can evict them again, so
-/// the replica is never used directly. Instead:
+/// file coordination before they're readable, and can evict them again, so a
+/// replica is never used directly. Per root:
 ///
 /// - The **importer** scans the replica, compares stamps against a persisted
 ///   manifest, and copies new/changed files in (a coordinated read, which is
 ///   what makes the provider download a placeholder). Files that vanished
 ///   from the replica leave the library. Tracks appear as their copies land.
-/// - The **exporter** drains a persisted journal of `SyncOp`s produced by
-///   in-app changes (Sync to Local, moves, renames, deletes, mixtape edits),
-///   so a change made while the folder is unreachable is retried later
-///   instead of failing.
+/// - The **exporter** drains a persisted journal of ops produced by in-app
+///   changes (Sync to Local, moves, renames, deletes, mixtape edits), so a
+///   change made while the folder is unreachable is retried later instead of
+///   failing.
+///
+/// Removing a sync folder removes its synced content from the library (the
+/// folder's own files are untouched) — the library only mirrors folders it's
+/// still connected to.
 @MainActor
 final class LocalSyncStore: ObservableObject {
-    /// The resolved sync root, nil until a folder is chosen (or while its
-    /// bookmark can't be resolved — e.g. the provider is unavailable).
-    @Published private(set) var rootURL: URL?
+    /// Every configured sync folder, resolved or not, in the order added.
+    @Published private(set) var roots: [SyncRootState] = []
     /// True while a sync pass (export drain + scan + import) is running.
     @Published private(set) var isSyncing = false
-    /// Journal depth — in-app changes not yet copied to the replica.
+    /// Journal depth — in-app changes not yet copied to their replicas.
     @Published private(set) var pendingOpCount = 0
 
     private let library: LibraryStore
-    private static let bookmarkKey = "localSyncBookmark"
+    private var records: [SyncRootRecord] = []
+    private var resolvedURLs: [UUID: URL] = [:]
+
+    private static let legacyBookmarkKey = "localSyncBookmark"
+    private static var rootsURL: URL { AppPaths.documents.appendingPathComponent("sync-roots.json") }
     private static var manifestURL: URL { AppPaths.documents.appendingPathComponent("sync-manifest.json") }
     private static var pendingOpsURL: URL { AppPaths.documents.appendingPathComponent("sync-pending.json") }
 
-    /// The last reconciled remote state: relative path → stamp, including
-    /// `.mixtapedata` style/cover entries. What lets a scan tell "changed
-    /// remotely" from "already seen".
-    private var manifest: [String: SyncStamp] = [:]
-    private var pendingOps: [SyncOp] = []
+    /// Per root, the last reconciled remote state: relative path → stamp,
+    /// including `.mixtapedata` style/cover entries. What lets a scan tell
+    /// "changed remotely" from "already seen".
+    private var manifest: [UUID: [String: SyncStamp]] = [:]
+    private var pendingOps: [PendingSyncOp] = []
 
-    /// One kqueue-backed source per directory in the replica tree. Useful for
-    /// local (On My iPhone) folders; cloud providers don't reliably signal, so
-    /// foreground rescans carry those.
+    /// One kqueue-backed source per directory across every replica tree.
+    /// Useful for local (On My iPhone) folders; cloud providers don't reliably
+    /// signal, so foreground rescans carry those.
     private var monitors: [DispatchSourceFileSystemObject] = []
     private var pendingRescan: Task<Void, Never>?
     private var needsAnotherPass = false
 
     init(library: LibraryStore) {
         self.library = library
-        loadJournal()
-        resolveBookmark()
-        library.syncExporter = { [weak self] op in self?.enqueue(op) }
-        if rootURL != nil {
+        loadState()
+        migrateLegacyRootIfNeeded()
+        resolveAll()
+        library.syncExporter = { [weak self] op, rootID in self?.enqueue(op, rootID: rootID) }
+        if !resolvedURLs.isEmpty {
             rescan()
         }
     }
 
-    var isConfigured: Bool { rootURL != nil }
+    var isConfigured: Bool { !resolvedURLs.isEmpty }
+
+    /// The roots whose folders are currently reachable — the ones "Sync to
+    /// Local" can target.
+    var resolvedRoots: [SyncRootState] { roots.filter { $0.url != nil } }
 
     // MARK: - Configuration
 
-    /// Adopts a folder freshly picked in Settings. The caller must have opened
-    /// its security scope (fileImporter grants it) so a bookmark can be made.
-    /// Choosing a different folder first releases the current one (synced
-    /// items stay in the library as regular local tracks).
-    func setRoot(_ url: URL) {
-        if rootURL != nil || UserDefaults.standard.data(forKey: Self.bookmarkKey) != nil {
-            detachCurrentRoot()
-        }
+    /// Adds a folder freshly picked in Settings as a new sync root. The caller
+    /// must have opened its security scope (fileImporter grants it) so a
+    /// bookmark can be made.
+    func addRoot(_ url: URL) {
         let accessing = url.startAccessingSecurityScopedResource()
         defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+        // Already configured? (Compare resolved paths.)
+        let path = url.standardizedFileURL.path
+        if resolvedURLs.values.contains(where: { $0.standardizedFileURL.path == path }) {
+            appLog("\"\(url.lastPathComponent)\" is already a sync folder.",
+                   level: .warning, category: "Sync")
+            return
+        }
+        let bookmark: Data
         do {
-            let bookmark = try url.bookmarkData()
-            UserDefaults.standard.set(bookmark, forKey: Self.bookmarkKey)
+            bookmark = try url.bookmarkData()
         } catch {
             appLog("Couldn't bookmark the sync folder: \(error.localizedDescription)",
                    level: .error, category: "Sync")
             return
         }
-        // Re-resolve from the bookmark so the retained URL carries its own
-        // security scope for the rest of the session.
-        resolveBookmark()
-        if rootURL != nil {
-            appLog("Local sync folder set to \"\(url.lastPathComponent)\".",
-                   level: .success, category: "Sync")
-            rescan()
+        let record = SyncRootRecord(id: UUID(), name: url.lastPathComponent, bookmark: bookmark)
+        records.append(record)
+        persistRecords()
+        resolveAll()
+        appLog("Added sync folder \"\(record.name)\".", level: .success, category: "Sync")
+        rescan()
+    }
+
+    /// Removes a sync root. Its synced tracks and folders leave the library
+    /// and its local store is deleted; the folder's own files are untouched.
+    func removeRoot(_ id: UUID) {
+        guard let index = records.firstIndex(where: { $0.id == id }) else { return }
+        let name = records[index].name
+        records.remove(at: index)
+        persistRecords()
+        if let url = resolvedURLs[id] {
+            url.stopAccessingSecurityScopedResource()
         }
-    }
-
-    /// Un-configures local sync. Synced items stay in the library as regular
-    /// local tracks; the replica's files are untouched.
-    func clearRoot() {
-        detachCurrentRoot()
-        appLog("Local sync folder removed — synced items kept as local tracks.",
-               category: "Sync")
-    }
-
-    private func detachCurrentRoot() {
-        UserDefaults.standard.removeObject(forKey: Self.bookmarkKey)
-        stopMonitoring()
-        pendingRescan?.cancel()
-        rootURL = nil
-        AppPaths.syncRoot = nil
-        manifest = [:]
-        pendingOps = []
-        pendingOpCount = 0
+        resolvedURLs[id] = nil
+        AppPaths.syncRootURLs[id] = nil
+        manifest[id] = nil
         persistManifest()
+        pendingOps.removeAll { $0.rootID == id }
         persistJournal()
-        library.unsyncEverything()
+        pendingOpCount = pendingOps.count
+        library.removeSynced(rootID: id)
+        try? FileManager.default.removeItem(at: AppPaths.syncLocalStore(for: id))
+        publishStates()
+        stopMonitoring()
+        appLog("Removed sync folder \"\(name)\" — its synced items left the library; the folder's files are untouched.",
+               category: "Sync")
+        if !resolvedURLs.isEmpty {
+            scheduleRescan()
+        }
     }
 
-    /// Resolves the persisted bookmark, opens its security scope for the
-    /// session, and publishes the root (also into `AppPaths.syncRoot` for
-    /// anything that needs to know sync is configured).
-    private func resolveBookmark() {
-        guard let data = UserDefaults.standard.data(forKey: Self.bookmarkKey) else {
-            rootURL = nil
-            AppPaths.syncRoot = nil
-            return
+    /// Resolves every persisted bookmark, opening each security scope for the
+    /// session, and publishes the results (also into `AppPaths.syncRootURLs`,
+    /// which gates the Sync to Local actions and resolves nothing else — the
+    /// library plays from the local stores).
+    private func resolveAll() {
+        var map: [UUID: URL] = [:]
+        var refreshed = false
+        for index in records.indices {
+            var stale = false
+            do {
+                let url = try URL(resolvingBookmarkData: records[index].bookmark,
+                                  bookmarkDataIsStale: &stale)
+                guard url.startAccessingSecurityScopedResource() else {
+                    throw CocoaError(.fileReadNoPermission)
+                }
+                if stale, let fresh = try? url.bookmarkData() {
+                    records[index].bookmark = fresh
+                    refreshed = true
+                }
+                map[records[index].id] = url
+            } catch {
+                // Leave the record in place — the folder may be temporarily
+                // unavailable. The library keeps playing its local copies;
+                // only this root's mirroring pauses.
+                appLog("Couldn't resolve sync folder \"\(records[index].name)\": \(error.localizedDescription)",
+                       level: .warning, category: "Sync")
+            }
         }
+        if refreshed { persistRecords() }
+        resolvedURLs = map
+        AppPaths.syncRootURLs = map
+        publishStates()
+    }
+
+    private func publishStates() {
+        roots = records.map { SyncRootState(id: $0.id, name: $0.name, url: resolvedURLs[$0.id]) }
+    }
+
+    // MARK: - Legacy migration (single sync folder → roots list)
+
+    /// Adopts a pre-multi-root configuration: the single legacy bookmark
+    /// becomes the first root, the flat local store moves under the new
+    /// root-id directory, the old manifest/journal formats are re-keyed, and
+    /// legacy synced items (no root id) are assigned to it.
+    private func migrateLegacyRootIfNeeded() {
+        guard let bookmark = UserDefaults.standard.data(forKey: Self.legacyBookmarkKey) else { return }
+        UserDefaults.standard.removeObject(forKey: Self.legacyBookmarkKey)
+        var name = "Sync Folder"
         var stale = false
-        do {
-            let url = try URL(resolvingBookmarkData: data, bookmarkDataIsStale: &stale)
-            guard url.startAccessingSecurityScopedResource() else {
-                throw CocoaError(.fileReadNoPermission)
-            }
-            if stale, let refreshed = try? url.bookmarkData() {
-                UserDefaults.standard.set(refreshed, forKey: Self.bookmarkKey)
-            }
-            rootURL = url
-            AppPaths.syncRoot = url
-        } catch {
-            // Leave the bookmark in place — the folder may be temporarily
-            // unavailable. The library keeps playing its local copies; only
-            // the mirroring pauses.
-            rootURL = nil
-            AppPaths.syncRoot = nil
-            appLog("Couldn't resolve the sync folder bookmark: \(error.localizedDescription)",
-                   level: .warning, category: "Sync")
+        if let url = try? URL(resolvingBookmarkData: bookmark, bookmarkDataIsStale: &stale) {
+            name = url.lastPathComponent
         }
+        let record = SyncRootRecord(id: UUID(), name: name, bookmark: bookmark)
+        records.append(record)
+        persistRecords()
+
+        // Move the flat local store's contents under the new root directory.
+        let fm = FileManager.default
+        let parent = AppPaths.syncLocalStore
+        let target = AppPaths.syncLocalStore(for: record.id)
+        if let entries = try? fm.contentsOfDirectory(at: parent, includingPropertiesForKeys: nil) {
+            for entry in entries where entry.lastPathComponent != record.id.uuidString {
+                try? fm.moveItem(at: entry,
+                                 to: target.appendingPathComponent(entry.lastPathComponent))
+            }
+        }
+
+        // Re-key the old single-root manifest, if one decoded as legacy.
+        if let data = try? Data(contentsOf: Self.manifestURL),
+           let legacy = try? JSONDecoder().decode([String: SyncStamp].self, from: data) {
+            manifest[record.id] = legacy
+            persistManifest()
+        }
+        // Wrap old-format journal entries with the migrated root's id.
+        if let data = try? Data(contentsOf: Self.pendingOpsURL),
+           let legacy = try? JSONDecoder().decode([SyncOp].self, from: data), !legacy.isEmpty {
+            pendingOps = legacy.map { PendingSyncOp(rootID: record.id, op: $0) }
+            pendingOpCount = pendingOps.count
+            persistJournal()
+        }
+
+        library.assignLegacyRoot(record.id)
+        appLog("Migrated sync folder \"\(name)\" to the multi-folder format.", category: "Sync")
     }
 
     // MARK: - Journal
 
     /// Queues a replica operation from an in-app change and kicks a sync pass.
-    func enqueue(_ op: SyncOp) {
-        pendingOps.append(op)
+    func enqueue(_ op: SyncOp, rootID: UUID) {
+        pendingOps.append(PendingSyncOp(rootID: rootID, op: op))
         pendingOpCount = pendingOps.count
         persistJournal()
         scheduleRescan()
     }
 
-    private func loadJournal() {
+    private func loadState() {
+        if let data = try? Data(contentsOf: Self.rootsURL),
+           let decoded = try? JSONDecoder().decode([SyncRootRecord].self, from: data) {
+            records = decoded
+        }
         if let data = try? Data(contentsOf: Self.manifestURL),
-           let decoded = try? JSONDecoder().decode([String: SyncStamp].self, from: data) {
+           let decoded = try? JSONDecoder().decode([UUID: [String: SyncStamp]].self, from: data) {
             manifest = decoded
         }
         if let data = try? Data(contentsOf: Self.pendingOpsURL),
-           let decoded = try? JSONDecoder().decode([SyncOp].self, from: data) {
+           let decoded = try? JSONDecoder().decode([PendingSyncOp].self, from: data) {
             pendingOps = decoded
             pendingOpCount = decoded.count
+        }
+    }
+
+    private func persistRecords() {
+        if let data = try? JSONEncoder().encode(records) {
+            try? data.write(to: Self.rootsURL, options: .atomic)
         }
     }
 
@@ -238,36 +343,40 @@ final class LocalSyncStore: ObservableObject {
         }
     }
 
-    /// An immediate pass (used at launch and after picking a folder).
+    /// An immediate pass (used at launch and after adding a folder).
     func rescan() {
         Task { [weak self] in await self?.performSync() }
     }
 
-    /// One full pass: drain the export journal, then scan the replica and
-    /// reconcile the library against it. Reconciliation is skipped while
-    /// exports are still pending — the replica is stale until they land, and
-    /// reconciling against it could undo the very changes waiting to be
-    /// written.
+    /// One full pass over every reachable root: drain its journal, then scan
+    /// its replica and reconcile the library against it. A root's
+    /// reconciliation is skipped while its exports are still pending — the
+    /// replica is stale until they land, and reconciling against it could
+    /// undo the very changes waiting to be written.
     private func performSync() async {
-        guard let root = rootURL else { return }
         if isSyncing {
             needsAnotherPass = true
             return
         }
         isSyncing = true
 
-        await drainJournal(root: root)
-
-        if pendingOps.isEmpty {
+        var monitorTargets: [(root: URL, dirs: [String])] = []
+        for state in roots {
+            guard let rootURL = state.url else { continue }
+            await drainJournal(rootID: state.id, rootURL: rootURL)
+            if pendingOps.contains(where: { $0.rootID == state.id }) {
+                appLog("Changes for \"\(state.name)\" couldn't reach the folder — will retry.",
+                       level: .warning, category: "Sync")
+                continue
+            }
             let snapshot = await Task.detached(priority: .utility) {
-                Self.scan(root: root)
+                Self.scan(root: rootURL)
             }.value
-            await reconcile(snapshot, root: root)
-            startMonitoring(root: root, directories: snapshot.directories.map { $0.relativePath })
-        } else {
-            appLog("\(pendingOps.count) sync change(s) couldn't reach the folder — will retry.",
-                   level: .warning, category: "Sync")
+            await reconcile(snapshot, rootID: state.id, rootURL: rootURL)
+            monitorTargets.append((rootURL, snapshot.directories.map { $0.relativePath }))
         }
+        startMonitoring(targets: monitorTargets)
+        pendingOpCount = pendingOps.count
 
         isSyncing = false
         if needsAnotherPass {
@@ -278,22 +387,24 @@ final class LocalSyncStore: ObservableObject {
 
     // MARK: - Exporter
 
-    /// Runs journaled ops in order. Stops at the first hard failure (usually
-    /// the folder being unreachable) to preserve causal order; superseded ops
-    /// drop out.
-    private func drainJournal(root: URL) async {
-        while let op = pendingOps.first {
-            let succeeded = await execute(op, root: root)
+    /// Runs one root's journaled ops in order. Stops at the first hard
+    /// failure (usually the folder being unreachable) to preserve causal
+    /// order; superseded ops drop out. Ops only ever append while this runs,
+    /// so indices into the array stay valid across awaits.
+    private func drainJournal(rootID: UUID, rootURL: URL) async {
+        while let index = pendingOps.firstIndex(where: { $0.rootID == rootID }) {
+            let entry = pendingOps[index]
+            let succeeded = await execute(entry.op, rootID: rootID, root: rootURL)
             guard succeeded else { break }
-            pendingOps.removeFirst()
+            pendingOps.remove(at: index)
             persistJournal()
         }
         pendingOpCount = pendingOps.count
     }
 
     /// Returns true when the op finished or is obsolete; false to retry later.
-    private func execute(_ op: SyncOp, root: URL) async -> Bool {
-        let local = AppPaths.syncLocalStore
+    private func execute(_ op: SyncOp, rootID: UUID, root: URL) async -> Bool {
+        let local = AppPaths.syncLocalStore(for: rootID)
         switch op {
         case .copyOut(let rel):
             let src = local.appendingPathComponent(rel)
@@ -352,23 +463,29 @@ final class LocalSyncStore: ObservableObject {
     private func styleKey(_ dir: String) -> String { "\(dir)/\(AppPaths.mixtapeDataDirName)/style.json" }
     private func coverKey(_ dir: String) -> String { "\(dir)/\(AppPaths.mixtapeDataDirName)/cover.jpg" }
 
-    /// Reconciles the library against a replica scan: folders first, then
-    /// removals, then copy-ins (each track appears as its file lands), then
-    /// mixtape covers — and finally the manifest records what was seen.
-    private func reconcile(_ snapshot: SyncSnapshot, root: URL) async {
+    /// Reconciles the library against one root's replica scan: folders first,
+    /// then removals, then copy-ins (each track appears as its file lands),
+    /// then mixtape covers — and finally the root's manifest records what was
+    /// seen.
+    private func reconcile(_ snapshot: SyncSnapshot, rootID: UUID, rootURL: URL) async {
+        let rootManifest = manifest[rootID] ?? [:]
+        let localStore = AppPaths.syncLocalStore(for: rootID)
+
         // Mixtape styles are adopted only when .mixtapedata actually changed
         // remotely (stamp vs manifest) — never merely because it differs from
         // the library, which would undo local edits.
         var adoptStyle: Set<String> = []
-        for dir in snapshot.directories where manifest[styleKey(dir.relativePath)] != dir.styleStamp {
+        for dir in snapshot.directories where rootManifest[styleKey(dir.relativePath)] != dir.styleStamp {
             adoptStyle.insert(dir.relativePath)
         }
-        let folderIDs = library.reconcileSyncedFolders(snapshot.directories, adoptStyleFor: adoptStyle)
+        let folderIDs = library.reconcileSyncedFolders(snapshot.directories,
+                                                       adoptStyleFor: adoptStyle,
+                                                       rootID: rootID)
 
         // Files that vanished from the replica leave the library (and the
         // local store).
         let remotePaths = Set(snapshot.files.map { $0.relativePath })
-        library.removeSyncedTracks(notIn: remotePaths)
+        library.removeSyncedTracks(notIn: remotePaths, rootID: rootID)
 
         // What needs copying in: unknown files, changed files, or known files
         // whose local copy is missing (e.g. a fresh install, or an import that
@@ -376,10 +493,10 @@ final class LocalSyncStore: ObservableObject {
         var imports: [SyncSnapshot.File] = []
         var newManifest: [String: SyncStamp] = [:]
         for file in snapshot.files {
-            let localPath = AppPaths.syncLocalStore.appendingPathComponent(file.relativePath).path
-            if manifest[file.relativePath] == file.stamp,
+            let localPath = localStore.appendingPathComponent(file.relativePath).path
+            if rootManifest[file.relativePath] == file.stamp,
                FileManager.default.fileExists(atPath: localPath),
-               library.hasSyncedTrack(at: file.relativePath) {
+               library.hasSyncedTrack(at: file.relativePath, rootID: rootID) {
                 newManifest[file.relativePath] = file.stamp
             } else {
                 imports.append(file)
@@ -391,8 +508,8 @@ final class LocalSyncStore: ObservableObject {
         }
         var failures = 0
         for (index, file) in imports.enumerated() {
-            let src = root.appendingPathComponent(file.relativePath)
-            let dst = AppPaths.syncLocalStore.appendingPathComponent(file.relativePath)
+            let src = rootURL.appendingPathComponent(file.relativePath)
+            let dst = localStore.appendingPathComponent(file.relativePath)
             let ok = await Task.detached(priority: .utility) {
                 Self.coordinatedCopy(from: src, to: dst)
             }.value
@@ -400,7 +517,8 @@ final class LocalSyncStore: ObservableObject {
                 newManifest[file.relativePath] = file.stamp
                 let dirPath = (file.relativePath as NSString).deletingLastPathComponent
                 library.ensureSyncedTrack(at: file.relativePath,
-                                          folderID: dirPath.isEmpty ? nil : folderIDs[dirPath])
+                                          folderID: dirPath.isEmpty ? nil : folderIDs[dirPath],
+                                          rootID: rootID)
                 if imports.count > 3 {
                     appLog("Imported \(index + 1)/\(imports.count): \((file.relativePath as NSString).lastPathComponent)",
                            level: .debug, category: "Sync")
@@ -419,11 +537,11 @@ final class LocalSyncStore: ObservableObject {
             let key = coverKey(dir.relativePath)
             guard let stamp = dir.coverStamp else { continue }
             guard let folderID = folderIDs[dir.relativePath] else { continue }
-            if manifest[key] == stamp {
+            if rootManifest[key] == stamp {
                 newManifest[key] = stamp
                 continue
             }
-            let src = root.appendingPathComponent(dir.relativePath, isDirectory: true)
+            let src = rootURL.appendingPathComponent(dir.relativePath, isDirectory: true)
                 .appendingPathComponent(AppPaths.mixtapeDataDirName, isDirectory: true)
                 .appendingPathComponent("cover.jpg")
             let dst = AppPaths.mixtapeCovers.appendingPathComponent("\(folderID.uuidString).jpg")
@@ -438,21 +556,21 @@ final class LocalSyncStore: ObservableObject {
             if let stamp = dir.styleStamp { newManifest[styleKey(dir.relativePath)] = stamp }
         }
 
-        manifest = newManifest
+        manifest[rootID] = newManifest
         persistManifest()
 
         // Sweep local-store leftovers (files/dirs whose remote counterpart is
-        // gone). Safe because reconcile only runs with an empty journal.
+        // gone). Safe because reconcile only runs with this root's journal
+        // empty.
         let dirPaths = Set(snapshot.directories.map { $0.relativePath })
-        let localRoot = AppPaths.syncLocalStore
         await Task.detached(priority: .utility) {
-            Self.sweepLocalStore(root: localRoot, validFiles: remotePaths, validDirs: dirPaths)
+            Self.sweepLocalStore(root: localStore, validFiles: remotePaths, validDirs: dirPaths)
         }.value
     }
 
     // MARK: - Scanning (replica)
 
-    /// Walks the replica tree off the main actor (a cloud-backed directory can
+    /// Walks a replica tree off the main actor (a cloud-backed directory can
     /// block on the network while listing). Hidden entries are skipped, except
     /// that `.mixtapedata` marks its parent as a mixtape and contributes its
     /// style + stamps.
@@ -618,8 +736,8 @@ final class LocalSyncStore: ObservableObject {
         return written && coordinationError == nil
     }
 
-    /// Deletes anything in the local store whose remote counterpart no longer
-    /// exists, bottom-up, then prunes empty directories.
+    /// Deletes anything in a root's local store whose remote counterpart no
+    /// longer exists.
     nonisolated private static func sweepLocalStore(root: URL, validFiles: Set<String>, validDirs: Set<String>) {
         let fm = FileManager.default
         guard let enumerator = fm.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey]) else { return }
@@ -643,27 +761,31 @@ final class LocalSyncStore: ObservableObject {
 
     // MARK: - Monitoring
 
-    /// Watches the replica's root and every subdirectory for writes and
+    /// Watches every replica's root and subdirectories for writes and
     /// schedules a pass on any event.
-    private func startMonitoring(root: URL, directories: [String]) {
+    private func startMonitoring(targets: [(root: URL, dirs: [String])]) {
         stopMonitoring()
-        var urls = [root]
-        urls.append(contentsOf: directories.map { root.appendingPathComponent($0, isDirectory: true) })
-        for url in urls {
-            let fd = open(url.path, O_EVTONLY)
-            guard fd >= 0 else { continue }
-            let source = DispatchSource.makeFileSystemObjectSource(
-                fileDescriptor: fd,
-                eventMask: [.write, .delete, .rename],
-                queue: .main)
-            source.setEventHandler { [weak self] in
-                self?.scheduleRescan()
+        for target in targets {
+            var urls = [target.root]
+            urls.append(contentsOf: target.dirs.map {
+                target.root.appendingPathComponent($0, isDirectory: true)
+            })
+            for url in urls {
+                let fd = open(url.path, O_EVTONLY)
+                guard fd >= 0 else { continue }
+                let source = DispatchSource.makeFileSystemObjectSource(
+                    fileDescriptor: fd,
+                    eventMask: [.write, .delete, .rename],
+                    queue: .main)
+                source.setEventHandler { [weak self] in
+                    self?.scheduleRescan()
+                }
+                source.setCancelHandler {
+                    close(fd)
+                }
+                source.resume()
+                monitors.append(source)
             }
-            source.setCancelHandler {
-                close(fd)
-            }
-            source.resume()
-            monitors.append(source)
         }
     }
 

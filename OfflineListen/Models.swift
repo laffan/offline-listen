@@ -16,20 +16,28 @@ enum AppPaths {
         documents.appendingPathComponent("folders.json")
     }
 
-    /// The user-chosen sync folder, resolved from its security-scoped bookmark
-    /// by `LocalSyncStore` at launch (nil until one is configured or while the
-    /// bookmark can't be resolved). This is the *replica*: the app never plays
-    /// from it — synced files are copied in and out of `syncLocalStore`, which
-    /// is what the library actually uses. Cloud providers (Dropbox, iCloud
-    /// Drive) serve placeholders and can evict files, so only a local copy is
-    /// dependable.
-    static var syncRoot: URL?
+    /// The user-chosen sync folders, resolved from their security-scoped
+    /// bookmarks by `LocalSyncStore` at launch, keyed by each root's id.
+    /// These are *replicas*: the app never plays from them — synced files are
+    /// copied in and out of the per-root local stores, which is what the
+    /// library actually uses. Cloud providers (Dropbox, iCloud Drive) serve
+    /// placeholders and can evict files, so only a local copy is dependable.
+    /// (An unresolvable root — provider offline — is simply absent here.)
+    static var syncRootURLs: [UUID: URL] = [:]
 
-    /// The app-local home of synced files: `Documents/Synced/`, mirroring the
-    /// sync folder's directory structure. Synced tracks play from here —
-    /// always materialized, always offline.
+    /// The app-local home of synced files: `Documents/Synced/`, with one
+    /// subdirectory per sync root (named by its id), each mirroring that sync
+    /// folder's directory structure. Synced tracks play from here — always
+    /// materialized, always offline.
     static var syncLocalStore: URL {
         let url = documents.appendingPathComponent("Synced", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    /// The local store for one sync root.
+    static func syncLocalStore(for rootID: UUID) -> URL {
+        let url = syncLocalStore.appendingPathComponent(rootID.uuidString, isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
@@ -276,7 +284,9 @@ struct MixtapeStyle: Codable, Hashable {
     /// Tape colour as "#RRGGBB", nil for masking-tape white.
     var tapeColorHex: String?
     /// Header-banner crop: zoom applied on top of aspect-fill (1…4) and pan as
-    /// a fraction of the banner's size (-1…1 each).
+    /// a fraction of the banner's size (clamped at render to the image's
+    /// actual overflow, so a short banner can legitimately store values well
+    /// past ±1).
     var zoom: Double
     var offsetX: Double
     var offsetY: Double
@@ -341,8 +351,10 @@ struct Folder: Identifiable, Codable, Hashable {
     var isArchived: Bool
     /// The folder this folder lives in, or nil at the root of the library.
     var parentID: UUID?
-    /// True when the folder mirrors a directory inside the local sync folder.
+    /// True when the folder mirrors a directory inside a sync folder.
     var isSynced: Bool
+    /// Which sync root the folder belongs to (only while `isSynced`).
+    var syncRootID: UUID?
     /// Directory path relative to the sync root (only while `isSynced`).
     var syncedPath: String?
     /// True when the folder is a mixtape: its title draws over a cover-image
@@ -352,7 +364,7 @@ struct Folder: Identifiable, Codable, Hashable {
     var mixtape: MixtapeStyle
 
     init(id: UUID = UUID(), name: String, dateCreated: Date = Date(), isArchived: Bool = false,
-         parentID: UUID? = nil, isSynced: Bool = false, syncedPath: String? = nil,
+         parentID: UUID? = nil, isSynced: Bool = false, syncRootID: UUID? = nil, syncedPath: String? = nil,
          isMixtape: Bool = false, mixtape: MixtapeStyle = MixtapeStyle()) {
         self.id = id
         self.name = name
@@ -360,13 +372,14 @@ struct Folder: Identifiable, Codable, Hashable {
         self.isArchived = isArchived
         self.parentID = parentID
         self.isSynced = isSynced
+        self.syncRootID = syncRootID
         self.syncedPath = syncedPath
         self.isMixtape = isMixtape
         self.mixtape = mixtape
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, dateCreated, isArchived, parentID, isSynced, syncedPath, isMixtape, mixtape
+        case id, name, dateCreated, isArchived, parentID, isSynced, syncRootID, syncedPath, isMixtape, mixtape
     }
 
     // Custom decode so folders.json saved before newer fields existed still loads.
@@ -378,17 +391,19 @@ struct Folder: Identifiable, Codable, Hashable {
         isArchived = try c.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
         parentID = try c.decodeIfPresent(UUID.self, forKey: .parentID)
         isSynced = try c.decodeIfPresent(Bool.self, forKey: .isSynced) ?? false
+        syncRootID = try c.decodeIfPresent(UUID.self, forKey: .syncRootID)
         syncedPath = try c.decodeIfPresent(String.self, forKey: .syncedPath)
         isMixtape = try c.decodeIfPresent(Bool.self, forKey: .isMixtape) ?? false
         mixtape = try c.decodeIfPresent(MixtapeStyle.self, forKey: .mixtape) ?? MixtapeStyle()
     }
 
-    /// The synced folder's directory inside the app-local sync store
-    /// (`Documents/Synced/…`), nil while unsynced. The matching directory in
-    /// the replica (the user's sync folder) is maintained by the exporter.
+    /// The synced folder's directory inside its root's app-local sync store
+    /// (`Documents/Synced/<root-id>/…`), nil while unsynced. The matching
+    /// directory in the replica (the user's sync folder) is maintained by the
+    /// exporter.
     var syncedDirectoryURL: URL? {
-        guard isSynced, let path = syncedPath else { return nil }
-        return AppPaths.syncLocalStore.appendingPathComponent(path, isDirectory: true)
+        guard isSynced, let rootID = syncRootID, let path = syncedPath else { return nil }
+        return AppPaths.syncLocalStore(for: rootID).appendingPathComponent(path, isDirectory: true)
     }
 
     /// Where this mixtape's cover image lives. Always app-local; a synced
@@ -430,11 +445,14 @@ struct Track: Identifiable, Codable, Hashable {
     /// listening. The phone is the source of truth; the "Watch" virtual folder
     /// lists every track where this is set (see `LibraryStore.watchTracks`).
     var sentToWatch: Bool
-    /// True when the track is mirrored to the sync folder. Its file lives in
-    /// the app-local sync store (`Documents/Synced/…`) and `fileName` is a
-    /// path relative to that store (it may contain directory components); the
-    /// same relative path names its exported copy in the replica.
+    /// True when the track is mirrored to a sync folder. Its file lives in
+    /// that root's app-local sync store (`Documents/Synced/<root-id>/…`) and
+    /// `fileName` is a path relative to that store (it may contain directory
+    /// components); the same relative path names its exported copy in the
+    /// replica.
     var isSynced: Bool
+    /// Which sync root the track belongs to (only while `isSynced`).
+    var syncRootID: UUID?
 
     init(id: UUID = UUID(),
          title: String,
@@ -452,7 +470,8 @@ struct Track: Identifiable, Codable, Hashable {
          originalTitle: String? = nil,
          chapters: [Chapter] = [],
          sentToWatch: Bool = false,
-         isSynced: Bool = false) {
+         isSynced: Bool = false,
+         syncRootID: UUID? = nil) {
         self.id = id
         self.title = title
         self.artist = artist
@@ -470,10 +489,11 @@ struct Track: Identifiable, Codable, Hashable {
         self.chapters = chapters
         self.sentToWatch = sentToWatch
         self.isSynced = isSynced
+        self.syncRootID = syncRootID
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, artist, fileName, sourceURL, duration, dateAdded, isArchived, kind, lastPosition, isVideo, folderID, hasBeenPlayed, originalTitle, chapters, sentToWatch, isSynced
+        case id, title, artist, fileName, sourceURL, duration, dateAdded, isArchived, kind, lastPosition, isVideo, folderID, hasBeenPlayed, originalTitle, chapters, sentToWatch, isSynced, syncRootID
     }
 
     // Custom decode so libraries saved before these fields existed still load.
@@ -496,14 +516,16 @@ struct Track: Identifiable, Codable, Hashable {
         chapters = try c.decodeIfPresent([Chapter].self, forKey: .chapters) ?? []
         sentToWatch = try c.decodeIfPresent(Bool.self, forKey: .sentToWatch) ?? false
         isSynced = try c.decodeIfPresent(Bool.self, forKey: .isSynced) ?? false
+        syncRootID = try c.decodeIfPresent(UUID.self, forKey: .syncRootID)
     }
 
     /// Absolute on-disk location resolved at access time. A synced track lives
-    /// in the app-local sync store (`Documents/Synced/…`) — never in the
-    /// user's sync folder itself, whose files may be cloud placeholders.
+    /// in its root's app-local sync store (`Documents/Synced/<root-id>/…`) —
+    /// never in the user's sync folder itself, whose files may be cloud
+    /// placeholders.
     var fileURL: URL {
-        if isSynced {
-            return AppPaths.syncLocalStore.appendingPathComponent(fileName)
+        if isSynced, let rootID = syncRootID {
+            return AppPaths.syncLocalStore(for: rootID).appendingPathComponent(fileName)
         }
         return AppPaths.documents.appendingPathComponent(fileName)
     }

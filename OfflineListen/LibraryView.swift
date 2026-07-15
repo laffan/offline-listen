@@ -957,11 +957,9 @@ struct FolderContextMenu: View {
         } label: {
             Label("Send to Watch", systemImage: "applewatch")
         }
-        if localSync.isConfigured && !folder.isSynced {
-            Button {
-                library.syncToLocal(folder)
-            } label: {
-                Label("Sync to Local", systemImage: "arrow.triangle.2.circlepath")
+        if !folder.isSynced {
+            SyncToLocalMenu { rootID in
+                library.syncToLocal(folder, rootID: rootID)
             }
         }
         if folder.isMixtape {
@@ -981,21 +979,46 @@ struct FolderContextMenu: View {
     }
 }
 
-/// A context-menu button that moves a track's file into the local sync folder.
-/// Shows itself only when a sync folder is configured and the track isn't
-/// already synced. Safe to drop into any track's `contextMenu`.
+/// The "Sync to Local" context-menu entry, root-aware: with one reachable
+/// sync folder it's a plain button; with several it becomes a submenu naming
+/// each folder. Renders nothing while no sync folder is reachable.
+struct SyncToLocalMenu: View {
+    @EnvironmentObject private var localSync: LocalSyncStore
+
+    let action: (UUID) -> Void
+
+    var body: some View {
+        let roots = localSync.resolvedRoots
+        if roots.count == 1, let only = roots.first {
+            Button {
+                action(only.id)
+            } label: {
+                Label("Sync to Local", systemImage: "arrow.triangle.2.circlepath")
+            }
+        } else if roots.count > 1 {
+            Menu {
+                ForEach(roots) { root in
+                    Button(root.name) { action(root.id) }
+                }
+            } label: {
+                Label("Sync to Local", systemImage: "arrow.triangle.2.circlepath")
+            }
+        }
+    }
+}
+
+/// A context-menu entry that moves a track's file into a sync folder. Shows
+/// itself only when a sync folder is reachable and the track isn't already
+/// synced. Safe to drop into any track's `contextMenu`.
 struct SyncToLocalButton: View {
     @EnvironmentObject private var library: LibraryStore
-    @EnvironmentObject private var localSync: LocalSyncStore
 
     let track: Track
 
     var body: some View {
-        if localSync.isConfigured && !track.isSynced {
-            Button {
-                library.syncToLocal(track)
-            } label: {
-                Label("Sync to Local", systemImage: "arrow.triangle.2.circlepath")
+        if !track.isSynced {
+            SyncToLocalMenu { rootID in
+                library.syncToLocal(track, rootID: rootID)
             }
         }
     }

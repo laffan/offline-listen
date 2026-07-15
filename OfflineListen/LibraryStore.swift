@@ -21,14 +21,16 @@ final class LibraryStore: ObservableObject {
 
     private static let folderSortKey = "folderSort"
 
-    /// Set by `LocalSyncStore`: receives a `SyncOp` for every in-app change to
-    /// synced content, so the change is written through to the sync folder
-    /// (immediately, or later if it's unreachable). Local file operations
-    /// never wait on it — the replica catches up.
-    var syncExporter: ((SyncOp) -> Void)?
+    /// Set by `LocalSyncStore`: receives a `SyncOp` (with the sync root it
+    /// applies to) for every in-app change to synced content, so the change is
+    /// written through to that sync folder (immediately, or later if it's
+    /// unreachable). Local file operations never wait on it — the replica
+    /// catches up.
+    var syncExporter: ((SyncOp, UUID) -> Void)?
 
-    private func exportOp(_ op: SyncOp) {
-        syncExporter?(op)
+    private func exportOp(_ op: SyncOp, rootID: UUID?) {
+        guard let rootID else { return }
+        syncExporter?(op, rootID)
     }
 
     /// True when a folder — or any of its ancestors — has been archived, so the
@@ -177,8 +179,9 @@ final class LibraryStore: ObservableObject {
             }
             newFolder.name = dirName
             newFolder.isSynced = true
+            newFolder.syncRootID = parent.syncRootID
             newFolder.syncedPath = "\(parentPath)/\(dirName)"
-            exportOp(.createRemoteDir(rel: "\(parentPath)/\(dirName)"))
+            exportOp(.createRemoteDir(rel: "\(parentPath)/\(dirName)"), rootID: parent.syncRootID)
         }
         folders.append(newFolder)
         saveFolders()
@@ -189,11 +192,12 @@ final class LibraryStore: ObservableObject {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
               let index = folders.firstIndex(where: { $0.id == folder.id }) else { return }
-        // A synced folder mirrors a directory in the local sync store, so
-        // renaming renames it there (rewriting every path recorded under it)
-        // and queues the same rename for the replica.
-        if folders[index].isSynced, let oldPath = folders[index].syncedPath {
-            let local = AppPaths.syncLocalStore
+        // A synced folder mirrors a directory in its root's local sync store,
+        // so renaming renames it there (rewriting every path recorded under
+        // it) and queues the same rename for the replica.
+        if folders[index].isSynced, let oldPath = folders[index].syncedPath,
+           let rootID = folders[index].syncRootID {
+            let local = AppPaths.syncLocalStore(for: rootID)
             let parentPath = (oldPath as NSString).deletingLastPathComponent
             let parentDir = parentPath.isEmpty
                 ? local
@@ -209,11 +213,11 @@ final class LibraryStore: ObservableObject {
                 return
             }
             let newPath = parentPath.isEmpty ? newDirName : "\(parentPath)/\(newDirName)"
-            rewriteSyncedPaths(from: oldPath, to: newPath)
+            rewriteSyncedPaths(from: oldPath, to: newPath, rootID: rootID)
             folders[index].name = newDirName
             saveFolders()
             save()
-            exportOp(.moveRemote(from: oldPath, to: newPath))
+            exportOp(.moveRemote(from: oldPath, to: newPath), rootID: rootID)
             return
         }
         folders[index].name = trimmed
@@ -221,9 +225,9 @@ final class LibraryStore: ObservableObject {
     }
 
     /// Rewrites the recorded sync paths of everything at or under `oldPrefix`
-    /// after its directory moved to `newPrefix`.
-    private func rewriteSyncedPaths(from oldPrefix: String, to newPrefix: String) {
-        for index in folders.indices where folders[index].isSynced {
+    /// (within one root) after its directory moved to `newPrefix`.
+    private func rewriteSyncedPaths(from oldPrefix: String, to newPrefix: String, rootID: UUID) {
+        for index in folders.indices where folders[index].isSynced && folders[index].syncRootID == rootID {
             guard let path = folders[index].syncedPath else { continue }
             if path == oldPrefix {
                 folders[index].syncedPath = newPrefix
@@ -231,7 +235,7 @@ final class LibraryStore: ObservableObject {
                 folders[index].syncedPath = newPrefix + path.dropFirst(oldPrefix.count)
             }
         }
-        for index in tracks.indices where tracks[index].isSynced {
+        for index in tracks.indices where tracks[index].isSynced && tracks[index].syncRootID == rootID {
             if tracks[index].fileName.hasPrefix(oldPrefix + "/") {
                 tracks[index].fileName = newPrefix + tracks[index].fileName.dropFirst(oldPrefix.count)
             }
@@ -260,7 +264,8 @@ final class LibraryStore: ObservableObject {
             // must not be deleted with it.
             if let dir = current.syncedDirectoryURL, let path = current.syncedPath {
                 let stillInside = tracks.contains {
-                    $0.isSynced && $0.fileName.hasPrefix(path + "/")
+                    $0.isSynced && $0.syncRootID == current.syncRootID
+                        && $0.fileName.hasPrefix(path + "/")
                 }
                 if stillInside {
                     appLog("Left \"\(current.name)\" in place — some files couldn't be moved out.",
@@ -268,7 +273,7 @@ final class LibraryStore: ObservableObject {
                 } else {
                     try? FileManager.default.removeItem(at: dir)
                     // Mirror the removal to the replica (its copies go too).
-                    exportOp(.removeRemote(rel: path))
+                    exportOp(.removeRemote(rel: path), rootID: current.syncRootID)
                 }
             }
             folders.removeAll { doomed.contains($0.id) }
@@ -315,6 +320,7 @@ final class LibraryStore: ObservableObject {
         for index in tracks.indices where tracks[index].folderID == folderID && tracks[index].isSynced {
             let source = tracks[index].fileURL
             let oldRel = tracks[index].fileName
+            let oldRoot = tracks[index].syncRootID
             let last = (oldRel as NSString).lastPathComponent
             let newName = AppPaths.uniqueDocumentName(
                 base: (last as NSString).deletingPathExtension,
@@ -324,8 +330,9 @@ final class LibraryStore: ObservableObject {
                     at: source, to: AppPaths.documents.appendingPathComponent(newName))
                 tracks[index].fileName = newName
                 tracks[index].isSynced = false
+                tracks[index].syncRootID = nil
                 tracks[index].folderID = nil
-                exportOp(.removeRemote(rel: oldRel))
+                exportOp(.removeRemote(rel: oldRel), rootID: oldRoot)
             } catch {
                 appLog("Couldn't move \"\(tracks[index].title)\" out of the sync folder: \(error.localizedDescription)",
                        level: .error, category: "Sync")
@@ -381,9 +388,10 @@ final class LibraryStore: ObservableObject {
         let ext = (last as NSString).pathExtension
 
         if let destFolder, destFolder.isSynced, let dirPath = destFolder.syncedPath,
-           let dir = destFolder.syncedDirectoryURL {
+           let destRoot = destFolder.syncRootID, let dir = destFolder.syncedDirectoryURL {
             // Already in exactly that directory — nothing to move.
-            if track.isSynced, (track.fileName as NSString).deletingLastPathComponent == dirPath {
+            if track.isSynced, track.syncRootID == destRoot,
+               (track.fileName as NSString).deletingLastPathComponent == dirPath {
                 return true
             }
             let newName = AppPaths.uniqueName(base: base, ext: ext, in: dir)
@@ -396,11 +404,22 @@ final class LibraryStore: ObservableObject {
                 return false
             }
             let oldRel = track.fileName
+            let oldRoot = track.syncRootID
             let newRel = "\(dirPath)/\(newName)"
             tracks[index].fileName = newRel
-            let wasSynced = tracks[index].isSynced
             tracks[index].isSynced = true
-            exportOp(wasSynced ? .moveRemote(from: oldRel, to: newRel) : .copyOut(rel: newRel))
+            tracks[index].syncRootID = destRoot
+            if let oldRoot, oldRoot == destRoot {
+                // Same root: a rename within one replica.
+                exportOp(.moveRemote(from: oldRel, to: newRel), rootID: destRoot)
+            } else {
+                // Crossing roots (or entering the synced tree): remove from
+                // the old replica, copy out to the new one.
+                if let oldRoot {
+                    exportOp(.removeRemote(rel: oldRel), rootID: oldRoot)
+                }
+                exportOp(.copyOut(rel: newRel), rootID: destRoot)
+            }
             return true
         }
 
@@ -416,9 +435,10 @@ final class LibraryStore: ObservableObject {
                    level: .error, category: "Sync")
             return false
         }
-        exportOp(.removeRemote(rel: track.fileName))
+        exportOp(.removeRemote(rel: track.fileName), rootID: track.syncRootID)
         tracks[index].fileName = newName
         tracks[index].isSynced = false
+        tracks[index].syncRootID = nil
         return true
     }
 
@@ -447,19 +467,19 @@ final class LibraryStore: ObservableObject {
 
     // MARK: - Local sync
 
-    /// True once a sync folder has been configured and resolved, gating the
-    /// "Sync to Local" actions.
-    var isSyncAvailable: Bool { AppPaths.syncRoot != nil }
+    /// True once at least one sync folder has been configured and resolved,
+    /// gating the "Sync to Local" actions.
+    var isSyncAvailable: Bool { !AppPaths.syncRootURLs.isEmpty }
 
-    /// Moves a track's file into the local sync store (at its top level),
-    /// marks it synced, and queues the copy-out to the replica. It behaves
-    /// like any other track afterwards — it just wears the sync icon and
-    /// mirrors to the sync folder.
-    func syncToLocal(_ track: Track) {
-        guard isSyncAvailable,
+    /// Moves a track's file into a root's local sync store (at its top
+    /// level), marks it synced, and queues the copy-out to that replica. It
+    /// behaves like any other track afterwards — it just wears the sync icon
+    /// and mirrors to the sync folder.
+    func syncToLocal(_ track: Track, rootID: UUID) {
+        guard AppPaths.syncRootURLs[rootID] != nil,
               let index = tracks.firstIndex(where: { $0.id == track.id }),
               !tracks[index].isSynced else { return }
-        let local = AppPaths.syncLocalStore
+        let local = AppPaths.syncLocalStore(for: rootID)
         let last = (tracks[index].fileName as NSString).lastPathComponent
         let newName = AppPaths.uniqueName(
             base: (last as NSString).deletingPathExtension,
@@ -475,20 +495,21 @@ final class LibraryStore: ObservableObject {
         }
         tracks[index].fileName = newName
         tracks[index].isSynced = true
+        tracks[index].syncRootID = rootID
         tracks[index].folderID = nil
         save()
-        exportOp(.copyOut(rel: newName))
+        exportOp(.copyOut(rel: newName), rootID: rootID)
         appLog("Synced \"\(track.title)\" to local.", level: .success, category: "Sync")
     }
 
-    /// Moves a folder — tracks, subfolders and all — into the local sync
+    /// Moves a folder — tracks, subfolders and all — into a root's local sync
     /// store as a directory tree at its top level and queues the exports. A
     /// mixtape brings its style and cover along as a `.mixtapedata` write.
-    func syncToLocal(_ folder: Folder) {
-        guard isSyncAvailable,
+    func syncToLocal(_ folder: Folder, rootID: UUID) {
+        guard AppPaths.syncRootURLs[rootID] != nil,
               let index = folders.firstIndex(where: { $0.id == folder.id }),
               !folders[index].isSynced else { return }
-        let local = AppPaths.syncLocalStore
+        let local = AppPaths.syncLocalStore(for: rootID)
         let dirName = AppPaths.uniqueName(base: folder.name.sanitizedFileName(), ext: "", in: local)
         do {
             try FileManager.default.createDirectory(
@@ -499,7 +520,7 @@ final class LibraryStore: ObservableObject {
                    level: .error, category: "Sync")
             return
         }
-        markSynced(at: index, path: dirName, name: dirName)
+        markSynced(at: index, path: dirName, name: dirName, rootID: rootID)
         // The synced tree mirrors the sync folder, so a synced folder always
         // sits at the root of the library's folder list.
         folders[index].parentID = nil
@@ -509,23 +530,27 @@ final class LibraryStore: ObservableObject {
         appLog("Synced folder \"\(folders[index].name)\" to local.", level: .success, category: "Sync")
     }
 
-    /// Marks a folder synced at `path` and queues its replica directory (and,
-    /// for a mixtape, its `.mixtapedata`). The cover image stays app-local.
-    private func markSynced(at index: Int, path: String, name: String) {
+    /// Marks a folder synced at `path` under `rootID` and queues its replica
+    /// directory (and, for a mixtape, its `.mixtapedata`). The cover image
+    /// stays app-local.
+    private func markSynced(at index: Int, path: String, name: String, rootID: UUID) {
         folders[index].name = name
         folders[index].isSynced = true
+        folders[index].syncRootID = rootID
         folders[index].syncedPath = path
-        exportOp(.createRemoteDir(rel: path))
+        exportOp(.createRemoteDir(rel: path), rootID: rootID)
         if folders[index].isMixtape {
-            exportOp(.writeMixtapeData(dir: path, folderID: folders[index].id))
+            exportOp(.writeMixtapeData(dir: path, folderID: folders[index].id), rootID: rootID)
         }
     }
 
     /// Recursively moves a folder's tracks and subfolders into its (already
-    /// created) directory in the local sync store, queueing each export.
+    /// created) directory in its root's local sync store, queueing each
+    /// export.
     private func syncContents(of folderID: UUID) {
         guard let parent = folder(withID: folderID),
               let parentPath = parent.syncedPath,
+              let rootID = parent.syncRootID,
               let parentDir = parent.syncedDirectoryURL else { return }
         for index in tracks.indices where tracks[index].folderID == folderID && !tracks[index].isSynced {
             let last = (tracks[index].fileName as NSString).lastPathComponent
@@ -538,7 +563,8 @@ final class LibraryStore: ObservableObject {
                                                  to: parentDir.appendingPathComponent(newName))
                 tracks[index].fileName = "\(parentPath)/\(newName)"
                 tracks[index].isSynced = true
-                exportOp(.copyOut(rel: "\(parentPath)/\(newName)"))
+                tracks[index].syncRootID = rootID
+                exportOp(.copyOut(rel: "\(parentPath)/\(newName)"), rootID: rootID)
             } catch {
                 appLog("Couldn't sync \"\(tracks[index].title)\": \(error.localizedDescription)",
                        level: .error, category: "Sync")
@@ -556,25 +582,27 @@ final class LibraryStore: ObservableObject {
                        level: .error, category: "Sync")
                 continue
             }
-            markSynced(at: index, path: "\(parentPath)/\(dirName)", name: dirName)
+            markSynced(at: index, path: "\(parentPath)/\(dirName)", name: dirName, rootID: rootID)
             syncContents(of: folders[index].id)
         }
     }
 
     // MARK: - Local sync: importer primitives (driven by LocalSyncStore)
 
-    /// Reconciles synced folders against the replica's directory list: new
-    /// directories appear as folders (parents before children), vanished ones
-    /// disappear, and mixtape styles are adopted for the paths the importer
-    /// says actually changed remotely. Returns the path → folder-id map and
-    /// re-derives every synced track's folder membership from its path.
+    /// Reconciles one root's synced folders against its replica's directory
+    /// list: new directories appear as folders (parents before children),
+    /// vanished ones disappear, and mixtape styles are adopted for the paths
+    /// the importer says actually changed remotely. Returns the path →
+    /// folder-id map and re-derives the root's synced tracks' folder
+    /// membership from their paths.
     func reconcileSyncedFolders(_ dirs: [SyncSnapshot.Directory],
-                                adoptStyleFor adopt: Set<String>) -> [String: UUID] {
+                                adoptStyleFor adopt: Set<String>,
+                                rootID: UUID) -> [String: UUID] {
         var foldersChanged = false
         var tracksChanged = false
 
         var byPath: [String: UUID] = [:]
-        for folder in folders where folder.isSynced {
+        for folder in folders where folder.isSynced && folder.syncRootID == rootID {
             if let path = folder.syncedPath { byPath[path] = folder.id }
         }
 
@@ -606,6 +634,7 @@ final class LibraryStore: ObservableObject {
                     name: (dir.relativePath as NSString).lastPathComponent,
                     parentID: parentPath.isEmpty ? nil : byPath[parentPath],
                     isSynced: true,
+                    syncRootID: rootID,
                     syncedPath: dir.relativePath,
                     isMixtape: dir.mixtapeStyle != nil,
                     mixtape: dir.mixtapeStyle ?? MixtapeStyle())
@@ -616,7 +645,9 @@ final class LibraryStore: ObservableObject {
         }
 
         let livePaths = Set(dirs.map { $0.relativePath })
-        let vanished = folders.filter { $0.isSynced && !livePaths.contains($0.syncedPath ?? "") }
+        let vanished = folders.filter {
+            $0.isSynced && $0.syncRootID == rootID && !livePaths.contains($0.syncedPath ?? "")
+        }
         if !vanished.isEmpty {
             let doomed = Set(vanished.map { $0.id })
             for gone in vanished where gone.isMixtape {
@@ -631,7 +662,7 @@ final class LibraryStore: ObservableObject {
 
         // Membership follows the path (covers a directory that was recreated
         // and got a fresh folder id).
-        for index in tracks.indices where tracks[index].isSynced {
+        for index in tracks.indices where tracks[index].isSynced && tracks[index].syncRootID == rootID {
             let dirPath = (tracks[index].fileName as NSString).deletingLastPathComponent
             let expected = dirPath.isEmpty ? nil : byPath[dirPath]
             if tracks[index].folderID != expected {
@@ -645,10 +676,12 @@ final class LibraryStore: ObservableObject {
         return byPath
     }
 
-    /// Removes every synced track whose replica file is gone, deleting its
-    /// local copy too. Non-synced tracks are never touched.
-    func removeSyncedTracks(notIn remotePaths: Set<String>) {
-        let victims = tracks.filter { $0.isSynced && !remotePaths.contains($0.fileName) }
+    /// Removes every synced track of one root whose replica file is gone,
+    /// deleting its local copy too. Everything else is never touched.
+    func removeSyncedTracks(notIn remotePaths: Set<String>, rootID: UUID) {
+        let victims = tracks.filter {
+            $0.isSynced && $0.syncRootID == rootID && !remotePaths.contains($0.fileName)
+        }
         guard !victims.isEmpty else { return }
         let wasOnWatch = victims.contains { $0.sentToWatch }
         for victim in victims {
@@ -660,14 +693,16 @@ final class LibraryStore: ObservableObject {
         if wasOnWatch { syncWatch() }
     }
 
-    func hasSyncedTrack(at relativePath: String) -> Bool {
-        tracks.contains { $0.isSynced && $0.fileName == relativePath }
+    func hasSyncedTrack(at relativePath: String, rootID: UUID) -> Bool {
+        tracks.contains { $0.isSynced && $0.syncRootID == rootID && $0.fileName == relativePath }
     }
 
     /// Registers a synced track for a file the importer just copied in (or
     /// refreshes an existing one's folder/duration).
-    func ensureSyncedTrack(at relativePath: String, folderID: UUID?) {
-        if let index = tracks.firstIndex(where: { $0.isSynced && $0.fileName == relativePath }) {
+    func ensureSyncedTrack(at relativePath: String, folderID: UUID?, rootID: UUID) {
+        if let index = tracks.firstIndex(where: {
+            $0.isSynced && $0.syncRootID == rootID && $0.fileName == relativePath
+        }) {
             if tracks[index].folderID != folderID {
                 tracks[index].folderID = folderID
                 save()
@@ -684,7 +719,8 @@ final class LibraryStore: ObservableObject {
             sourceURL: "",
             isVideo: PlayableMedia.isVideo(extension: (last as NSString).pathExtension),
             folderID: folderID,
-            isSynced: true)
+            isSynced: true,
+            syncRootID: rootID)
         tracks.append(track)
         save()
         loadDurations(for: [track.id])
@@ -695,53 +731,46 @@ final class LibraryStore: ObservableObject {
         coverRevision += 1
     }
 
-    /// Un-configuring the sync folder: synced tracks become regular local
-    /// tracks (their files move from the local sync store into Documents),
-    /// folders stay but stop being synced, and the replica is left untouched.
-    /// Tracks whose files were never imported have nothing to keep and are
-    /// dropped.
-    func unsyncEverything() {
-        var dropIDs: Set<UUID> = []
+    /// Removing a sync folder removes its synced content from the library:
+    /// the root's tracks and folders (and their mixtape covers) go, the
+    /// replica's files are untouched. The root's local store directory is
+    /// removed by `LocalSyncStore`.
+    func removeSynced(rootID: UUID) {
+        let victimTracks = tracks.filter { $0.isSynced && $0.syncRootID == rootID }
+        let victimFolders = folders.filter { $0.isSynced && $0.syncRootID == rootID }
+        let wasOnWatch = victimTracks.contains { $0.sentToWatch }
+        for gone in victimFolders where gone.isMixtape {
+            if let cover = gone.coverURL {
+                try? FileManager.default.removeItem(at: cover)
+            }
+        }
+        let trackIDs = Set(victimTracks.map { $0.id })
+        let folderIDs = Set(victimFolders.map { $0.id })
+        if !trackIDs.isEmpty {
+            tracks.removeAll { trackIDs.contains($0.id) }
+            save()
+        }
+        if !folderIDs.isEmpty {
+            folders.removeAll { folderIDs.contains($0.id) }
+            saveFolders()
+        }
+        if wasOnWatch { syncWatch() }
+    }
+
+    /// One-time migration: items synced before multiple sync folders existed
+    /// carry no root id — adopt them into the migrated root.
+    func assignLegacyRoot(_ rootID: UUID) {
         var changedTracks = false
-        for index in tracks.indices where tracks[index].isSynced {
-            changedTracks = true
-            let source = tracks[index].fileURL
-            guard FileManager.default.fileExists(atPath: source.path) else {
-                dropIDs.insert(tracks[index].id)
-                continue
-            }
-            let last = (tracks[index].fileName as NSString).lastPathComponent
-            let newName = AppPaths.uniqueDocumentName(
-                base: (last as NSString).deletingPathExtension,
-                ext: (last as NSString).pathExtension)
-            do {
-                try FileManager.default.moveItem(
-                    at: source, to: AppPaths.documents.appendingPathComponent(newName))
-                tracks[index].fileName = newName
-                tracks[index].isSynced = false
-            } catch {
-                appLog("Couldn't keep \"\(tracks[index].title)\" locally: \(error.localizedDescription)",
-                       level: .error, category: "Sync")
-            }
-        }
-        if !dropIDs.isEmpty {
-            tracks.removeAll { dropIDs.contains($0.id) }
-        }
         var changedFolders = false
-        for index in folders.indices where folders[index].isSynced {
-            folders[index].isSynced = false
-            folders[index].syncedPath = nil
+        for index in tracks.indices where tracks[index].isSynced && tracks[index].syncRootID == nil {
+            tracks[index].syncRootID = rootID
+            changedTracks = true
+        }
+        for index in folders.indices where folders[index].isSynced && folders[index].syncRootID == nil {
+            folders[index].syncRootID = rootID
             changedFolders = true
         }
-        // Clear the emptied local store — but never while a failed move left
-        // a playable file inside (removeItem is recursive).
-        if !tracks.contains(where: { $0.isSynced }) {
-            try? FileManager.default.removeItem(at: AppPaths.syncLocalStore)
-        }
-        if changedTracks {
-            save()
-            syncWatch()
-        }
+        if changedTracks { save() }
         if changedFolders { saveFolders() }
     }
 
@@ -774,7 +803,8 @@ final class LibraryStore: ObservableObject {
               !hasSubfolders(folder.id) else { return }
         folders[index].isMixtape = true
         if folders[index].isSynced, let path = folders[index].syncedPath {
-            exportOp(.writeMixtapeData(dir: path, folderID: folders[index].id))
+            exportOp(.writeMixtapeData(dir: path, folderID: folders[index].id),
+                     rootID: folders[index].syncRootID)
         }
         saveFolders()
     }
@@ -790,7 +820,7 @@ final class LibraryStore: ObservableObject {
         folders[index].isMixtape = false
         folders[index].mixtape = MixtapeStyle()
         if folders[index].isSynced, let path = folders[index].syncedPath {
-            exportOp(.removeMixtapeData(dir: path))
+            exportOp(.removeMixtapeData(dir: path), rootID: folders[index].syncRootID)
         }
         saveFolders()
     }
@@ -814,7 +844,8 @@ final class LibraryStore: ObservableObject {
             }
         }
         if folders[index].isSynced, let path = folders[index].syncedPath {
-            exportOp(.writeMixtapeData(dir: path, folderID: folders[index].id))
+            exportOp(.writeMixtapeData(dir: path, folderID: folders[index].id),
+                     rootID: folders[index].syncRootID)
         }
         saveFolders()
     }
@@ -1115,7 +1146,7 @@ final class LibraryStore: ObservableObject {
         guard let current = tracks.first(where: { $0.id == track.id }) else { return }
         try? FileManager.default.removeItem(at: current.fileURL)
         if current.isSynced {
-            exportOp(.removeRemote(rel: current.fileName))
+            exportOp(.removeRemote(rel: current.fileName), rootID: current.syncRootID)
         }
         tracks.removeAll { $0.id == track.id }
         save()
@@ -1127,7 +1158,7 @@ final class LibraryStore: ObservableObject {
         for index in offsets {
             try? FileManager.default.removeItem(at: tracks[index].fileURL)
             if tracks[index].isSynced {
-                exportOp(.removeRemote(rel: tracks[index].fileName))
+                exportOp(.removeRemote(rel: tracks[index].fileName), rootID: tracks[index].syncRootID)
             }
         }
         tracks.remove(atOffsets: offsets)

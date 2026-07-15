@@ -37,7 +37,7 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .fileImporter(isPresented: $showFolderPicker, allowedContentTypes: [.folder]) { result in
                 if case .success(let url) = result {
-                    localSync.setRoot(url)
+                    localSync.addRoot(url)
                 }
             }
         }
@@ -47,30 +47,33 @@ struct SettingsView: View {
 
     private var localSyncSection: some View {
         Section {
-            if let root = localSync.rootURL {
+            ForEach(localSync.roots) { root in
                 HStack {
-                    Label(root.lastPathComponent, systemImage: "arrow.triangle.2.circlepath")
+                    Label(root.name, systemImage: root.url != nil
+                          ? "arrow.triangle.2.circlepath"
+                          : "exclamationmark.triangle")
+                        .foregroundStyle(root.url != nil ? Color.primary : Color.orange)
                     Spacer()
                     Button("Remove", role: .destructive) {
-                        localSync.clearRoot()
+                        localSync.removeRoot(root.id)
                     }
                     .font(.callout)
+                    .buttonStyle(.borderless)
                 }
+            }
+            if !localSync.roots.isEmpty {
                 syncStatusRow
-                Button("Change Folder…") {
-                    showFolderPicker = true
-                }
-            } else {
-                Button {
-                    showFolderPicker = true
-                } label: {
-                    Label("Choose Sync Folder…", systemImage: "arrow.triangle.2.circlepath")
-                }
+            }
+            Button {
+                showFolderPicker = true
+            } label: {
+                Label(localSync.roots.isEmpty ? "Choose Sync Folder…" : "Add Sync Folder…",
+                      systemImage: localSync.roots.isEmpty ? "arrow.triangle.2.circlepath" : "plus")
             }
         } header: {
             Text("Local Sync")
         } footer: {
-            Text("Pick a folder (in Files, iCloud Drive, Dropbox, …) to mirror with. \"Sync to Local\" copies a track or folder there, and playable files in the folder are copied into the app — so everything keeps playing offline — appearing with the sync icon and disappearing when removed from the folder. Removing the sync folder keeps everything: synced items just become regular local tracks, and the folder's files are untouched.")
+            Text("Pick folders (in Files, iCloud Drive, Dropbox, …) to mirror with. \"Sync to Local\" copies a track or folder into one of them, and playable files in a sync folder are copied into the app — so everything keeps playing offline — appearing with the sync icon and disappearing when removed from the folder. Removing a sync folder removes its synced items from your library; the folder's own files are untouched.")
         }
     }
 
