@@ -191,7 +191,10 @@ beneath the Browse title:
   lands in the Inbox and gets the same best-effort AI organization as any
   download) — and saving **mid-listen doesn't cut the song off**: playback
   hands off to the main Player at the same position and keeps going in the
-  background while you carry on browsing. Discard deletes the file and hides
+  background while you carry on browsing. The handoff deliberately does
+  **not** count as listening — auditioning a track in the preview is how you
+  decided to keep it, so the saved track stays in the Inbox until you play
+  it from the library. Discard deletes the file and hides
   the item for good. Dismissing
   the modal without deciding deletes the temp file and leaves the item
   untouched.
@@ -318,12 +321,16 @@ contain folders, so only childless folders offer the conversion.
 
 Style (crop, font, colours, tape, justification) persists in `folders.json`;
 the cover JPEG lives in `Documents/MixtapeCovers/<folder-id>.jpg`. A mixtape
-**synced to local** additionally exports a hidden **`.mixtapedata`** directory
-(`cover.jpg` + `style.json`) into its replica directory, so the mixtape
-travels with its files: importing a directory that contains `.mixtapedata`
-brings it into the library *as* a mixtape, cover, crop, font and all. Remote
-`.mixtapedata` changes are adopted only when its stamps actually changed, so
-a stale replica can't undo an in-app style edit.
+**synced to local** keeps a second copy of all of it in the sync folder: a
+hidden **`.mixtapedata`** directory (`cover.jpg` + `style.json`) inside its
+replica directory, written through the export journal on every conversion and
+cover/style edit. That's what makes mixtapes **sync between devices** when
+the sync folder is a cloud drive: importing a directory that contains
+`.mixtapedata` brings it into the library *as* a mixtape — cover, crop, font,
+tape and all — and a remote `.mixtapedata` change (another device editing the
+cover) is picked up on the next pass. Remote changes are adopted only when
+the `.mixtapedata` stamps actually changed, so a stale replica can't undo an
+in-app style edit.
 
 ### Pipeline
 
