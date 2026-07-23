@@ -91,6 +91,25 @@ final class BrowseStore: ObservableObject {
         setStatus(.downloaded, for: item.id)
     }
 
+    /// Marks several items downloaded in one shot — a single rewrite of the
+    /// array (one published change) and a single disk save. The per-item
+    /// `setStatus` would fire a full `browse.json` write per call, so a bulk
+    /// "Download selected" over a big list (a whole discography) would stall
+    /// the main thread on dozens of synchronous writes.
+    func markDownloaded(_ picks: [BrowseItem]) {
+        let ids = Set(picks.map(\.id))
+        guard !ids.isEmpty else { return }
+        var updated = items
+        var changed = false
+        for index in updated.indices where ids.contains(updated[index].id) && updated[index].status != .downloaded {
+            updated[index].status = .downloaded
+            changed = true
+        }
+        guard changed else { return }
+        items = updated
+        save()
+    }
+
     func markSaved(_ item: BrowseItem) {
         setStatus(.saved, for: item.id)
     }

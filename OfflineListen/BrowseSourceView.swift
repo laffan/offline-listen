@@ -244,14 +244,26 @@ struct BrowseSourceView: View {
     /// rows — the ones that would show a Download button), then leaves select
     /// mode. Already-downloaded/saved picks are skipped, mirroring the per-row
     /// behaviour where their button is gone.
+    ///
+    /// The status change is applied in one batch (`markDownloaded(_:)`) — a
+    /// single save and a single published mutation — before select mode is torn
+    /// down, mirroring the Library's bulk-action order. The per-item mark would
+    /// otherwise rewrite `browse.json` once per pick, stalling the main thread
+    /// on a big selection (a whole discography), which is what crashed the app.
     private func downloadSelected() {
         let picks = browse.visibleItems(for: sourceID)
             .filter { selection.contains($0.id) && $0.status == .new }
-        for item in picks {
-            download(item)
+        guard !picks.isEmpty else {
+            selection.removeAll()
+            withAnimation { editMode = .inactive }
+            return
         }
-        withAnimation { editMode = .inactive }
+        for item in picks {
+            downloads.enqueue(urlString: item.url, mode: browse.downloadMode)
+        }
+        browse.markDownloaded(picks)
         selection.removeAll()
+        withAnimation { editMode = .inactive }
     }
 }
 
