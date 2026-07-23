@@ -66,15 +66,6 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
         }
     }
 
-    /// Whether the source's items are grouped into sections in the list — Blog
-    /// Agent by post, Discography by album (with a Highlights section on top).
-    var groupsItems: Bool {
-        switch self {
-        case .blogAgent, .discography: return true
-        case .youtubeChannel, .youtubePlaylist, .rssFeed, .artist, .genre, .country: return false
-        }
-    }
-
     /// Whether the input field takes a URL/handle (URL keyboard, no
     /// autocapitalization) rather than free text like an artist name.
     var inputIsURL: Bool {
@@ -118,7 +109,7 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
         case .rssFeed:
             return "Reads the feed and keeps only posts that contain YouTube links."
         case .blogAgent:
-            return "For blogs without a feed: an AI agent visits the site, reads recent articles, and pulls out the YouTube links inside them."
+            return "For blogs without a feed: an AI agent reads recent articles and shows each as a summary, its YouTube links, and the artists it mentions (tap one to follow that artist)."
         case .discography:
             return "An AI agent lays out the artist's full discography as a nested list of albums, with a Highlights list of essential songs on top."
         case .artist:
@@ -269,6 +260,58 @@ struct FetchedBrowseItem {
 
     /// The identity the store merges by — matches `BrowseItem.dedupKey`.
     var dedupKey: String { BrowseItem.dedupKey(videoID: videoID, url: url, groupKey: groupKey) }
+}
+
+/// A Blog Agent article: a short summary and the artists it names, shown around
+/// the YouTube tracks found in the same article (summary above, artists below).
+/// A post can exist with **no** tracks — a text-only write-up — which is why
+/// it's its own record rather than metadata hung off a track. Its tracks tie
+/// back by `url` matching a `BrowseItem`'s `postURL`.
+struct BrowsePost: Identifiable, Codable, Hashable {
+    let id: UUID
+    var sourceID: UUID
+    var title: String
+    /// The article URL, when known — the grouping/dedup key for its tracks.
+    var url: String?
+    /// A one-or-two-sentence plain-language summary of the article.
+    var summary: String
+    /// The artists the article names, most prominent first, for the tappable
+    /// "create a source for this artist" list.
+    var artists: [String]
+    var datePublished: Date?
+    var dateFetched: Date
+
+    init(id: UUID = UUID(),
+         sourceID: UUID,
+         title: String,
+         url: String? = nil,
+         summary: String = "",
+         artists: [String] = [],
+         datePublished: Date? = nil,
+         dateFetched: Date = Date()) {
+        self.id = id
+        self.sourceID = sourceID
+        self.title = title
+        self.url = url
+        self.summary = summary
+        self.artists = artists
+        self.datePublished = datePublished
+        self.dateFetched = dateFetched
+    }
+
+    /// Identity across refreshes: the article URL when known, else the title.
+    var dedupKey: String { url ?? title }
+}
+
+/// What the Blog Agent hands back for one article before the store merges it.
+struct FetchedBrowsePost {
+    var title: String
+    var url: String?
+    var summary: String
+    var artists: [String]
+    var datePublished: Date?
+
+    var dedupKey: String { url ?? title }
 }
 
 extension AppPaths {

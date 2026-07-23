@@ -17,14 +17,18 @@ struct BrowseSourceView: View {
     /// checked items so they can be downloaded in one tap.
     @State private var editMode: EditMode = .inactive
     @State private var selection = Set<BrowseItem.ID>()
+    /// The artist tapped in a Blog Agent post's list, driving the "create a
+    /// source for this artist" popup.
+    @State private var artistForSource: String?
 
     private var source: BrowseSource? {
         browse.sources.first(where: { $0.id == sourceID })
     }
 
-    /// Blog Agent and Discography lists are grouped into sections (by post and
-    /// by album, respectively); the rest are a single flat list.
-    private var grouped: Bool { source?.kind.groupsItems ?? false }
+    /// Blog Agent lists group by article (summary + tracks + artists);
+    /// Discography groups by album (with a Highlights section on top); the
+    /// rest are a single flat list.
+    private var isBlogAgent: Bool { source?.kind == .blogAgent }
     private var isDiscography: Bool { source?.kind == .discography }
 
     /// The AI music sources title their items "Artist — Song", so the row can
@@ -39,8 +43,11 @@ struct BrowseSourceView: View {
 
     var body: some View {
         let items = browse.visibleItems(for: sourceID)
+        // A Blog Agent source can have posts (summary + artists) with no tracks,
+        // so it isn't "empty" just because there are no items.
+        let posts = isBlogAgent ? browse.posts(for: sourceID) : []
         Group {
-            if items.isEmpty {
+            if items.isEmpty && posts.isEmpty {
                 VStack(spacing: 16) {
                     if browse.refreshing.contains(sourceID) {
                         ProgressView("Refreshing…")
@@ -61,10 +68,10 @@ struct BrowseSourceView: View {
                 .frame(maxHeight: .infinity)
             } else {
                 List(selection: $selection) {
-                    if grouped {
-                        // Blog Agent groups tracks under the post they were
-                        // found in (newest post first); Discography groups them
-                        // by album with a Highlights section pinned on top.
+                    if isBlogAgent {
+                        blogAgentSections(posts: posts, items: items)
+                    } else if isDiscography {
+                        // Grouped by album, Highlights section pinned on top.
                         Section {
                         } header: {
                             header(count: items.count)
@@ -132,6 +139,30 @@ struct BrowseSourceView: View {
         .sheet(item: $previewItem) { item in
             BrowsePreviewView(item: item, mode: browse.downloadMode)
         }
+        .confirmationDialog(
+            "Follow this artist",
+            isPresented: presentingArtist,
+            titleVisibility: .visible,
+            presenting: artistForSource
+        ) { artist in
+            Button("Artist Top 10") { addArtistSource(.artist, name: artist) }
+            Button("Artist Discography") { addArtistSource(.discography, name: artist) }
+            Button("Cancel", role: .cancel) {}
+        } message: { artist in
+            Text("Add “\(artist)” as a new Browse source.")
+        }
+    }
+
+    private var presentingArtist: Binding<Bool> {
+        Binding(get: { artistForSource != nil },
+                set: { if !$0 { artistForSource = nil } })
+    }
+
+    /// Adds an Artist Top 10 / Artist Discography source for `name` and kicks
+    /// off its first refresh.
+    private func addArtistSource(_ kind: BrowseSourceKind, name: String) {
+        let source = browse.addSource(kind: kind, name: name, input: name)
+        Task { await browse.refresh(source) }
     }
 
     /// One item row with its discard swipe — shared by the flat and the
@@ -155,6 +186,102 @@ struct BrowseSourceView: View {
                 browse.markDiscarded(item)
             } label: {
                 Label("Discard", systemImage: "xmark.bin")
+            }
+        }
+    }
+
+    // MARK: - Blog Agent layout
+
+    /// Blog Agent layout: one section per article — a **summary**, then the
+    /// YouTube **tracks** found in it, then the **artists** it names (each
+    /// tappable to spin up a new Artist Top 10 / Discography source). Posts
+    /// newest-first; any legacy tracks whose article wasn't summarized gather
+    /// in a trailing "Other finds" section.
+    @ViewBuilder
+    private func blogAgentSections(posts: [BrowsePost], items: [BrowseItem]) -> some View {
+        Section {
+        } header: {
+            header(count: posts.count, noun: "post")
+        }
+        ForEach(posts) { post in
+            Section {
+                if !post.summary.isEmpty {
+                    Text(post.summary)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 2)
+                }
+                ForEach(tracks(in: post, from: items)) { itemRow($0) }
+                // The artist list is for browsing, not selecting — hide it in
+                // select mode so only tracks are pickable.
+                if !editMode.isEditing {
+                    artistList(post.artists)
+                }
+            } header: {
+                blogPostHeader(post)
+            }
+        }
+        let orphans = orphanTracks(items, posts: posts)
+        if !orphans.isEmpty {
+            Section {
+                ForEach(orphans) { itemRow($0) }
+            } header: {
+                Text("Other finds").browseSectionHeaderStyle()
+            }
+        }
+    }
+
+    /// The tracks belonging to one article (matched by its URL/title).
+    private func tracks(in post: BrowsePost, from items: [BrowseItem]) -> [BrowseItem] {
+        items.filter { ($0.postURL ?? $0.postTitle ?? "") == post.dedupKey }
+    }
+
+    /// Tracks left over from before articles were summarized (or whose article
+    /// dropped out), so nothing a refresh already surfaced silently disappears.
+    private func orphanTracks(_ items: [BrowseItem], posts: [BrowsePost]) -> [BrowseItem] {
+        let known = Set(posts.map(\.dedupKey))
+        return items.filter { !known.contains($0.postURL ?? $0.postTitle ?? "") }
+    }
+
+    @ViewBuilder
+    private func blogPostHeader(_ post: BrowsePost) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(post.title)
+                .lineLimit(2)
+            Spacer()
+            if let date = post.datePublished {
+                Text(date.formatted(date: .abbreviated, time: .omitted))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .browseSectionHeaderStyle()
+    }
+
+    /// A labeled list of the artists an article names; tapping one opens the
+    /// popup to create an Artist Top 10 / Discography source for it.
+    @ViewBuilder
+    private func artistList(_ artists: [String]) -> some View {
+        if !artists.isEmpty {
+            Text("Artists mentioned")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            ForEach(artists, id: \.self) { artist in
+                Button {
+                    artistForSource = artist
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "music.mic")
+                            .foregroundStyle(.secondary)
+                            .frame(width: 20)
+                        Text(artist)
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Image(systemName: "plus.circle")
+                            .foregroundStyle(Color.accentColor)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -222,9 +349,9 @@ struct BrowseSourceView: View {
     }
 
     @ViewBuilder
-    private func header(count: Int) -> some View {
+    private func header(count: Int, noun: String = "item") -> some View {
         HStack {
-            Text("\(count) item(s)")
+            Text("\(count) \(noun)(s)")
             Spacer()
             if let error = browse.lastError[sourceID] {
                 Text(error)
