@@ -47,13 +47,16 @@ Five screens (tabs):
 2. **Browse** — keeps tabs on and curates different audio **sources** (see
    [Browse: keeping tabs on audio sources](#browse-keeping-tabs-on-audio-sources)).
    Add YouTube channels/playlists, RSS feeds, a **Blog Agent** for blogs
-   without a feed, or AI-curated Artist/Genre/Country
+   without a feed, a **Discography** agent that lays out an artist's whole
+   catalogue as a nested list of albums, or AI-curated Artist/Genre/Country
    lists; each refresh surfaces YouTube links, shown as compact
    artist/song-title rows, and
    every item offers **Download** (sends it to the download queue) and
-   **Preview** (a listen-first modal with **Save** / **Discard**). An
+   **Preview** (a listen-first modal with **Save** / **Discard**). A **Select**
+   button in a source's list flips it into multi-select, so you can tick a
+   batch of items and download them all in one tap. An
    **Audio/Video toggle** beneath the Browse title — the same one the Download
-   tab has — sets which mode both buttons act in.
+   tab has — sets which mode both buttons (and the bulk download) act in.
 3. **Library** — downloaded tracks; tap to play. A **filter** (All / Music /
    Podcasts / Video) sits directly beneath the **Tracks** header. Swipe **left**
    for Delete/Share/Archive (and bulk versions via **Select**); swipe **right**
@@ -178,7 +181,14 @@ beneath the Browse title:
   the modal without deciding deletes the temp file and leaves the item
   untouched.
 
-Seven **source types**, in two families:
+**Bulk download.** A **Select** button at the top of a source's list turns on
+multi-select (the same edit-mode selection the Library uses): the per-row
+Download/Preview buttons give way to selection circles, you tick as many items
+as you like — across albums or posts in a grouped list — and a **Download (N)**
+button queues the whole set at once, in the current Audio/Video mode. Picks that
+were already sent or saved are skipped, and **Done** leaves select mode.
+
+Eight **source types**, in two families:
 
 | Type | How it works |
 |------|--------------|
@@ -186,6 +196,7 @@ Seven **source types**, in two families:
 | **YouTube Playlist** | Scrape/RSS: watches the playlist's feed. Accepts a playlist URL (anything with `list=`) or a bare playlist id. |
 | **RSS Feed** | RSS reader: parses any RSS/Atom feed and keeps **only the posts that contain YouTube links** (a music blog's roundups, a newsletter's song-of-the-day). A post with several links yields one item per video. |
 | **Blog Agent** | AI agent: RSS-reader behaviour for blogs **without a feed**. The agent fetches the homepage, asks the model which of the page's links are individual recent articles (telling posts apart from nav/category/about links is exactly the judgement call heuristics get wrong — and the model may only *pick from* the links found on the page, never invent one), reads the most recent ones, and pulls out the YouTube links inside — one item per video, titled after its article, with the article's `og:description` and publish date when present. A post with **no YouTube links** isn't a dead end: the agent extracts the **tracks the text mentions** (strictly what the article names — the model is told never to pad) and resolves each on YouTube via the search scraper; only a post that mentions no tracks at all is skipped. A Blog Agent source's list is **grouped by post** — each post is a section header (title + date) with the tracks found in it beneath — and **Settings ▸ Blog Agent** caps how many **posts per refresh** are read and how many **songs per post** are taken (defaults 5 and 5), so a link-heavy blog can't flood the list. |
+| **Discography** | AI agent (blog-agent style): given an **artist**, the model lays out their discography — a short **Highlights** list of essential songs, then the studio **albums** each with its year and tracklist. The list is **grouped by album** (a nested list of sections, newest album first) with the **Highlights** section pinned on top; the same signature song can appear both in Highlights and on its album. As everywhere in Browse, the model supplies only album/song **names** — every track is resolved to a real video via the search scraper, never a model-supplied link. Each track costs a YouTube search, so a refresh is **capped** (12 highlights, up to 20 albums × 16 tracks, 120 lookups total); anything past the ceiling is dropped and logged. |
 | **Artist** | AI: the model suggests the artist's popular/essential songs. |
 | **Genre** | AI: popular songs in a genre, across artists. |
 | **Country** | AI: popular songs from a country (by artists from that country). The country field has a **globe button** that opens a searchable modal of every country (built from the system's localized ISO region list) in case the right name isn't obvious. |
@@ -197,12 +208,14 @@ blank name auto-fills with the era folded in, e.g. "Mali (1970s)", so two
 eras of the same subject read apart in the source list.
 
 The AI types use the **Anthropic key from Settings** (they're unavailable until
-one is saved). For Artist/Genre/Country the model is asked for real, well-known
-songs — title and artist —
+one is saved). For Artist/Genre/Country (and Discography) the model is asked for
+real, well-known songs — title and artist —
 and is deliberately **never trusted to produce YouTube links** (it hallucinates
 video ids); each suggestion is instead resolved to a real video by scraping the
-top result of a YouTube search. On a refresh, the model is told what it already
-suggested so it digs deeper instead of repeating itself.
+top result of a YouTube search. For Artist/Genre/Country, on a refresh the model
+is told what it already suggested so it digs deeper instead of repeating itself;
+a Discography refresh re-lays the catalogue and merges it in, so re-confirmed
+tracks stay put and only genuinely new ones are added.
 
 **Agent blockers.** Sites behind bot protection refuse automated readers —
 a 403/429 for non-browser clients, or a Cloudflare-style challenge
@@ -267,8 +280,9 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `BrowseFetchers.swift` | YouTube channel/playlist feed fetch (+ channel-id resolution by page scrape), the YouTube-link-filtered RSS reader, and the search-result resolver. |
 | `AIDiscovery.swift` | AI song discovery for Artist/Genre/Country sources (suggestions via the Messages API, links via the search resolver). |
 | `BlogAgent.swift` | The Blog Agent source: homepage fetch → AI link triage → article reads → YouTube-link harvest, with bot-protection ("agent blocked") detection. |
+| `DiscographyAgent.swift` | The Discography source: AI lays out an artist's albums (+ a Highlights list); each track is resolved to a YouTube link via the search scraper, bounded by per-refresh caps. |
 | `BrowseView.swift` | The Browse tab: sources grouped by type, add-source sheet, refresh. |
-| `BrowseSourceView.swift` | One source's items with per-row Download/Preview/Discard. |
+| `BrowseSourceView.swift` | One source's items with per-row Download/Preview/Discard, plus a **Select** mode for bulk download. |
 | `BrowsePreviewView.swift` | The preview modal: pipeline download, mini player, Save/Discard. |
 | `*View.swift` | The five SwiftUI screens (Download, Browse, Library, Player, Settings — which embeds the Log). |
 | `FolderView.swift` | Folder detail (tap-to-play, reorder) and Inbox screens. |

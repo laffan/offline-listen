@@ -141,6 +141,8 @@ final class BrowseStore: ObservableObject {
                 let result = try await BlogAgent.fetch(source: source, settings: aiSettings)
                 fetched = result.items
                 feedTitle = result.blogTitle
+            case .discography:
+                fetched = try await DiscographyAgent.fetch(source: source, settings: aiSettings).items
             case .artist, .genre, .country:
                 // Tell the model what it already suggested so refreshes dig
                 // deeper instead of repeating (discards included, on purpose).
@@ -186,7 +188,7 @@ final class BrowseStore: ObservableObject {
 
         var added = 0
         for candidate in fetched {
-            let key = candidate.videoID ?? candidate.url
+            let key = candidate.dedupKey
             if let index = known[key] {
                 items[index].title = candidate.title
                 if !candidate.detail.isEmpty { items[index].detail = candidate.detail }
@@ -201,7 +203,8 @@ final class BrowseStore: ObservableObject {
                                       videoID: candidate.videoID,
                                       datePublished: candidate.datePublished,
                                       postTitle: candidate.postTitle,
-                                      postURL: candidate.postURL)
+                                      postURL: candidate.postURL,
+                                      groupKey: candidate.groupKey)
                 items.append(item)
                 known[key] = items.count - 1
                 added += 1
