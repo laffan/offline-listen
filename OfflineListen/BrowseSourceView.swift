@@ -293,10 +293,11 @@ struct BrowseSourceView: View {
     }
 }
 
-/// One discovered item: artist/song title, publish date, and the Download /
-/// Preview buttons (replaced by a status line once acted on). Descriptions
-/// deliberately don't show here — the row stays a compact artist + title line
-/// (the preview modal still surfaces the detail when one exists).
+/// One discovered item, laid out like a Library row: track name on one line,
+/// artist beneath, and — on the trailing edge, in line with the title —
+/// icon-only Download/Preview buttons (or a green status icon once acted on).
+/// Descriptions deliberately don't show here (the preview modal still surfaces
+/// the detail when one exists).
 private struct BrowseItemRow: View {
     let item: BrowseItem
     /// In select mode the row hides its action buttons so a tap toggles the
@@ -328,63 +329,65 @@ private struct BrowseItemRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Library-style: name on one line, artist beneath, date/metadata on
-            // the right.
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(name)
-                        .font(.body)
-                        .lineLimit(1)
-                    if let artist {
-                        Text(artist)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-                Spacer(minLength: 8)
-                if showsDate, let published = item.datePublished {
-                    Text(published.formatted(date: .abbreviated, time: .omitted))
+        // Library-style: name on one line, artist beneath, and the controls
+        // (icon-only Download/Preview, or the acted-on status) on the trailing
+        // edge, in line with the title.
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(name)
+                    .font(.body)
+                    .lineLimit(1)
+                if let artist {
+                    Text(artist)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .monospacedDigit()
+                        .lineLimit(1)
                 }
             }
 
-            statusOrActions
+            Spacer(minLength: 8)
+
+            if showsDate, let published = item.datePublished {
+                Text(published.formatted(date: .abbreviated, time: .omitted))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+
+            trailingControls
         }
         .padding(.vertical, 4)
     }
 
     @ViewBuilder
-    private var statusOrActions: some View {
+    private var trailingControls: some View {
         switch item.status {
         case .downloaded:
-            Label("Sent to Downloads", systemImage: "checkmark.circle.fill")
-                .font(.caption)
+            Image(systemName: "arrow.down.circle.fill")
+                .font(.title2)
                 .foregroundStyle(.green)
+                .accessibilityLabel("Sent to Downloads")
         case .saved:
-            Label("Saved to Library", systemImage: "checkmark.circle.fill")
-                .font(.caption)
+            Image(systemName: "checkmark.circle.fill")
+                .font(.title2)
                 .foregroundStyle(.green)
+                .accessibilityLabel("Saved to Library")
         case .new, .discarded:
+            // Hidden while selecting so a row tap toggles the selection.
             if !selecting {
-                HStack(spacing: 10) {
+                HStack(spacing: 16) {
                     Button(action: onDownload) {
-                        Label("Download", systemImage: "arrow.down")
-                            .font(.caption.weight(.semibold))
+                        Image(systemName: "arrow.down.circle")
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .accessibilityLabel("Download")
 
                     Button(action: onPreview) {
-                        Label("Preview", systemImage: "play.circle")
-                            .font(.caption.weight(.semibold))
+                        Image(systemName: "play.circle")
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .accessibilityLabel("Preview")
                 }
+                .font(.title2)
+                .buttonStyle(.borderless)
             }
         }
     }
