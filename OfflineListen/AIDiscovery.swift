@@ -71,9 +71,9 @@ enum AIDiscovery {
         switch source.kind {
         case .artist:
             if let era = source.era {
-                subject = "List \(batchSize) of the most popular and essential songs by the artist \"\(source.input)\" released in the \(era)."
+                subject = "List the \(batchSize) most popular, best-known tracks by the artist \"\(source.input)\" released in the \(era), ranked from most to least popular."
             } else {
-                subject = "List \(batchSize) of the most popular and essential songs by the artist \"\(source.input)\"."
+                subject = "List the \(batchSize) most popular, best-known tracks by the artist \"\(source.input)\", ranked from most to least popular."
             }
         case .genre:
             if let era = source.era {

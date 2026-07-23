@@ -21,8 +21,8 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
         case .youtubePlaylist: return "YouTube Playlist"
         case .rssFeed: return "RSS Feed"
         case .blogAgent: return "Blog Agent"
-        case .discography: return "Discography"
-        case .artist: return "Artist"
+        case .discography: return "Artist Discography"
+        case .artist: return "Artist Top 10"
         case .genre: return "Genre"
         case .country: return "Country"
         }
@@ -35,8 +35,8 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
         case .youtubePlaylist: return "YouTube Playlists"
         case .rssFeed: return "RSS Feeds"
         case .blogAgent: return "Blog Agents"
-        case .discography: return "Discographies"
-        case .artist: return "Artists"
+        case .discography: return "Artist Discographies"
+        case .artist: return "Artist Top 10s"
         case .genre: return "Genres"
         case .country: return "Countries"
         }
@@ -122,7 +122,7 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
         case .discography:
             return "An AI agent lays out the artist's full discography as a nested list of albums, with a Highlights list of essential songs on top."
         case .artist:
-            return "AI suggests the artist's popular songs and finds them on YouTube."
+            return "AI finds the artist's top 10 most popular tracks on YouTube."
         case .genre:
             return "AI suggests popular songs in the genre and finds them on YouTube."
         case .country:

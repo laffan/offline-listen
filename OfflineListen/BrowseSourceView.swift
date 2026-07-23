@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// One source's discovered items: artist/song title with per-row **Download**
 /// (sends to the download queue) and **Preview** (opens the listen-first
@@ -25,6 +26,16 @@ struct BrowseSourceView: View {
     /// by album, respectively); the rest are a single flat list.
     private var grouped: Bool { source?.kind.groupsItems ?? false }
     private var isDiscography: Bool { source?.kind == .discography }
+
+    /// The AI music sources title their items "Artist — Song", so the row can
+    /// lift the artist onto its own line (Library-style). Feed titles (video/
+    /// post names) aren't a reliable artist/song pair, so they're left whole.
+    private var parsesArtist: Bool {
+        switch source?.kind {
+        case .artist, .genre, .country, .discography: return true
+        default: return false
+        }
+    }
 
     var body: some View {
         let items = browse.visibleItems(for: sourceID)
@@ -135,6 +146,7 @@ struct BrowseSourceView: View {
             // Discography rows already carry their year in the album header, so
             // the redundant per-row date is dropped.
             showsDate: !isDiscography,
+            parsesArtist: parsesArtist,
             onDownload: { download(item) },
             onPreview: { previewItem = item }
         )
@@ -293,24 +305,54 @@ private struct BrowseItemRow: View {
     /// Whether to show the item's publish date on the right (suppressed for
     /// Discography, whose album header already carries the year).
     var showsDate: Bool = true
+    /// Whether the title is an "Artist — Song" pair to split onto two lines
+    /// (name over artist, Library-style). Off for feed titles.
+    var parsesArtist: Bool = false
     let onDownload: () -> Void
     let onPreview: () -> Void
 
+    /// The track name — the song half of "Artist — Song" when applicable,
+    /// otherwise the whole title.
+    private var name: String {
+        if parsesArtist, let range = item.title.range(of: " — ") {
+            return String(item.title[range.upperBound...])
+        }
+        return item.title
+    }
+
+    /// The artist — the first half of "Artist — Song", when applicable.
+    private var artist: String? {
+        guard parsesArtist, let range = item.title.range(of: " — ") else { return nil }
+        let value = String(item.title[..<range.lowerBound]).trimmingCharacters(in: .whitespaces)
+        return value.isEmpty ? nil : value
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(item.title)
-                .font(.subheadline.weight(.medium))
-                .lineLimit(2)
-
-            HStack(spacing: 12) {
-                statusOrActions
-                Spacer()
+            // Library-style: name on one line, artist beneath, date/metadata on
+            // the right.
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(name)
+                        .font(.body)
+                        .lineLimit(1)
+                    if let artist {
+                        Text(artist)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 8)
                 if showsDate, let published = item.datePublished {
                     Text(published.formatted(date: .abbreviated, time: .omitted))
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
                 }
             }
+
+            statusOrActions
         }
         .padding(.vertical, 4)
     }
@@ -351,18 +393,24 @@ private struct BrowseItemRow: View {
 private extension View {
     /// Browse list section headers: primary-coloured and non-uppercased, set
     /// off with a thin underline so they read as clear dividers instead of the
-    /// default faint grey.
+    /// default faint grey. Carries an opaque background (the main list colour)
+    /// spanning edge-to-edge, so a header pinned while scrolling doesn't let
+    /// the rows show through it.
     func browseSectionHeaderStyle() -> some View {
         self
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(.primary)
             .textCase(nil)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
             .padding(.top, 10)
             .padding(.bottom, 6)
+            .background(Color(.systemBackground))
             .overlay(alignment: .bottom) {
                 Rectangle()
                     .fill(Color.primary)
                     .frame(height: 1)
             }
+            .listRowInsets(EdgeInsets())
     }
 }
