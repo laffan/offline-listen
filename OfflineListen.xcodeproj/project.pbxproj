@@ -10,6 +10,8 @@
 		1B00000000000000000000B1 /* OfflineListenApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A1 /* OfflineListenApp.swift */; };
 		1B00000000000000000000B2 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A2 /* Models.swift */; };
 		1B00000000000000000000B3 /* LibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A3 /* LibraryStore.swift */; };
+		1B00000000000000000000D0 /* LocalSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BE /* LocalSync.swift */; };
+		1B00000000000000000000D2 /* MixtapeViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BF /* MixtapeViews.swift */; };
 		1B00000000000000000000B4 /* DownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A4 /* DownloadManager.swift */; };
 		1B00000000000000000000B5 /* YouTubeExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A5 /* YouTubeExtractor.swift */; };
 		1B00000000000000000000B7 /* PlaybackManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A7 /* PlaybackManager.swift */; };
@@ -91,6 +93,8 @@
 		1A00000000000000000000A1 /* OfflineListenApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineListenApp.swift; sourceTree = "<group>"; };
 		1A00000000000000000000A2 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		1A00000000000000000000A3 /* LibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStore.swift; sourceTree = "<group>"; };
+		1A00000000000000000000BE /* LocalSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSync.swift; sourceTree = "<group>"; };
+		1A00000000000000000000BF /* MixtapeViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MixtapeViews.swift; sourceTree = "<group>"; };
 		1A00000000000000000000A4 /* DownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadManager.swift; sourceTree = "<group>"; };
 		1A00000000000000000000A5 /* YouTubeExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubeExtractor.swift; sourceTree = "<group>"; };
 		1A00000000000000000000A7 /* PlaybackManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackManager.swift; sourceTree = "<group>"; };
@@ -197,6 +201,7 @@
 				1A00000000000000000000A1 /* OfflineListenApp.swift */,
 				1A00000000000000000000A2 /* Models.swift */,
 				1A00000000000000000000A3 /* LibraryStore.swift */,
+				1A00000000000000000000BE /* LocalSync.swift */,
 				1A00000000000000000000A4 /* DownloadManager.swift */,
 				1A00000000000000000000A5 /* YouTubeExtractor.swift */,
 				1A00000000000000000000A7 /* PlaybackManager.swift */,
@@ -214,6 +219,7 @@
 				1A00000000000000000002E8 /* BrowsePreviewView.swift */,
 				1A00000000000000000000AA /* LibraryView.swift */,
 				1A00000000000000000000B6 /* FolderView.swift */,
+				1A00000000000000000000BF /* MixtapeViews.swift */,
 				1A00000000000000000000B7 /* ChapterFetcher.swift */,
 				1A00000000000000000000BD /* PlaylistResolver.swift */,
 				1A00000000000000000000B8 /* ChapterSplitter.swift */,
@@ -467,6 +473,8 @@
 				1B00000000000000000002E8 /* BrowsePreviewView.swift in Sources */,
 				1B00000000000000000000BA /* LibraryView.swift in Sources */,
 				1B00000000000000000000C8 /* FolderView.swift in Sources */,
+				1B00000000000000000000D0 /* LocalSync.swift in Sources */,
+				1B00000000000000000000D2 /* MixtapeViews.swift in Sources */,
 				1B00000000000000000000C9 /* ChapterFetcher.swift in Sources */,
 				1B00000000000000000000CF /* PlaylistResolver.swift in Sources */,
 				1B00000000000000000000CA /* ChapterSplitter.swift in Sources */,

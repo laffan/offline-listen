@@ -407,22 +407,10 @@ struct LibraryView: View {
     }
 
     private func folderRow(_ folder: Folder) -> some View {
-        let playingHere = isPlaying(in: folder)
-        return NavigationLink(value: LibraryRoute.folder(folder.id)) {
-            HStack(spacing: 12) {
-                Image(systemName: "folder.fill")
-                    .foregroundStyle(playingHere ? Color.accentColor : .secondary)
-                    .frame(width: 24)
-                Text(folder.name)
-                    .font(.body)
-                    .lineLimit(1)
-                Spacer()
-                Text("\(library.tracks(in: folder.id).count)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
-            .padding(.vertical, 4)
+        NavigationLink(value: LibraryRoute.folder(folder.id)) {
+            FolderRowLabel(folder: folder,
+                           count: library.tracks(in: folder.id).count,
+                           playingHere: isPlaying(in: folder))
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(role: .destructive) {
@@ -445,11 +433,7 @@ struct LibraryView: View {
             .tint(.indigo)
         }
         .contextMenu {
-            Button {
-                library.sendFolderToWatch(folder)
-            } label: {
-                Label("Send to Watch", systemImage: "applewatch")
-            }
+            FolderContextMenu(folder: folder)
         }
     }
 
@@ -521,6 +505,7 @@ struct LibraryView: View {
                 } label: {
                     Label("Move to Folder", systemImage: "folder")
                 }
+                SyncToLocalButton(track: track)
                 SendToWatchButton(track: track)
                 AIOrganizeButton(track: track)
                 if track.hasChapters {
@@ -709,20 +694,7 @@ struct ArchivedTracksView: View {
 
     private func archivedFolderRow(_ folder: Folder) -> some View {
         NavigationLink(value: LibraryRoute.folder(folder.id)) {
-            HStack(spacing: 12) {
-                Image(systemName: "folder.fill")
-                    .foregroundStyle(.secondary)
-                    .frame(width: 24)
-                Text(folder.name)
-                    .font(.body)
-                    .lineLimit(1)
-                Spacer()
-                Text("\(library.tracks(in: folder.id).count)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
-            .padding(.vertical, 4)
+            FolderRowLabel(folder: folder, count: library.tracks(in: folder.id).count)
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(role: .destructive) {
@@ -812,9 +784,18 @@ struct TrackRow: View {
                 .frame(width: 24)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(track.title)
-                    .font(.body)
-                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(track.title)
+                        .font(.body)
+                        .lineLimit(1)
+                    // Synced tracks live in the local sync folder; the badge
+                    // marks them wherever they're listed.
+                    if track.isSynced {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
 
                 if showsProgress {
                     ProgressView(value: progress)
@@ -958,6 +939,89 @@ struct ChapterContext: Identifiable {
     let id = UUID()
     let track: Track
     let queue: [Track]
+}
+
+/// The shared touch-and-hold menu for a folder row: Send to Watch, Sync to
+/// Local (when a sync folder is configured), and the mixtape conversion pair —
+/// Convert to Mixtape for childless plain folders, Convert to Folder for
+/// mixtapes.
+struct FolderContextMenu: View {
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var localSync: LocalSyncStore
+
+    let folder: Folder
+
+    var body: some View {
+        Button {
+            library.sendFolderToWatch(folder)
+        } label: {
+            Label("Send to Watch", systemImage: "applewatch")
+        }
+        if !folder.isSynced {
+            SyncToLocalMenu { rootID in
+                library.syncToLocal(folder, rootID: rootID)
+            }
+        }
+        if folder.isMixtape {
+            Button {
+                library.convertToFolder(folder)
+            } label: {
+                Label("Convert to Folder", systemImage: "folder")
+            }
+        } else if !library.hasSubfolders(folder.id) {
+            // Mixtapes can't contain folders, so only childless folders convert.
+            Button {
+                library.convertToMixtape(folder)
+            } label: {
+                Label("Convert to Mixtape", systemImage: "recordingtape")
+            }
+        }
+    }
+}
+
+/// The "Sync to Local" context-menu entry, root-aware: with one reachable
+/// sync folder it's a plain button; with several it becomes a submenu naming
+/// each folder. Renders nothing while no sync folder is reachable.
+struct SyncToLocalMenu: View {
+    @EnvironmentObject private var localSync: LocalSyncStore
+
+    let action: (UUID) -> Void
+
+    var body: some View {
+        let roots = localSync.resolvedRoots
+        if roots.count == 1, let only = roots.first {
+            Button {
+                action(only.id)
+            } label: {
+                Label("Sync to Local", systemImage: "arrow.triangle.2.circlepath")
+            }
+        } else if roots.count > 1 {
+            Menu {
+                ForEach(roots) { root in
+                    Button(root.name) { action(root.id) }
+                }
+            } label: {
+                Label("Sync to Local", systemImage: "arrow.triangle.2.circlepath")
+            }
+        }
+    }
+}
+
+/// A context-menu entry that moves a track's file into a sync folder. Shows
+/// itself only when a sync folder is reachable and the track isn't already
+/// synced. Safe to drop into any track's `contextMenu`.
+struct SyncToLocalButton: View {
+    @EnvironmentObject private var library: LibraryStore
+
+    let track: Track
+
+    var body: some View {
+        if !track.isSynced {
+            SyncToLocalMenu { rootID in
+                library.syncToLocal(track, rootID: rootID)
+            }
+        }
+    }
 }
 
 /// A context-menu button that pushes a track to (or pulls it from) the Apple

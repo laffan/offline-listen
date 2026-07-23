@@ -106,6 +106,19 @@ Five screens (tabs):
    Order you set the sequence by hand — **touch and hold a folder and drag** it
    into place; the order persists to `folders.json`. Folders persist to
    `Documents/folders.json`.
+
+   **Folders nest.** A folder's own screen has the same folder-plus button to
+   create a subfolder, and any subfolders list in a **Folders** section above
+   the tracks. (Nesting is what lets the local sync folder's directory tree
+   mirror into the library — see
+   [Local sync](#local-sync-a-folder-that-mirrors-part-of-the-library).)
+
+   **Mixtapes.** Touch-and-hold a folder for **Convert to Mixtape**: the
+   folder's title now draws over a cover-image banner — in the folder list and
+   atop its own screen — with an **Edit Cover** button at the bottom of its
+   track list for picking the image, positioning the crop, and choosing a
+   title font. **Convert to Folder** turns it back. See
+   [Mixtape folders](#mixtape-folders).
 4. **Player** — artwork, scrubber, play/pause, skip, next/previous — the same
    control suite for audio and video. Video is edge-to-edge in portrait and
    goes fullscreen automatically when the phone rotates to landscape (tap the
@@ -113,9 +126,14 @@ Five screens (tabs):
    Control Center. For a chaptered track, small **dots** sit along the scrubber
    at each chapter's start and the **current chapter title** shows on its own
    line beneath the title/artist, updating as playback crosses a marker.
-5. **Settings** — AI configuration on top, a **Blog Agent** section (posts per
+5. **Settings** — AI configuration on top, a **Local Sync** section, a
+   **Blog Agent** section (posts per
    refresh / songs per post limits for the Browse tab's Blog Agent sources),
    and the **Log** as a section beneath them.
+   - **Local Sync.** Pick a folder (in Files — On My iPhone, iCloud Drive, or
+     any file provider) to sync part of the library with; see
+     [Local sync](#local-sync-a-folder-that-mirrors-part-of-the-library).
+     Removing the sync folder keeps its files — they just leave the library.
    - **AI model & API key.** Pick **Haiku** (fast/cheap) or **Sonnet** (more
      capable), paste an Anthropic API key, and **Verify & Save** — the key is
      checked against the API and, on success, stored in the device **Keychain**
@@ -176,7 +194,10 @@ beneath the Browse title:
   lands in the Inbox and gets the same best-effort AI organization as any
   download) — and saving **mid-listen doesn't cut the song off**: playback
   hands off to the main Player at the same position and keeps going in the
-  background while you carry on browsing. Discard deletes the file and hides
+  background while you carry on browsing. The handoff deliberately does
+  **not** count as listening — auditioning a track in the preview is how you
+  decided to keep it, so the saved track stays in the Inbox until you play
+  it from the library. Discard deletes the file and hides
   the item for good. Dismissing
   the modal without deciding deletes the temp file and leaves the item
   untouched.
@@ -240,6 +261,90 @@ but jump ahead of queued jobs, since the user is sitting in the modal waiting.
 While a download holds the pipeline the modal says so ("Waiting for the
 download queue to free up…").
 
+## Local sync: a folder that mirrors part of the library
+
+Settings ▸ **Local Sync** lets you pick folders — anything the Files app can
+reach (On My iPhone, iCloud Drive, Dropbox, any file provider) — to mirror
+with. **Several sync folders can be configured at once** (each is a *root*
+with its own id; with more than one, "Sync to Local" becomes a submenu naming
+them). Access persists across launches via security-scoped bookmarks; a root
+whose provider is unreachable shows a warning icon in Settings and simply
+pauses until it's back.
+
+Each folder is a **replica, not live storage**: cloud providers serve
+*placeholder* files that must be downloaded through file coordination before
+they're readable, and can evict them again — so the app never plays from a
+sync folder directly. Synced files live app-local in
+`Documents/Synced/<root-id>/` (mirroring that folder's directory structure)
+and always play offline; per root, two background workers keep the two sides
+identical:
+
+- The **importer** scans the folder (off the main thread — a cloud directory
+  can block on the network) and compares each file's size/mtime **stamp**
+  against a persisted manifest (`Documents/sync-manifest.json`). New or
+  changed files are copied in with a coordinated read — which is what makes a
+  provider download its placeholder — and each track appears as its copy
+  lands. Files that vanished from the folder leave the library (and the local
+  store). Directories become (nested) folders, playlist trees arrive as
+  playlists.
+- The **exporter** drains a persisted journal (`Documents/sync-pending.json`)
+  of write-through ops produced by in-app changes: **Sync to Local** copies a
+  track or folder out, moves/renames/deletes of synced items update the
+  replica, mixtape edits rewrite `.mixtapedata`. If the folder is unreachable
+  the ops wait and retry on the next pass — the in-app change never fails or
+  blocks. Reconciliation is skipped while exports are pending, so a stale
+  replica can't undo the changes waiting to be written. Settings shows the
+  mirror's state (Syncing… / N changes waiting / Up to date).
+
+Synced items wear a **sync icon** (`arrow.triangle.2.circlepath`) but
+otherwise behave exactly like everything else — tap to play, reorder,
+classify, archive, send to the watch. Passes run on filesystem events
+(kqueue, for local folders), on returning to the foreground, and after every
+in-app change; cloud providers don't reliably signal, so foregrounding the
+app is what picks up remote edits there.
+
+**Deleting** a synced folder keeps the app's promise that deleting a folder
+never deletes tracks: its files move into the plain library first, then the
+directory (and its replica copy) is removed. **Removing a sync folder** in
+Settings, though, removes its synced content: the library only mirrors
+folders it's still connected to, so that root's tracks and folders leave the
+library and its local store is deleted — the sync folder's own files are
+never touched. Playable types:
+`m4a`/`mp3`/`aac`/`wav`/`aiff` audio and `mp4`/`mov`/`m4v` video; hidden
+files and folders are ignored. The trade-off of the copy model is deliberate:
+each synced file exists twice (app copy + provider copy) — that's what makes
+playback offline-proof.
+
+## Mixtape folders
+
+**Convert to Mixtape** (touch-and-hold a folder) dresses a playlist up as a
+mixtape: the folder's name draws over a **cover-image banner** — in the folder
+list and as a header inside the folder — in a font of your choosing. Inside a
+mixtape, an **Edit Cover** button at the bottom of the track list opens the
+editor: pick an image from Photos and frame it — **separately for the tall
+header and the short list row** (drag to pan, a zoom slider per preview, pinch
+also works on the big one), as a **non-destructive crop**: only zoom/pan
+values are stored, the image is kept whole, so the framing can be changed any
+time. The title gets a **font picker listing every system font family** (each
+name rendered in its own face), a **text colour**, **left/center
+justification** for the list row, and an optional **tape chip** behind it —
+masking-tape white by default, with preset swatches and a free colour well.
+**Convert to Folder** reverts it, discarding cover and style. Mixtapes can't
+contain folders, so only childless folders offer the conversion.
+
+Style (crop, font, colours, tape, justification) persists in `folders.json`;
+the cover JPEG lives in `Documents/MixtapeCovers/<folder-id>.jpg`. A mixtape
+**synced to local** keeps a second copy of all of it in the sync folder: a
+hidden **`.mixtapedata`** directory (`cover.jpg` + `style.json`) inside its
+replica directory, written through the export journal on every conversion and
+cover/style edit. That's what makes mixtapes **sync between devices** when
+the sync folder is a cloud drive: importing a directory that contains
+`.mixtapedata` brings it into the library *as* a mixtape — cover, crop, font,
+tape and all — and a remote `.mixtapedata` change (another device editing the
+cover) is picked up on the next pass. Remote changes are adopted only when
+the `.mixtapedata` stamps actually changed, so a stale replica can't undo an
+in-app style edit.
+
 ### Pipeline
 
 ```
@@ -254,7 +359,8 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 |------|------|
 | `OfflineListenApp.swift` | App entry; wires up the shared stores. |
 | `Models.swift` | `Track`, `Folder`, `DownloadMode`, `LibraryFilter`, `FolderSort`, paths, helpers. |
-| `LibraryStore.swift` | Persists the library to `Documents/library.json` and folders to `Documents/folders.json`. |
+| `LibraryStore.swift` | Persists the library to `Documents/library.json` and folders to `Documents/folders.json`; owns the local moves across the sync boundary (queueing replica ops), the importer's reconcile primitives, and the mixtape conversions. |
+| `LocalSync.swift` | `LocalSyncStore` — the sync folder's security-scoped bookmark, the stamped manifest + journaled exporter, the coordinated importer (placeholder-aware copies), kqueue monitoring, and the off-main tree scan. |
 | `DownloadManager.swift` | Serial download queue + `DownloadJob`. |
 | `YouTubeExtractor.swift` | `MediaExtractor` protocol + YoutubeDL-iOS impl + a mock. |
 | `YouTubeKitExtractor.swift` | Native-Swift (b5i/YouTubeKit) primary extractor. |
@@ -285,7 +391,8 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `BrowseSourceView.swift` | One source's items with per-row Download/Preview/Discard, plus a **Select** mode for bulk download. |
 | `BrowsePreviewView.swift` | The preview modal: pipeline download, mini player, Save/Discard. |
 | `*View.swift` | The five SwiftUI screens (Download, Browse, Library, Player, Settings — which embeds the Log). |
-| `FolderView.swift` | Folder detail (tap-to-play, reorder) and Inbox screens. |
+| `FolderView.swift` | Folder detail (tap-to-play, reorder, subfolders, mixtape header/Edit Cover) and Inbox screens. |
+| `MixtapeViews.swift` | Mixtape banner rendering (non-destructive crop), the shared folder-row label, and the Edit Cover sheet (PhotosPicker + drag/pinch + font picker). |
 | `WatchFolderView.swift` | The phone's **Watch** virtual-folder screen (manage what's been sent to the watch). |
 | `WatchManifest.swift` | Wire format shared by the iPhone and watch targets (the sync manifest, the remote-control `RemoteNowPlaying`/`RemoteCommand` types, + WC keys). |
 | `WatchSync.swift` | Phone-side WatchConnectivity bridge: pushes the manifest + audio files, handles the watch's "Clear all". |

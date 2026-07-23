@@ -74,12 +74,17 @@ final class PlaybackManager: NSObject, ObservableObject {
     /// **folder/playlist is deliberately curated**, though, so it plays straight
     /// through in list order regardless of type; pass `false` there.
     /// `startAt` overrides the natural start position — used to jump to a chapter.
-    func play(_ track: Track, in tracks: [Track], startAt: Double? = nil, restrictToCategory: Bool = true) {
+    /// `countsAsListened: false` keeps the track in the Inbox even though it
+    /// starts playing — used by the preview modal's save handoff, where the
+    /// user auditioned the track but hasn't "listened" to it from the library.
+    func play(_ track: Track, in tracks: [Track], startAt: Double? = nil,
+              restrictToCategory: Bool = true, countsAsListened: Bool = true) {
         let pool = tracks.isEmpty ? [track] : tracks
         queue = restrictToCategory ? pool.filter { $0.playbackCategory == track.playbackCategory } : pool
         if queue.isEmpty { queue = [track] }
         index = queue.firstIndex(where: { $0.id == track.id }) ?? 0
-        loadCurrent(autoPlay: true, startAt: startAt ?? startPosition(for: track))
+        loadCurrent(autoPlay: true, startAt: startAt ?? startPosition(for: track),
+                    countsAsListened: countsAsListened)
     }
 
     func togglePlayPause() {
@@ -160,7 +165,7 @@ final class PlaybackManager: NSObject, ObservableObject {
 
     // MARK: - Engine
 
-    private func loadCurrent(autoPlay: Bool, startAt: Double = 0) {
+    private func loadCurrent(autoPlay: Bool, startAt: Double = 0, countsAsListened: Bool = true) {
         guard queue.indices.contains(index) else { return }
         let track = queue[index]
         currentTrack = track
@@ -186,8 +191,12 @@ final class PlaybackManager: NSObject, ObservableObject {
         if autoPlay {
             try? AVAudioSession.sharedInstance().setActive(true)
             player.play()
-            // Starting playback counts as listened — the track leaves the Inbox.
-            library.markPlayed(track.id)
+            // Starting playback counts as listened — the track leaves the
+            // Inbox. (The preview-save handoff opts out: an auditioned save
+            // should still land in the Inbox.)
+            if countsAsListened {
+                library.markPlayed(track.id)
+            }
         }
         startTicker()
         updateNowPlaying()

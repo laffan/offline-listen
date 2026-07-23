@@ -8,11 +8,15 @@ struct OfflineListenApp: App {
     @StateObject private var aiSettings: AISettingsStore
     @StateObject private var aiOrganizer: AIOrganizer
     @StateObject private var browse: BrowseStore
+    @StateObject private var localSync: LocalSyncStore
 
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
         let library = LibraryStore()
+        // Resolves the sync-folder bookmark and kicks the first sync pass
+        // (export any journaled changes, then reconcile against the folder).
+        _localSync = StateObject(wrappedValue: LocalSyncStore(library: library))
         let aiSettings = AISettingsStore()
         let aiOrganizer = AIOrganizer(library: library, settings: aiSettings)
         _library = StateObject(wrappedValue: library)
@@ -56,6 +60,7 @@ struct OfflineListenApp: App {
                 .environmentObject(aiSettings)
                 .environmentObject(aiOrganizer)
                 .environmentObject(browse)
+                .environmentObject(localSync)
                 .environmentObject(LogStore.shared)
                 .task { playback.restoreLastSession() }
                 .onAppear { importShared() }
@@ -63,6 +68,9 @@ struct OfflineListenApp: App {
                 .onChange(of: scenePhase) { phase in
                     if phase == .active {
                         importShared()
+                        // Catch anything that changed in the sync folder while
+                        // the app was in the background.
+                        localSync.scheduleRescan()
                     } else {
                         playback.saveState()
                     }

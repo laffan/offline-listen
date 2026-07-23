@@ -16,6 +16,58 @@ enum AppPaths {
         documents.appendingPathComponent("folders.json")
     }
 
+    /// The user-chosen sync folders, resolved from their security-scoped
+    /// bookmarks by `LocalSyncStore` at launch, keyed by each root's id.
+    /// These are *replicas*: the app never plays from them — synced files are
+    /// copied in and out of the per-root local stores, which is what the
+    /// library actually uses. Cloud providers (Dropbox, iCloud Drive) serve
+    /// placeholders and can evict files, so only a local copy is dependable.
+    /// (An unresolvable root — provider offline — is simply absent here.)
+    static var syncRootURLs: [UUID: URL] = [:]
+
+    /// The app-local home of synced files: `Documents/Synced/`, with one
+    /// subdirectory per sync root (named by its id), each mirroring that sync
+    /// folder's directory structure. Synced tracks play from here — always
+    /// materialized, always offline.
+    static var syncLocalStore: URL {
+        let url = documents.appendingPathComponent("Synced", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    /// The local store for one sync root.
+    static func syncLocalStore(for rootID: UUID) -> URL {
+        let url = syncLocalStore.appendingPathComponent(rootID.uuidString, isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    /// Where cover images for *unsynced* mixtape folders live (a synced
+    /// mixtape's cover lives in its directory's `.mixtapedata` instead).
+    static var mixtapeCovers: URL {
+        let url = documents.appendingPathComponent("MixtapeCovers", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    /// The hidden per-folder directory a synced mixtape keeps its cover image
+    /// and style in, so the mixtape travels with the files.
+    static let mixtapeDataDirName = ".mixtapedata"
+
+    /// A file name based on `base` that doesn't collide with anything already
+    /// in `directory`, disambiguating with " (2)", " (3)", … if needed.
+    /// `ext` may be empty for a directory name.
+    static func uniqueName(base: String, ext: String, in directory: URL) -> String {
+        let suffix = ext.isEmpty ? "" : ".\(ext)"
+        var candidate = "\(base)\(suffix)"
+        var counter = 2
+        while FileManager.default.fileExists(atPath: directory.appendingPathComponent(candidate).path) {
+            candidate = "\(base) (\(counter))\(suffix)"
+            counter += 1
+        }
+        return candidate
+    }
+
     /// Scratch directory used while a download/convert is in flight.
     static var work: URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("downloads", isDirectory: true)
@@ -196,8 +248,99 @@ extension Array where Element == Chapter {
     }
 }
 
+/// File types the library recognises as playable, used when scanning the
+/// local sync folder. Mirrors what the download pipeline can produce plus the
+/// other containers AVFoundation decodes.
+enum PlayableMedia {
+    static let audioExtensions: Set<String> = ["m4a", "mp3", "aac", "wav", "aiff", "aif"]
+    static let videoExtensions: Set<String> = ["mp4", "mov", "m4v"]
+
+    static func isVideo(extension ext: String) -> Bool {
+        videoExtensions.contains(ext.lowercased())
+    }
+
+    static func isPlayable(extension ext: String) -> Bool {
+        let lower = ext.lowercased()
+        return audioExtensions.contains(lower) || videoExtensions.contains(lower)
+    }
+}
+
+/// How a mixtape folder draws its title banner: which part of the cover image
+/// shows behind the title (a non-destructive crop — the original image is kept
+/// untouched, separately framed for the tall header and the short list row),
+/// which font/colour the title uses, whether it sits on a tape chip, and how
+/// it's justified in the list row. Persisted in `folders.json` and, for synced
+/// mixtapes, mirrored to the folder's `.mixtapedata/style.json` so the look
+/// travels with the files.
+struct MixtapeStyle: Codable, Hashable {
+    /// Font family/PostScript name for the title, nil for the system font.
+    var fontName: String?
+    /// Title colour as "#RRGGBB", nil for white.
+    var textColorHex: String?
+    /// True to centre the title in the folder-list row (default left).
+    var centered: Bool
+    /// True to draw a tape-like chip behind the title.
+    var tape: Bool
+    /// Tape colour as "#RRGGBB", nil for masking-tape white.
+    var tapeColorHex: String?
+    /// Header-banner crop: zoom applied on top of aspect-fill (1…4) and pan as
+    /// a fraction of the banner's size (clamped at render to the image's
+    /// actual overflow, so a short banner can legitimately store values well
+    /// past ±1).
+    var zoom: Double
+    var offsetX: Double
+    var offsetY: Double
+    /// The list row's own crop — the row is much shorter than the header, so
+    /// it gets its own framing.
+    var rowZoom: Double
+    var rowOffsetX: Double
+    var rowOffsetY: Double
+
+    /// The default tape colour: masking-tape white.
+    static let defaultTapeHex = "#F2EBDC"
+
+    init(fontName: String? = nil, textColorHex: String? = nil,
+         centered: Bool = false, tape: Bool = false, tapeColorHex: String? = nil,
+         zoom: Double = 1, offsetX: Double = 0, offsetY: Double = 0,
+         rowZoom: Double = 1, rowOffsetX: Double = 0, rowOffsetY: Double = 0) {
+        self.fontName = fontName
+        self.textColorHex = textColorHex
+        self.centered = centered
+        self.tape = tape
+        self.tapeColorHex = tapeColorHex
+        self.zoom = zoom
+        self.offsetX = offsetX
+        self.offsetY = offsetY
+        self.rowZoom = rowZoom
+        self.rowOffsetX = rowOffsetX
+        self.rowOffsetY = rowOffsetY
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case fontName, textColorHex, centered, tape, tapeColorHex
+        case zoom, offsetX, offsetY, rowZoom, rowOffsetX, rowOffsetY
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        fontName = try c.decodeIfPresent(String.self, forKey: .fontName)
+        textColorHex = try c.decodeIfPresent(String.self, forKey: .textColorHex)
+        centered = try c.decodeIfPresent(Bool.self, forKey: .centered) ?? false
+        tape = try c.decodeIfPresent(Bool.self, forKey: .tape) ?? false
+        tapeColorHex = try c.decodeIfPresent(String.self, forKey: .tapeColorHex)
+        zoom = try c.decodeIfPresent(Double.self, forKey: .zoom) ?? 1
+        offsetX = try c.decodeIfPresent(Double.self, forKey: .offsetX) ?? 0
+        offsetY = try c.decodeIfPresent(Double.self, forKey: .offsetY) ?? 0
+        rowZoom = try c.decodeIfPresent(Double.self, forKey: .rowZoom) ?? 1
+        rowOffsetX = try c.decodeIfPresent(Double.self, forKey: .rowOffsetX) ?? 0
+        rowOffsetY = try c.decodeIfPresent(Double.self, forKey: .rowOffsetY) ?? 0
+    }
+}
+
 /// A user-created folder that groups library tracks. Deleting a folder never
-/// deletes its tracks — they just return to the main library list.
+/// deletes its tracks — they just return to the main library list. Folders can
+/// nest (`parentID`); a folder that mirrors a directory in the local sync
+/// folder is `isSynced` and remembers its directory as `syncedPath`.
 struct Folder: Identifiable, Codable, Hashable {
     let id: UUID
     var name: String
@@ -206,25 +349,68 @@ struct Folder: Identifiable, Codable, Hashable {
     /// track's `isArchived`, this hides the folder from the main library and
     /// surfaces it in the Archive instead.
     var isArchived: Bool
+    /// The folder this folder lives in, or nil at the root of the library.
+    var parentID: UUID?
+    /// True when the folder mirrors a directory inside a sync folder.
+    var isSynced: Bool
+    /// Which sync root the folder belongs to (only while `isSynced`).
+    var syncRootID: UUID?
+    /// Directory path relative to the sync root (only while `isSynced`).
+    var syncedPath: String?
+    /// True when the folder is a mixtape: its title draws over a cover-image
+    /// banner and it can't contain subfolders.
+    var isMixtape: Bool
+    /// The mixtape's banner style (crop + font). Meaningful while `isMixtape`.
+    var mixtape: MixtapeStyle
 
-    init(id: UUID = UUID(), name: String, dateCreated: Date = Date(), isArchived: Bool = false) {
+    init(id: UUID = UUID(), name: String, dateCreated: Date = Date(), isArchived: Bool = false,
+         parentID: UUID? = nil, isSynced: Bool = false, syncRootID: UUID? = nil, syncedPath: String? = nil,
+         isMixtape: Bool = false, mixtape: MixtapeStyle = MixtapeStyle()) {
         self.id = id
         self.name = name
         self.dateCreated = dateCreated
         self.isArchived = isArchived
+        self.parentID = parentID
+        self.isSynced = isSynced
+        self.syncRootID = syncRootID
+        self.syncedPath = syncedPath
+        self.isMixtape = isMixtape
+        self.mixtape = mixtape
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, dateCreated, isArchived
+        case id, name, dateCreated, isArchived, parentID, isSynced, syncRootID, syncedPath, isMixtape, mixtape
     }
 
-    // Custom decode so folders.json saved before `isArchived` existed still load.
+    // Custom decode so folders.json saved before newer fields existed still loads.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
         name = try c.decode(String.self, forKey: .name)
         dateCreated = try c.decode(Date.self, forKey: .dateCreated)
         isArchived = try c.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
+        parentID = try c.decodeIfPresent(UUID.self, forKey: .parentID)
+        isSynced = try c.decodeIfPresent(Bool.self, forKey: .isSynced) ?? false
+        syncRootID = try c.decodeIfPresent(UUID.self, forKey: .syncRootID)
+        syncedPath = try c.decodeIfPresent(String.self, forKey: .syncedPath)
+        isMixtape = try c.decodeIfPresent(Bool.self, forKey: .isMixtape) ?? false
+        mixtape = try c.decodeIfPresent(MixtapeStyle.self, forKey: .mixtape) ?? MixtapeStyle()
+    }
+
+    /// The synced folder's directory inside its root's app-local sync store
+    /// (`Documents/Synced/<root-id>/…`), nil while unsynced. The matching
+    /// directory in the replica (the user's sync folder) is maintained by the
+    /// exporter.
+    var syncedDirectoryURL: URL? {
+        guard isSynced, let rootID = syncRootID, let path = syncedPath else { return nil }
+        return AppPaths.syncLocalStore(for: rootID).appendingPathComponent(path, isDirectory: true)
+    }
+
+    /// Where this mixtape's cover image lives. Always app-local; a synced
+    /// mixtape's `.mixtapedata/cover.jpg` in the replica is an exported copy.
+    var coverURL: URL? {
+        guard isMixtape else { return nil }
+        return AppPaths.mixtapeCovers.appendingPathComponent("\(id.uuidString).jpg")
     }
 }
 
@@ -259,6 +445,14 @@ struct Track: Identifiable, Codable, Hashable {
     /// listening. The phone is the source of truth; the "Watch" virtual folder
     /// lists every track where this is set (see `LibraryStore.watchTracks`).
     var sentToWatch: Bool
+    /// True when the track is mirrored to a sync folder. Its file lives in
+    /// that root's app-local sync store (`Documents/Synced/<root-id>/…`) and
+    /// `fileName` is a path relative to that store (it may contain directory
+    /// components); the same relative path names its exported copy in the
+    /// replica.
+    var isSynced: Bool
+    /// Which sync root the track belongs to (only while `isSynced`).
+    var syncRootID: UUID?
 
     init(id: UUID = UUID(),
          title: String,
@@ -275,7 +469,9 @@ struct Track: Identifiable, Codable, Hashable {
          hasBeenPlayed: Bool = false,
          originalTitle: String? = nil,
          chapters: [Chapter] = [],
-         sentToWatch: Bool = false) {
+         sentToWatch: Bool = false,
+         isSynced: Bool = false,
+         syncRootID: UUID? = nil) {
         self.id = id
         self.title = title
         self.artist = artist
@@ -292,10 +488,12 @@ struct Track: Identifiable, Codable, Hashable {
         self.originalTitle = originalTitle
         self.chapters = chapters
         self.sentToWatch = sentToWatch
+        self.isSynced = isSynced
+        self.syncRootID = syncRootID
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, artist, fileName, sourceURL, duration, dateAdded, isArchived, kind, lastPosition, isVideo, folderID, hasBeenPlayed, originalTitle, chapters, sentToWatch
+        case id, title, artist, fileName, sourceURL, duration, dateAdded, isArchived, kind, lastPosition, isVideo, folderID, hasBeenPlayed, originalTitle, chapters, sentToWatch, isSynced, syncRootID
     }
 
     // Custom decode so libraries saved before these fields existed still load.
@@ -317,11 +515,19 @@ struct Track: Identifiable, Codable, Hashable {
         originalTitle = try c.decodeIfPresent(String.self, forKey: .originalTitle)
         chapters = try c.decodeIfPresent([Chapter].self, forKey: .chapters) ?? []
         sentToWatch = try c.decodeIfPresent(Bool.self, forKey: .sentToWatch) ?? false
+        isSynced = try c.decodeIfPresent(Bool.self, forKey: .isSynced) ?? false
+        syncRootID = try c.decodeIfPresent(UUID.self, forKey: .syncRootID)
     }
 
-    /// Absolute on-disk location resolved at access time.
+    /// Absolute on-disk location resolved at access time. A synced track lives
+    /// in its root's app-local sync store (`Documents/Synced/<root-id>/…`) —
+    /// never in the user's sync folder itself, whose files may be cloud
+    /// placeholders.
     var fileURL: URL {
-        AppPaths.documents.appendingPathComponent(fileName)
+        if isSynced, let rootID = syncRootID {
+            return AppPaths.syncLocalStore(for: rootID).appendingPathComponent(fileName)
+        }
+        return AppPaths.documents.appendingPathComponent(fileName)
     }
 
     /// On-disk size in bytes (0 when the file is missing/unreadable).

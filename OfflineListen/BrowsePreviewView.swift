@@ -256,7 +256,10 @@ struct BrowsePreviewView: View {
         guard let track = model.saveToLibrary(as: item, library: library) else { return }
         browse.markSaved(item)
         if wasPlaying {
-            playback.play(track, in: library.activeTracks, startAt: handoffTime)
+            // The handoff doesn't count as listening — the saved track still
+            // lands in the Inbox like any fresh download.
+            playback.play(track, in: library.activeTracks, startAt: handoffTime,
+                          countsAsListened: false)
         }
         Task { await aiOrganizer.organizeIfEnabled(track.id) }
         dismiss()
