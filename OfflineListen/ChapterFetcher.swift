@@ -28,22 +28,27 @@ enum ChapterFetcher {
             return []
         }
         do {
-            // Instantiating YoutubeDL configures PythonKit's module search path so
-            // `import yt_dlp` resolves even when this download went through the
-            // native extractor.
-            _ = YoutubeDL()
-            let ytdlpModule = Python.import("yt_dlp")
-            let options: PythonObject = [
-                "quiet": true,
-                "noplaylist": true,
-                "skip_download": true,
-                "nocheckcertificate": true,
-            ]
-            let ytdlp = ytdlpModule.YoutubeDL(options)
-            let info = try ytdlp.extract_info.throwing.dynamicallyCall(withKeywordArguments: [
-                "": url.absoluteString, "download": false, "process": false,
-            ])
-            let chapters = parseChapters(from: info)
+            // The whole Python section — instantiation, extract_info, and the
+            // chapters parse — runs under the app-wide gate so it can't overlap
+            // another pipeline slot's interpreter work.
+            let chapters = try await PythonGate.shared.run { () throws -> [Chapter] in
+                // Instantiating YoutubeDL configures PythonKit's module search path so
+                // `import yt_dlp` resolves even when this download went through the
+                // native extractor.
+                _ = YoutubeDL()
+                let ytdlpModule = Python.import("yt_dlp")
+                let options: PythonObject = [
+                    "quiet": true,
+                    "noplaylist": true,
+                    "skip_download": true,
+                    "nocheckcertificate": true,
+                ]
+                let ytdlp = ytdlpModule.YoutubeDL(options)
+                let info = try ytdlp.extract_info.throwing.dynamicallyCall(withKeywordArguments: [
+                    "": url.absoluteString, "download": false, "process": false,
+                ])
+                return parseChapters(from: info)
+            }
             if !chapters.isEmpty {
                 appLog("Captured \(chapters.count) chapter marker(s).", level: .success, category: category)
             }

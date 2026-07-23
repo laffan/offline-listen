@@ -70,6 +70,7 @@
 		1B00000000000000000002E8 /* BrowsePreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E8 /* BrowsePreviewView.swift */; };
 		1B00000000000000000002E9 /* BlogAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E9 /* BlogAgent.swift */; };
 		1B00000000000000000002EA /* DiscographyAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002EA /* DiscographyAgent.swift */; };
+		1B00000000000000000002EB /* PythonGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002EB /* PythonGate.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -156,6 +157,7 @@
 		1A00000000000000000002E8 /* BrowsePreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowsePreviewView.swift; sourceTree = "<group>"; };
 		1A00000000000000000002E9 /* BlogAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlogAgent.swift; sourceTree = "<group>"; };
 		1A00000000000000000002EA /* DiscographyAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscographyAgent.swift; sourceTree = "<group>"; };
+		1A00000000000000000002EB /* PythonGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PythonGate.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -214,6 +216,7 @@
 				1A00000000000000000002E5 /* AIDiscovery.swift */,
 				1A00000000000000000002E9 /* BlogAgent.swift */,
 				1A00000000000000000002EA /* DiscographyAgent.swift */,
+				1A00000000000000000002EB /* PythonGate.swift */,
 				1A00000000000000000002E6 /* BrowseView.swift */,
 				1A00000000000000000002E7 /* BrowseSourceView.swift */,
 				1A00000000000000000002E8 /* BrowsePreviewView.swift */,
@@ -468,6 +471,7 @@
 				1B00000000000000000002E5 /* AIDiscovery.swift in Sources */,
 				1B00000000000000000002E9 /* BlogAgent.swift in Sources */,
 				1B00000000000000000002EA /* DiscographyAgent.swift in Sources */,
+				1B00000000000000000002EB /* PythonGate.swift in Sources */,
 				1B00000000000000000002E6 /* BrowseView.swift in Sources */,
 				1B00000000000000000002E7 /* BrowseSourceView.swift in Sources */,
 				1B00000000000000000002E8 /* BrowsePreviewView.swift in Sources */,

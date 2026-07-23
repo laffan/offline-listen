@@ -152,8 +152,11 @@ private struct DownloadRecord: Codable {
     var failureMessage: String?
 }
 
-/// Owns the download queue and runs jobs one at a time:
-/// URL → extract audio (yt-dlp) → convert/save → add to library.
+/// Owns the download queue and runs up to `maxConcurrent` jobs at once:
+/// URL → extract (native / yt-dlp) → convert/save → add to library.
+/// Anything that enters the embedded Python interpreter is serialized
+/// app-wide through `PythonGate`; the parallelism overlaps the network
+/// downloads, never the Python.
 @MainActor
 final class DownloadManager: ObservableObject {
     @Published private(set) var jobs: [DownloadJob] = []
@@ -166,25 +169,33 @@ final class DownloadManager: ObservableObject {
     /// Optional AI organizer; when present and the user has opted in, finished
     /// downloads are classified/cleaned automatically.
     private let aiOrganizer: AIOrganizer?
-    /// Published so the preview modal can show a live "waiting for the queue"
-    /// state while something else holds the pipeline.
-    @Published private(set) var isProcessing = false
 
-    /// The job currently being processed and the task running it, so an active
-    /// download can be cancelled.
-    private var activeJob: DownloadJob?
-    private var activeTask: Task<Void, Never>?
+    /// How many downloads may run at once. Every phase that touches the
+    /// embedded Python interpreter is serialized app-wide through
+    /// `PythonGate`, so this parallelism overlaps the network downloads (and
+    /// native YouTubeKit extractions) — concurrent Python never happens.
+    static let maxConcurrent = 2
 
-    /// Browse previews waiting for the pipeline. They share the serial queue
-    /// with downloads (two concurrent yt-dlp extractions risk crashing the
-    /// embedded interpreter) but jump ahead of queued jobs — a preview has the
-    /// user actively waiting on it.
+    /// Work currently holding a pipeline slot (jobs and previews alike),
+    /// keyed by the job/preview id so a cancel can find its task.
+    private var activeTasks: [UUID: Task<Void, Never>] = [:]
+    /// Job ids among `activeTasks`, so the scheduler never picks a queued job
+    /// twice (a job stays `.queued` until its slot's task actually starts).
+    private var activeJobIDs: Set<UUID> = []
+    /// Occupied slots, published so the preview modal's "waiting for the
+    /// queue" state updates live.
+    @Published private(set) var activeCount = 0
+
+    /// True while at least one slot is working.
+    var isProcessing: Bool { activeCount > 0 }
+
+    /// Browse previews waiting for a pipeline slot. They jump ahead of queued
+    /// jobs — a preview has the user actively waiting on it.
     private var previewQueue: [PreviewWork] = []
-    private var activePreviewID: UUID?
 
-    /// True while the pipeline is busy with a download or another preview —
-    /// the preview modal shows a "waiting for the queue" state off this.
-    var isPipelineBusy: Bool { isProcessing }
+    /// True when every slot is taken — the preview modal shows a "waiting for
+    /// the queue" state off this while its preview sits in line.
+    var isPipelineBusy: Bool { activeCount >= Self.maxConcurrent }
 
     init(library: LibraryStore,
          aiOrganizer: AIOrganizer? = nil,
@@ -326,18 +337,19 @@ final class DownloadManager: ObservableObject {
         }
         jobs.insert(job, at: 0)
         appLog("Queued \(job.mode.displayName) download: \(trimmed)", category: "Queue")
-        Task { await processNext() }
+        processNext()
     }
 
-    /// Adds a playlist URL to the queue. The job runs in the serial queue (so its
-    /// yt-dlp resolution never overlaps another download's extraction), creates a
-    /// folder named after the playlist, and enqueues one download per entry.
+    /// Adds a playlist URL to the queue. The job's yt-dlp resolution is
+    /// serialized through `PythonGate` (it never overlaps another extraction);
+    /// it creates a folder named after the playlist and enqueues one download
+    /// per entry.
     func enqueuePlaylist(urlString: String, mode: DownloadMode) {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         let job = DownloadJob(url: trimmed, mode: mode, isPlaylist: true)
         jobs.insert(job, at: 0)
         appLog("Queued playlist: \(trimmed)", category: "Queue")
-        Task { await processNext() }
+        processNext()
     }
 
     func clearFinished() {
@@ -348,9 +360,9 @@ final class DownloadManager: ObservableObject {
     /// Stops a job. An active download is cancelled mid-flight; a queued job is
     /// marked cancelled so it's skipped.
     func cancel(_ job: DownloadJob) {
-        if job.id == activeJob?.id {
+        if let task = activeTasks[job.id] {
             appLog("Cancelling: \(job.url)", level: .warning, category: "Queue")
-            activeTask?.cancel()
+            task.cancel()
         } else if job.state == .queued {
             job.state = .cancelled
             appLog("Cancelled queued: \(job.url)", level: .warning, category: "Queue")
@@ -360,9 +372,7 @@ final class DownloadManager: ObservableObject {
 
     /// Removes a job from the queue list (cancelling it first if it's running).
     func remove(_ job: DownloadJob) {
-        if job.id == activeJob?.id {
-            activeTask?.cancel()
-        }
+        activeTasks[job.id]?.cancel()
         jobs.removeAll { $0.id == job.id }
         persistHistory()
     }
@@ -383,44 +393,45 @@ final class DownloadManager: ObservableObject {
         }
     }
 
-    private func processNext() async {
-        guard !isProcessing else { return }
-
-        // Previews first — the user is sitting in the modal waiting for one.
-        if !previewQueue.isEmpty {
-            let work = previewQueue.removeFirst()
-            isProcessing = true
-            activePreviewID = work.id
-            let task = Task { await runPreview(work) }
-            activeTask = task
-            await task.value
-            activeTask = nil
-            activePreviewID = nil
-            isProcessing = false
-            await processNext()
-            return
+    /// Fills free pipeline slots: previews first (the user is sitting in the
+    /// modal waiting), then queued jobs oldest-first (jobs are inserted at the
+    /// front for display). Up to `maxConcurrent` run at once; each completion
+    /// frees its slot and refills.
+    private func processNext() {
+        while activeTasks.count < Self.maxConcurrent {
+            if !previewQueue.isEmpty {
+                let work = previewQueue.removeFirst()
+                startSlot(id: work.id) { await self.runPreview(work) }
+            } else if let job = jobs.last(where: { $0.state == .queued && !activeJobIDs.contains($0.id) }) {
+                activeJobIDs.insert(job.id)
+                startSlot(id: job.id) { await self.run(job) }
+            } else {
+                break
+            }
         }
+    }
 
-        // Oldest queued job first (jobs are inserted at the front for display).
-        guard let job = jobs.last(where: { $0.state == .queued }) else { return }
-
-        isProcessing = true
-        activeJob = job
-        let task = Task { await run(job) }
-        activeTask = task
-        await task.value
-        activeTask = nil
-        activeJob = nil
-        isProcessing = false
-
-        await processNext()
+    /// Spawns one slot's work; when it finishes, the slot frees and the queue
+    /// refills. (The dictionary insert below runs before the task body can —
+    /// both are on the main actor — so the scheduler never double-books.)
+    private func startSlot(id: UUID, work: @escaping () async -> Void) {
+        let task = Task {
+            await work()
+            self.activeTasks[id] = nil
+            self.activeJobIDs.remove(id)
+            self.activeCount = self.activeTasks.count
+            self.processNext()
+        }
+        activeTasks[id] = task
+        activeCount = activeTasks.count
     }
 
     // MARK: - Browse previews
 
-    /// Downloads the media for `urlString` through the serial pipeline and
-    /// returns it *without* adding it to the library — the Browse preview
-    /// modal plays it and then saves or discards it. `mode` picks audio or
+    /// Downloads the media for `urlString` through the pipeline (taking the
+    /// next free slot, ahead of queued jobs) and returns it *without* adding
+    /// it to the library — the Browse preview modal plays it and then saves
+    /// or discards it. `mode` picks audio or
     /// video, mirroring the download queue's own modes, and `quality` steers
     /// the video resolution (the preview modal's quality picker). The file
     /// lands in the previews scratch directory; the caller owns it from there.
@@ -446,7 +457,7 @@ final class DownloadManager: ObservableObject {
                                                 onProgress: onProgress,
                                                 continuation: continuation))
                 appLog("Preview queued: \(url.absoluteString)", category: "Browse")
-                Task { await self.processNext() }
+                self.processNext()
             }
         } onCancel: {
             Task { @MainActor in self.cancelPreview(id) }
@@ -454,14 +465,14 @@ final class DownloadManager: ObservableObject {
     }
 
     /// Cancels a preview: still-queued work is resumed as cancelled right away;
-    /// the active one has its task cancelled (the extractor throws, and
+    /// an active one has its slot's task cancelled (the extractor throws, and
     /// `runPreview` resumes the continuation with that error).
     private func cancelPreview(_ id: UUID) {
         if let index = previewQueue.firstIndex(where: { $0.id == id }) {
             let work = previewQueue.remove(at: index)
             work.continuation.resume(throwing: CancellationError())
-        } else if activePreviewID == id {
-            activeTask?.cancel()
+        } else {
+            activeTasks[id]?.cancel()
         }
     }
 
@@ -652,9 +663,9 @@ final class DownloadManager: ObservableObject {
 
         job.title = playlist.title
 
-        // Ask the user which entries to grab. Blocks the queue while the popup is
-        // open — intentional, since concurrent yt-dlp work risks a crash and the
-        // user is right there having just pasted the link.
+        // Ask the user which entries to grab. Holds this job's pipeline slot
+        // while the popup is open (the other slot keeps working) — the user is
+        // right there having just pasted the link.
         let chosen = await requestPlaylistSelection(playlist, mode: job.mode, jobID: job.id)
         if pendingPlaylist?.jobID == job.id { pendingPlaylist = nil }
 

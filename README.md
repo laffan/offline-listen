@@ -23,7 +23,10 @@ Five screens (tabs):
    relaunches (`Documents/downloads.json`, capped at the 500 most recent), so
    what you've downloaded stays listed until you **Clear** it; only in-flight
    jobs are dropped on quit. The tab's **badge** shows how many downloads are
-   active or queued.
+   active or queued. The queue runs **up to two downloads at once** (see
+   [the pipeline notes](#browse-keeping-tabs-on-audio-sources) — the network
+   work runs in parallel while everything touching the embedded Python
+   interpreter stays serialized).
 
    **Search.** The same single input field doubles as a search box: type
    anything that *isn't* a link and the button flips from **Download** to
@@ -264,11 +267,25 @@ Sources refresh on demand (per-source, or pull-to-refresh / the toolbar button
 for everything); refresh errors show on the source row and in the **Log**
 (category `Browse`).
 
-Preview downloads run through the **same serial pipeline** as the download
-queue — two concurrent yt-dlp extractions risk crashing the embedded Python —
-but jump ahead of queued jobs, since the user is sitting in the modal waiting.
-While a download holds the pipeline the modal says so ("Waiting for the
+Preview downloads run through the **same pipeline** as the download queue but
+jump ahead of queued jobs, since the user is sitting in the modal waiting.
+While every pipeline slot is busy the modal says so ("Waiting for the
 download queue to free up…").
+
+The pipeline runs **up to two downloads at once** — a real help on batch
+downloads (a ticked-off discography, a whole playlist). What's parallel is
+the *network* work: chunked stream downloads, native (YouTubeKit)
+extractions, AVFoundation conversion. Everything that enters the **embedded
+Python interpreter** — a yt-dlp extraction, the forced-client recovery, a
+mid-download URL re-resolve, chapter capture, playlist resolution, the
+JS-runtime plugin import — is serialized app-wide through a single **Python
+gate** (`PythonGate`), because two concurrent interpreter calls can crash the
+app. The gate is release-on-completion: a timed-out extraction that's still
+grinding inside Python keeps holding it, so new Python work *waits* for the
+zombie to settle instead of crashing into it (a stronger guarantee than the
+old wait-briefly-then-proceed heuristic). In practice: two native-extraction
+downloads overlap fully; when both jobs need yt-dlp, their resolutions take
+turns while their downloads still overlap.
 
 ## Local sync: a folder that mirrors part of the library
 
@@ -370,7 +387,8 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `Models.swift` | `Track`, `Folder`, `DownloadMode`, `LibraryFilter`, `FolderSort`, paths, helpers. |
 | `LibraryStore.swift` | Persists the library to `Documents/library.json` and folders to `Documents/folders.json`; owns the local moves across the sync boundary (queueing replica ops), the importer's reconcile primitives, and the mixtape conversions. |
 | `LocalSync.swift` | `LocalSyncStore` — the sync folder's security-scoped bookmark, the stamped manifest + journaled exporter, the coordinated importer (placeholder-aware copies), kqueue monitoring, and the off-main tree scan. |
-| `DownloadManager.swift` | Serial download queue + `DownloadJob`. |
+| `DownloadManager.swift` | Download queue (two concurrent slots) + `DownloadJob` + persisted history. |
+| `PythonGate.swift` | App-wide async mutex serializing every embedded-Python call, so the two-slot pipeline never runs concurrent interpreter work. |
 | `YouTubeExtractor.swift` | `MediaExtractor` protocol + YoutubeDL-iOS impl + a mock. |
 | `YouTubeKitExtractor.swift` | Native-Swift (b5i/YouTubeKit) primary extractor. |
 | `CompositeExtractor.swift` | Tries the native extractor, falls back to yt-dlp. |

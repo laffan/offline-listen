@@ -77,42 +77,50 @@ enum PlaylistResolver {
             return nil
         }
         do {
-            // Instantiating YoutubeDL configures PythonKit's module search path so
-            // `import yt_dlp` resolves (mirrors ChapterFetcher).
-            _ = YoutubeDL()
-            let ytdlpModule = Python.import("yt_dlp")
-            let options: PythonObject = [
-                "quiet": true,
-                // List entries without resolving each video — fast, no nsig work.
-                "extract_flat": "in_playlist",
-                // Skip entries that error rather than aborting the whole playlist.
-                "ignoreerrors": true,
-                "nocheckcertificate": true,
-            ]
-            let ytdlp = ytdlpModule.YoutubeDL(options)
-            let info = try ytdlp.extract_info.throwing.dynamicallyCall(withKeywordArguments: [
-                "": url.absoluteString, "download": false, "process": false,
-            ])
-            let entriesObj = info.get("entries")
-            if entriesObj == Python.None { return nil }
+            // The whole Python section — instantiation, the flat extract, and
+            // the entry parse — runs under the app-wide gate so it can't
+            // overlap another pipeline slot's interpreter work.
+            let resolved: (title: String, entries: [PlaylistEntry])? = try await PythonGate.shared.run {
+                // Instantiating YoutubeDL configures PythonKit's module search path so
+                // `import yt_dlp` resolves (mirrors ChapterFetcher).
+                _ = YoutubeDL()
+                let ytdlpModule = Python.import("yt_dlp")
+                let options: PythonObject = [
+                    "quiet": true,
+                    // List entries without resolving each video — fast, no nsig work.
+                    "extract_flat": "in_playlist",
+                    // Skip entries that error rather than aborting the whole playlist.
+                    "ignoreerrors": true,
+                    "nocheckcertificate": true,
+                ]
+                let ytdlp = ytdlpModule.YoutubeDL(options)
+                let info = try ytdlp.extract_info.throwing.dynamicallyCall(withKeywordArguments: [
+                    "": url.absoluteString, "download": false, "process": false,
+                ])
+                let entriesObj = info.get("entries")
+                if entriesObj == Python.None { return nil }
 
-            let rawTitle = String(info.get("title")) ?? ""
-            let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                let rawTitle = String(info.get("title")) ?? ""
+                let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
 
-            var entries: [PlaylistEntry] = []
-            for entry in entriesObj {
-                if entry == Python.None { continue }
-                guard let entryURL = entryURL(from: entry) else { continue }
-                let rawEntryTitle = (String(entry.get("title")) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                let entryTitle = rawEntryTitle.isEmpty ? "Item \(entries.count + 1)" : rawEntryTitle
-                entries.append(PlaylistEntry(title: entryTitle, url: entryURL))
+                var entries: [PlaylistEntry] = []
+                for entry in entriesObj {
+                    if entry == Python.None { continue }
+                    guard let entryURL = entryURL(from: entry) else { continue }
+                    let rawEntryTitle = (String(entry.get("title")) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    let entryTitle = rawEntryTitle.isEmpty ? "Item \(entries.count + 1)" : rawEntryTitle
+                    entries.append(PlaylistEntry(title: entryTitle, url: entryURL))
+                }
+                return (title, entries)
             }
-            guard !entries.isEmpty else {
+            guard let resolved else { return nil }
+            guard !resolved.entries.isEmpty else {
                 appLog("Playlist resolved to no playable entries.", level: .warning, category: category)
                 return nil
             }
-            appLog("Resolved playlist \"\(title)\" → \(entries.count) entries.", level: .success, category: category)
-            return ResolvedPlaylist(title: title.isEmpty ? "Playlist" : title, entries: entries)
+            appLog("Resolved playlist \"\(resolved.title)\" → \(resolved.entries.count) entries.", level: .success, category: category)
+            return ResolvedPlaylist(title: resolved.title.isEmpty ? "Playlist" : resolved.title,
+                                    entries: resolved.entries)
         } catch {
             appLog("Playlist resolution failed: \(error.localizedDescription)", level: .error, category: category)
             return nil

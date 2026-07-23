@@ -281,7 +281,11 @@ final class YoutubeDLExtractor: MediaExtractor {
                    level: .debug, category: category)
             return
         }
-        PythonBridge.configureIfNeeded()
+        // Under the app-wide Python gate: with two pipeline slots, "the
+        // orphan settled" no longer implies the interpreter is idle — the
+        // other slot may be mid-extraction — and the plugin import must never
+        // overlap one.
+        try? await PythonGate.shared.run { PythonBridge.configureIfNeeded() }
         #endif
     }
 
@@ -378,6 +382,14 @@ final class YoutubeDLExtractor: MediaExtractor {
                              url: URL,
                              category: String,
                              timeout: TimeInterval = 90) async throws -> ([Format], Info) {
+        // Serialize entry into the embedded interpreter. Waiting here — before
+        // the timeout clock starts — means queueing behind another job's
+        // Python never eats into this extraction's own window. The extraction
+        // task below owns the release, so a timed-out (abandoned) call keeps
+        // the gate until it actually settles and new Python work waits for it
+        // instead of crashing into it.
+        try await PythonGate.shared.acquire()
+
         let started = Date()
         let heartbeat = Task.detached {
             while !Task.isCancelled {
@@ -389,7 +401,10 @@ final class YoutubeDLExtractor: MediaExtractor {
         }
         defer { heartbeat.cancel() }
 
-        let extraction = Task { try await youtubeDL.extractInfo(url: url) }
+        let extraction = Task { () async throws -> ([Format], Info) in
+            defer { PythonGate.shared.release() }
+            return try await youtubeDL.extractInfo(url: url)
+        }
 
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<([Format], Info), Error>) in
             let lock = NSLock()
@@ -775,16 +790,15 @@ final class YoutubeDLExtractor: MediaExtractor {
         // device they almost always fail the n-challenge (no JS runtime), so
         // they're a last resort. We accept the first client that yields a usable
         // stream, so this order is what decides quality and which client wins.
-        // Wire the on-device JS runtime for the forced clients below. This is
-        // safe here even though it runs `load_all_plugins()`: every path that
-        // reaches `extractViaForcedClients` first awaits `waitForOrphanedExtraction`
-        // and only proceeds once the interpreter is idle (no orphaned
-        // `extract_info` still running) — the exact condition that makes the
-        // plugin import non-re-entrant. Python is fully bootstrapped by the
-        // default `extractInfo` that preceded us. With the runtime live, the
-        // web-family clients below resolve their n-challenge in JavaScriptCore and
-        // get a minted PO token, instead of failing.
-        PythonBridge.configureIfNeeded()
+        // Wire the on-device JS runtime for the forced clients below, under
+        // the app-wide Python gate: `load_all_plugins()` (the plugin import)
+        // must never overlap another `extract_info`, and with two pipeline
+        // slots the gate — not the old idle-interpreter heuristic — is what
+        // guarantees that. Python is fully bootstrapped by the default
+        // `extractInfo` that preceded us. With the runtime live, the
+        // web-family clients below resolve their n-challenge in JavaScriptCore
+        // and get a minted PO token, instead of failing.
+        try? await PythonGate.shared.run { PythonBridge.configureIfNeeded() }
 
         // The client order still leads with the pre-signed no-token clients
         // (`tv` for video quality, `ios` for audio); the web-family clients —
@@ -799,9 +813,13 @@ final class YoutubeDLExtractor: MediaExtractor {
             appLog("Forced-client extract: re-resolving with player client \(label)…",
                    level: .warning, category: category)
 
-            let info: PythonObject
+            let info: ForcedInfo
             do {
-                info = try await forcedClientResolve(url: url, clients: clients, label: label, category: category)
+                // The dict → Swift snapshot happens inside the gated section;
+                // from here on this attempt holds no Python objects at all.
+                info = try await forcedClientResolve(url: url, clients: clients, label: label, category: category) { [self] raw in
+                    snapshotInfo(raw)
+                }
             } catch {
                 appLog("Forced-client extract: client \(label) failed: \(error.localizedDescription)",
                        level: .warning, category: category)
@@ -854,44 +872,56 @@ final class YoutubeDLExtractor: MediaExtractor {
     /// further log output). Breadcrumbs around each Python call are written to
     /// the durable on-disk log *before* the call runs, so if the interpreter
     /// faults the process the last persisted line names exactly which step died.
-    private func forcedClientResolve(url: URL,
-                                     clients: [String],
-                                     label: String,
-                                     category: String) async throws -> PythonObject {
-        let logger = makeCaptureLogger()
-        do {
-            let info = try await withTimeout("Forced-client (\(label)) re-resolve", category: category, seconds: 60) {
-                try await withHeartbeat("Still re-resolving (\(label))", category: category) {
-                    appLog("Importing yt_dlp module (client \(label))…", level: .debug, category: category)
-                    let ytdlpModule = Python.import("yt_dlp")
-                    // A `None` logger is what yt-dlp falls back to anyway, so this
-                    // is a no-op when capture couldn't be installed.
-                    let options: PythonObject = [
-                        "quiet": true,
-                        "noplaylist": true,
-                        "nocheckcertificate": true,
-                        "extractor_args": ["youtube": ["player_client": PythonObject(clients)]],
-                        "logger": logger ?? Python.None,
-                    ]
-                    let ytdlp = ytdlpModule.YoutubeDL(options)
-                    appLog("Running extract_info (client \(label))…", level: .debug, category: category)
-                    let result = try ytdlp.extract_info.throwing.dynamicallyCall(withKeywordArguments: [
-                        "": url.absoluteString, "download": false, "process": true,
-                    ])
-                    appLog("extract_info returned (client \(label)).", level: .debug, category: category)
-                    return result
+    /// `transform` runs **inside the gated Python section**, right after
+    /// `extract_info` returns, and must reduce the info dict to plain Swift
+    /// values — nothing downstream may keep a `PythonObject`, because once the
+    /// gate is released another slot's Python call may be executing, and even
+    /// a dict traversal would then be a concurrent interpreter access.
+    private func forcedClientResolve<T>(url: URL,
+                                        clients: [String],
+                                        label: String,
+                                        category: String,
+                                        transform: @escaping (PythonObject) throws -> T) async throws -> T {
+        try await withTimeout("Forced-client (\(label)) re-resolve", category: category, seconds: 60) {
+            try await withHeartbeat("Still re-resolving (\(label))", category: category) {
+                // Everything that touches the interpreter — the capture-logger
+                // object included — runs under the app-wide Python gate, in a
+                // detached task that keeps the gate if this attempt is
+                // abandoned by the timeout above.
+                try await PythonGate.shared.run { [self] in
+                    let logger = makeCaptureLogger()
+                    do {
+                        appLog("Importing yt_dlp module (client \(label))…", level: .debug, category: category)
+                        let ytdlpModule = Python.import("yt_dlp")
+                        // A `None` logger is what yt-dlp falls back to anyway, so this
+                        // is a no-op when capture couldn't be installed.
+                        let options: PythonObject = [
+                            "quiet": true,
+                            "noplaylist": true,
+                            "nocheckcertificate": true,
+                            "extractor_args": ["youtube": ["player_client": PythonObject(clients)]],
+                            "logger": logger ?? Python.None,
+                        ]
+                        let ytdlp = ytdlpModule.YoutubeDL(options)
+                        appLog("Running extract_info (client \(label))…", level: .debug, category: category)
+                        let result = try ytdlp.extract_info.throwing.dynamicallyCall(withKeywordArguments: [
+                            "": url.absoluteString, "download": false, "process": true,
+                        ])
+                        appLog("extract_info returned (client \(label)).", level: .debug, category: category)
+                        // Surface any warnings yt-dlp emitted even on a success
+                        // (skipped formats, PO-token notices) — they explain odd
+                        // selections later.
+                        if let logger { drainCaptureLogger(logger, client: label, category: category) }
+                        return try transform(result)
+                    } catch {
+                        // Drain first: yt-dlp's logger usually holds the *real*
+                        // reason (bot check, unavailable, signature failure) the
+                        // bare exception text only hints at.
+                        if let logger { drainCaptureLogger(logger, client: label, category: category) }
+                        throw error
+                    }
                 }
             }
-            // Surface any warnings yt-dlp emitted even on a success (skipped
-            // formats, PO-token notices) — they explain odd selections later.
-            if let logger { drainCaptureLogger(logger, client: label, category: category) }
-            return info
-        } catch {
-            // Drain first: yt-dlp's logger usually holds the *real* reason
-            // (bot check, unavailable, signature failure) the bare exception
-            // text only hints at.
-            if let logger { drainCaptureLogger(logger, client: label, category: category) }
-            throw error
         }
     }
 
@@ -923,18 +953,23 @@ final class YoutubeDLExtractor: MediaExtractor {
         let clients = label.split(separator: ",").map(String.init)
         return { [weak self] in
             guard let self, !formatID.isEmpty else { return nil }
-            // Let any orphaned Python extraction settle before starting a new
-            // one (two concurrent yt-dlp calls risk crashing the interpreter).
-            await self.waitForOrphanedExtraction(category: category)
-            let info = try await self.forcedClientResolve(url: url, clients: clients, label: label, category: category)
-            let formatsObj = info.get("formats")
-            if formatsObj == Python.None { return nil }
-            for format in formatsObj where (String(format.get("format_id")) ?? "") == formatID {
-                if let request = Self.requestForPythonFormat(format) { return request }
+            // The format lookup runs inside the gated Python section, so the
+            // dict traversal can't overlap another slot's interpreter work.
+            let request: URLRequest? = try await self.forcedClientResolve(
+                url: url, clients: clients, label: label, category: category
+            ) { info in
+                let formatsObj = info.get("formats")
+                if formatsObj == Python.None { return nil }
+                for format in formatsObj where (String(format.get("format_id")) ?? "") == formatID {
+                    if let request = Self.requestForPythonFormat(format) { return request }
+                }
+                return nil
             }
-            appLog("Fresh (\(label)) extraction no longer offers format \(formatID).",
-                   level: .warning, category: category)
-            return nil
+            if request == nil {
+                appLog("Fresh (\(label)) extraction no longer offers format \(formatID).",
+                       level: .warning, category: category)
+            }
+            return request
         }
     }
 
@@ -954,11 +989,80 @@ final class YoutubeDLExtractor: MediaExtractor {
             url: String(format.get("url")) ?? "")
     }
 
+    /// A plain-Swift snapshot of one format from a forced-client resolve,
+    /// captured under the Python gate so nothing downstream touches the
+    /// interpreter.
+    private struct ForcedFormat {
+        let url: String
+        let formatID: String
+        let ext: String
+        let vcodec: String
+        let acodec: String
+        /// Nil when the dict carries no height (audio-only formats).
+        let height: Int?
+        let abr: Double
+        let progressive: Bool
+        let headers: [String: String]
+
+        var hasVideo: Bool { vcodec != "none" && !vcodec.isEmpty }
+        var hasAudio: Bool { acodec != "none" && !acodec.isEmpty }
+    }
+
+    /// The forced-client info dict reduced to the Swift values the download
+    /// stage needs.
+    private struct ForcedInfo {
+        let title: String?
+        let duration: Double
+        let formats: [ForcedFormat]
+    }
+
+    /// Reduces a resolved info dict to `ForcedInfo`. Must be called **inside**
+    /// the gated Python section (it traverses `PythonObject`s). Every dict
+    /// read uses `.get(...)` so a missing key yields Python `None` rather than
+    /// trapping.
+    private func snapshotInfo(_ info: PythonObject) -> ForcedInfo {
+        var formats: [ForcedFormat] = []
+        let formatsObj = info.get("formats")
+        if formatsObj != Python.None {
+            for format in formatsObj {
+                guard let furl = String(format.get("url")) else { continue }
+                var headers: [String: String] = [:]
+                let h = format.get("http_headers")
+                if h != Python.None {
+                    for key in h.keys() {
+                        if let k = String(key), let v = String(h[key]) { headers[k] = v }
+                    }
+                }
+                formats.append(ForcedFormat(
+                    url: furl,
+                    formatID: String(format.get("format_id")) ?? "",
+                    ext: (String(format.get("ext")) ?? "").lowercased(),
+                    vcodec: String(format.get("vcodec")) ?? "none",
+                    acodec: String(format.get("acodec")) ?? "none",
+                    height: Int(format.get("height")),
+                    abr: Double(format.get("abr")) ?? Double(Int(format.get("tbr")) ?? 0),
+                    progressive: isProgressivePython(format),
+                    headers: headers))
+            }
+        }
+        return ForcedInfo(title: String(info.get("title")),
+                          duration: Double(info.get("duration")) ?? 0,
+                          formats: formats)
+    }
+
+    /// Builds a `URLRequest` for a snapshotted format, carrying its headers —
+    /// shared by both download stages so headers can't drift.
+    private static func request(for format: ForcedFormat) -> URLRequest? {
+        guard let u = URL(string: format.url) else { return nil }
+        var r = URLRequest(url: u)
+        for (key, value) in format.headers { r.setValue(value, forHTTPHeaderField: key) }
+        return r
+    }
+
     /// Picks the tallest H.264/HEVC video (+ best m4a audio) from a resolved
-    /// yt-dlp info dict and downloads + merges it. Returns nil if the dict has no
-    /// decodable, progressively-downloadable video. Every dict read uses
-    /// `.get(...)` so a missing key yields Python `None` rather than trapping.
-    private func downloadPlayable(from info: PythonObject,
+    /// forced-client snapshot and downloads + merges it. Returns nil if it has
+    /// no decodable, progressively-downloadable video.
+    private func downloadPlayable(from info: ForcedInfo,
                                   client: String,
                                   url: URL,
                                   quality: VideoQuality = .best,
@@ -966,66 +1070,30 @@ final class YoutubeDLExtractor: MediaExtractor {
                                   offeredVideoHeight: Int? = nil,
                                   onDownloadStart: @escaping () -> Void,
                                   onProgress: @escaping (Double) -> Void) async throws -> ExtractedMedia? {
-        let formatsObj = info.get("formats")
-        if formatsObj == Python.None { return nil }
-
-        func headers(_ format: PythonObject) -> [String: String] {
-            var result: [String: String] = [:]
-            let h = format.get("http_headers")
-            if h == Python.None { return result }
-            for key in h.keys() {
-                if let k = String(key), let v = String(h[key]) { result[k] = v }
-            }
-            return result
+        let candidates = info.formats.filter { $0.progressive }
+        let videos = candidates.filter {
+            $0.hasVideo && $0.ext == "mp4" && PlayableVideoCodec.isPlayable(codec: $0.vcodec)
         }
+        let audios = candidates.filter { $0.hasAudio && !$0.hasVideo && $0.ext == "m4a" }
 
-        struct VideoCand { let url: String; let formatID: String; let height: Int; let vcodec: String; let headers: [String: String] }
-        struct AudioCand { let url: String; let formatID: String; let abr: Double; let headers: [String: String] }
-        var videos: [VideoCand] = []
-        var audios: [AudioCand] = []
-
-        for format in formatsObj {
-            guard let furl = String(format.get("url")) else { continue }
-            guard isProgressivePython(format) else { continue }
-            let formatID = String(format.get("format_id")) ?? ""
-            let vcodec = String(format.get("vcodec")) ?? "none"
-            let acodec = String(format.get("acodec")) ?? "none"
-            let ext = String(format.get("ext")) ?? ""
-            let hasVideo = vcodec != "none" && !vcodec.isEmpty
-            let hasAudio = acodec != "none" && !acodec.isEmpty
-
-            if hasVideo, ext == "mp4", PlayableVideoCodec.isPlayable(codec: vcodec) {
-                videos.append(VideoCand(url: furl, formatID: formatID, height: Int(format.get("height")) ?? 0,
-                                        vcodec: vcodec, headers: headers(format)))
-            } else if hasAudio, !hasVideo, ext == "m4a" {
-                let abr = Double(format.get("abr")) ?? Double(Int(format.get("tbr")) ?? 0)
-                audios.append(AudioCand(url: furl, formatID: formatID, abr: abr, headers: headers(format)))
-            }
-        }
-
-        guard let video = quality.pick(from: videos, height: { $0.height }) else { return nil }
+        guard let video = quality.pick(from: videos, height: { $0.height ?? 0 }) else { return nil }
+        let videoHeight = video.height ?? 0
         let audio = audios.max(by: { $0.abr < $1.abr })
-        appLog("Recovery (\(client)) selected H.264 video \(video.height)p\(quality.maxHeight.map { " (preference ≤\($0)p)" } ?? "") (\(video.vcodec))\(audio == nil ? " · no separate audio" : " + m4a audio")",
+        appLog("Recovery (\(client)) selected H.264 video \(videoHeight)p\(quality.maxHeight.map { " (preference ≤\($0)p)" } ?? "") (\(video.vcodec))\(audio == nil ? " · no separate audio" : " + m4a audio")",
                level: .success, category: category)
         // If YouTube offered the video at a notably higher resolution but only in
         // a codec this device can't decode (AV1/VP9), say so — otherwise a 360p
         // save from a 2160p source looks like a bug rather than a codec ceiling.
-        if let offered = offeredVideoHeight, offered >= video.height + 240 {
-            appLog("Note: the highest resolution offered was \(offered)p, but only as AV1/VP9, which this device can't decode — \(video.height)p is the best H.264 (device-playable) rendition available.",
+        if let offered = offeredVideoHeight, offered >= videoHeight + 240 {
+            appLog("Note: the highest resolution offered was \(offered)p, but only as AV1/VP9, which this device can't decode — \(videoHeight)p is the best H.264 (device-playable) rendition available.",
                    level: .warning, category: category)
         }
 
-        func request(_ urlString: String, _ headerFields: [String: String]) -> URLRequest? {
-            guard let u = URL(string: urlString) else { return nil }
-            var r = URLRequest(url: u)
-            for (key, value) in headerFields { r.setValue(value, forHTTPHeaderField: key) }
-            return r
-        }
-        guard let videoRequest = request(video.url, video.headers) else { return nil }
-        let audioRequest = audio.flatMap { request($0.url, $0.headers) }
+        guard let videoRequest = Self.request(for: video) else { return nil }
+        let audioRequest = audio.flatMap { Self.request(for: $0) }
 
-        let title = String(info.get("title")) ?? url.absoluteString
-        let reportedDuration = Double(info.get("duration")) ?? 0
+        let title = info.title ?? url.absoluteString
+        let reportedDuration = info.duration
 
         var dest = AppPaths.work.appendingPathComponent("\(UUID().uuidString).mp4")
         appLog("Downloading recovered video stream in chunks…", category: category)
@@ -1048,72 +1116,33 @@ final class YoutubeDLExtractor: MediaExtractor {
     }
 
     /// Audio counterpart to `downloadPlayable`: picks the best audio from a
-    /// forced-client info dict — a dedicated audio-only m4a if present (no
+    /// forced-client snapshot — a dedicated audio-only m4a if present (no
     /// transcoding), otherwise the smallest muxed mp4 with its audio extracted to
-    /// m4a. Mirrors the default path's audio selection. Returns nil if the dict
-    /// offers no usable audio. Every dict read uses `.get(...)` so a missing key
-    /// yields Python `None` rather than trapping.
-    private func downloadBestAudio(from info: PythonObject,
+    /// m4a. Mirrors the default path's audio selection. Returns nil if the
+    /// snapshot offers no usable audio.
+    private func downloadBestAudio(from info: ForcedInfo,
                                    client: String,
                                    url: URL,
                                    category: String,
                                    onDownloadStart: @escaping () -> Void,
                                    onProgress: @escaping (Double) -> Void) async throws -> ExtractedMedia? {
-        let formatsObj = info.get("formats")
-        if formatsObj == Python.None { return nil }
-
-        func headers(_ format: PythonObject) -> [String: String] {
-            var result: [String: String] = [:]
-            let h = format.get("http_headers")
-            if h == Python.None { return result }
-            for key in h.keys() {
-                if let k = String(key), let v = String(h[key]) { result[k] = v }
-            }
-            return result
+        let candidates = info.formats.filter { $0.progressive }
+        // Accept any audio-only container AVFoundation can play directly
+        // (m4a/mp3/aac/…) — covers SoundCloud's progressive mp3, not just
+        // YouTube's m4a. Unplayable (opus/webm) audio is ignored here and
+        // handled by the muxed-extraction fallback.
+        let audios = candidates.filter {
+            $0.hasAudio && !$0.hasVideo && Self.playableAudioExts.contains($0.ext)
         }
+        let muxed = candidates.filter { $0.hasAudio && $0.hasVideo && $0.ext == "mp4" }
 
-        struct AudioCand { let url: String; let formatID: String; let abr: Double; let ext: String; let headers: [String: String] }
-        struct MuxedCand { let url: String; let formatID: String; let height: Int; let headers: [String: String] }
-        var audios: [AudioCand] = []
-        var muxed: [MuxedCand] = []
-
-        for format in formatsObj {
-            guard let furl = String(format.get("url")) else { continue }
-            guard isProgressivePython(format) else { continue }
-            let formatID = String(format.get("format_id")) ?? ""
-            let vcodec = String(format.get("vcodec")) ?? "none"
-            let acodec = String(format.get("acodec")) ?? "none"
-            let ext = (String(format.get("ext")) ?? "").lowercased()
-            let hasVideo = vcodec != "none" && !vcodec.isEmpty
-            let hasAudio = acodec != "none" && !acodec.isEmpty
-
-            // Accept any audio-only container AVFoundation can play directly
-            // (m4a/mp3/aac/…) — covers SoundCloud's progressive mp3, not just
-            // YouTube's m4a. Unplayable (opus/webm) audio is ignored here and
-            // handled by the muxed-extraction fallback.
-            if hasAudio, !hasVideo, Self.playableAudioExts.contains(ext) {
-                let abr = Double(format.get("abr")) ?? Double(Int(format.get("tbr")) ?? 0)
-                audios.append(AudioCand(url: furl, formatID: formatID, abr: abr, ext: ext, headers: headers(format)))
-            } else if hasAudio, hasVideo, ext == "mp4" {
-                muxed.append(MuxedCand(url: furl, formatID: formatID, height: Int(format.get("height")) ?? Int.max,
-                                       headers: headers(format)))
-            }
-        }
-
-        func request(_ urlString: String, _ headerFields: [String: String]) -> URLRequest? {
-            guard let u = URL(string: urlString) else { return nil }
-            var r = URLRequest(url: u)
-            for (key, value) in headerFields { r.setValue(value, forHTTPHeaderField: key) }
-            return r
-        }
-
-        let title = String(info.get("title")) ?? url.absoluteString
-        let reportedDuration = Double(info.get("duration")) ?? 0
+        let title = info.title ?? url.absoluteString
+        let reportedDuration = info.duration
 
         // Prefer a dedicated audio-only stream — no transcoding, no extraction
         // step. Keep its real container extension (m4a, mp3, …).
         if let audio = audios.max(by: { $0.abr < $1.abr }),
-           let audioRequest = request(audio.url, audio.headers) {
+           let audioRequest = Self.request(for: audio) {
             appLog("Forced-client (\(client)) selected audio-only \(audio.ext) \(Int(audio.abr)) kbps",
                    level: .success, category: category)
             let dest = AppPaths.work.appendingPathComponent("\(UUID().uuidString).\(audio.ext.isEmpty ? "m4a" : audio.ext)")
@@ -1131,11 +1160,11 @@ final class YoutubeDLExtractor: MediaExtractor {
         }
 
         // No audio-only stream: take the smallest muxed mp4 and extract its audio.
-        guard let video = muxed.min(by: { $0.height < $1.height }),
-              let videoRequest = request(video.url, video.headers) else {
+        guard let video = muxed.min(by: { ($0.height ?? Int.max) < ($1.height ?? Int.max) }),
+              let videoRequest = Self.request(for: video) else {
             return nil
         }
-        appLog("Forced-client (\(client)) no audio-only stream — using muxed mp4 \(video.height)p + audio extraction",
+        appLog("Forced-client (\(client)) no audio-only stream — using muxed mp4 \(video.height.map { "\($0)p" } ?? "?p") + audio extraction",
                level: .warning, category: category)
         var dest = AppPaths.work.appendingPathComponent("\(UUID().uuidString).mp4")
         onDownloadStart()
@@ -1173,18 +1202,32 @@ final class YoutubeDLExtractor: MediaExtractor {
             appLog("Resolving \(url.absoluteString)", category: category)
 
             // First run: fetch the on-device yt-dlp Python module if missing.
+            // Under the Python gate so two first-run slots can't race the
+            // module download/unpack (the second waits, then finds it present).
             let modulePath = YoutubeDL.pythonModuleURL.path
             if FileManager.default.fileExists(atPath: modulePath) {
                 appLog("yt-dlp Python module present.", level: .debug, category: category)
             } else {
                 appLog("yt-dlp Python module not found — downloading (first run, can take a while)…",
                        level: .warning, category: category)
-                try await YoutubeDL.downloadPythonModule()
-                appLog("yt-dlp Python module downloaded.", level: .success, category: category)
+                try await PythonGate.shared.acquire()
+                do {
+                    if !FileManager.default.fileExists(atPath: modulePath) {
+                        try await YoutubeDL.downloadPythonModule()
+                        appLog("yt-dlp Python module downloaded.", level: .success, category: category)
+                    }
+                    PythonGate.shared.release()
+                } catch {
+                    PythonGate.shared.release()
+                    throw error
+                }
             }
 
             appLog("Initializing yt-dlp…", level: .debug, category: category)
-            let youtubeDL = YoutubeDL()
+            // Instance creation configures library-side state (PYTHONHOME,
+            // module search path) — gated so it can't overlap the other slot's
+            // interpreter work.
+            let youtubeDL = try await PythonGate.shared.run { YoutubeDL() }
 
             // Register the on-device JS runtime *before* this job's default
             // extraction, so the extraction solves nsig in JavaScriptCore instead
@@ -1192,15 +1235,18 @@ final class YoutubeDLExtractor: MediaExtractor {
             // leaves an uncancellable orphan holding the interpreter, the reason
             // hard videos never recover even on retry. For YouTube we start Python
             // ourselves (the wrapper's exact init sequence) and wire the providers
-            // up front, on the very first download. Gated on an idle interpreter so
-            // the plugin import never races a running extraction.
+            // up front, on the very first download. Runs under the Python gate so
+            // the plugin import never races a running extraction — including the
+            // other pipeline slot's.
             //
             // This early bootstrap faulted once before (it skipped the fake-Popen
             // shim); it now mirrors the wrapper step-for-step with breadcrumbs, and
             // falls through to the lazy path if it can't bootstrap.
             #if canImport(PythonKit)
             if Self.isYouTubeURL(url), orphanedDefaultExtraction == nil {
-                PythonBridge.bootstrapAndConfigure(pythonAlreadyInitialized: Self.pythonBootstrapped)
+                try? await PythonGate.shared.run {
+                    PythonBridge.bootstrapAndConfigure(pythonAlreadyInitialized: Self.pythonBootstrapped)
+                }
             }
             #endif
             await wireJSRuntimeIfSafe(category: category)
