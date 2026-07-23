@@ -9,12 +9,20 @@ enum Tab: Hashable {
 }
 
 struct RootView: View {
+    @EnvironmentObject private var downloads: DownloadManager
     @State private var selection: Tab = .library
+
+    /// Downloads still working or waiting — the number shown on the Download
+    /// tab's badge (finished/failed/cancelled history doesn't count).
+    private var pendingDownloads: Int {
+        downloads.jobs.filter { $0.state.isActive || $0.state == .queued }.count
+    }
 
     var body: some View {
         TabView(selection: $selection) {
             DownloadView(onPlay: { selection = .player })
                 .tabItem { Label("Download", systemImage: "arrow.down.circle") }
+                .badge(pendingDownloads == 0 ? nil : Text("\(pendingDownloads)"))
                 .tag(Tab.download)
 
             BrowseView()

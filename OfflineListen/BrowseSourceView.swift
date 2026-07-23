@@ -186,6 +186,7 @@ struct BrowseSourceView: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .browseSectionHeaderStyle()
     }
 
     /// The right-aligned label for a section header: a Discography album shows
@@ -221,6 +222,7 @@ struct BrowseSourceView: View {
                 Text("Updated \(refreshed.formatted(.relative(presentation: .named)))")
             }
         }
+        .browseSectionHeaderStyle()
     }
 
     private func refresh() {
@@ -236,8 +238,20 @@ struct BrowseSourceView: View {
     /// Sends the item to the download queue (in the Browse toggle's
     /// Audio/Video mode) and marks it so the row shows where it went.
     private func download(_ item: BrowseItem) {
-        downloads.enqueue(urlString: item.url, mode: browse.downloadMode)
+        enqueue(item)
         browse.markDownloaded(item)
+    }
+
+    /// Queues one item, filed into a library folder named after this source so
+    /// everything from a Browse source (e.g. a "Brian Eno" Discography) lands
+    /// together — that folder's unlistened tracks still surface in the Inbox.
+    private func enqueue(_ item: BrowseItem) {
+        let name = source?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if name.isEmpty {
+            downloads.enqueue(urlString: item.url, mode: browse.downloadMode)
+        } else {
+            downloads.enqueue(urlString: item.url, mode: browse.downloadMode, browseFolderNamed: name)
+        }
     }
 
     /// Queues every selected item that hasn't been dealt with yet (still-new
@@ -259,7 +273,7 @@ struct BrowseSourceView: View {
             return
         }
         for item in picks {
-            downloads.enqueue(urlString: item.url, mode: browse.downloadMode)
+            enqueue(item)
         }
         browse.markDownloaded(picks)
         selection.removeAll()
@@ -331,5 +345,24 @@ private struct BrowseItemRow: View {
                 }
             }
         }
+    }
+}
+
+private extension View {
+    /// Browse list section headers: primary-coloured and non-uppercased, set
+    /// off with a thin underline so they read as clear dividers instead of the
+    /// default faint grey.
+    func browseSectionHeaderStyle() -> some View {
+        self
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.primary)
+            .textCase(nil)
+            .padding(.top, 10)
+            .padding(.bottom, 6)
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(Color.primary)
+                    .frame(height: 1)
+            }
     }
 }

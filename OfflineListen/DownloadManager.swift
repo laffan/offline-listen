@@ -15,6 +15,10 @@ final class DownloadJob: ObservableObject, Identifiable {
     let folderID: UUID?
 
     @Published var title: String
+    /// The artist, once known — snapshotted from the finished track so restored
+    /// history still reads right if the track is later deleted. The live row
+    /// prefers the library track's current artist while it exists.
+    @Published var artist: String? = nil
     @Published var state: State
     @Published var progress: Double = 0
     /// The library track produced by this job, once finished (for tap-to-play).
@@ -131,6 +135,23 @@ private struct PreviewWork {
     let continuation: CheckedContinuation<ExtractedMedia, Error>
 }
 
+/// A persisted snapshot of a completed (finished/failed/cancelled) download, so
+/// the Download tab's history survives relaunches. In-flight jobs aren't saved
+/// — they didn't finish — so a quit clears only the running queue, never the
+/// record of what was downloaded.
+private struct DownloadRecord: Codable {
+    var url: String
+    var modeRaw: String
+    var isPlaylist: Bool
+    var folderID: UUID?
+    var title: String
+    var artist: String?
+    var trackID: UUID?
+    /// "finished" | "cancelled" | "failed".
+    var stateRaw: String
+    var failureMessage: String?
+}
+
 /// Owns the download queue and runs jobs one at a time:
 /// URL → extract audio (yt-dlp) → convert/save → add to library.
 @MainActor
@@ -173,6 +194,77 @@ final class DownloadManager: ObservableObject {
         self.library = library
         self.aiOrganizer = aiOrganizer
         self.extractor = extractor
+        loadHistory()
+    }
+
+    // MARK: - History persistence
+
+    /// The most recent completed downloads to keep on disk. Generous, but
+    /// bounded so the file (and launch decode) can't grow without limit.
+    private static let historyLimit = 500
+
+    /// Rebuilds the finished/failed/cancelled jobs from `downloads.json` as
+    /// display-only history rows (they're terminal, so `processNext` never
+    /// touches them). In-flight jobs were never saved, so nothing resumes.
+    private func loadHistory() {
+        guard let data = try? Data(contentsOf: AppPaths.downloadsHistory),
+              let records = try? JSONDecoder().decode([DownloadRecord].self, from: data) else { return }
+        jobs = records.map { record in
+            let job = DownloadJob(url: record.url,
+                                  mode: DownloadMode(rawValue: record.modeRaw) ?? .audio,
+                                  isPlaylist: record.isPlaylist,
+                                  folderID: record.folderID)
+            job.title = record.title
+            job.artist = record.artist
+            job.trackID = record.trackID
+            switch record.stateRaw {
+            case "failed": job.state = .failed(record.failureMessage ?? "Failed")
+            case "cancelled": job.state = .cancelled
+            default: job.state = .finished
+            }
+            return job
+        }
+    }
+
+    /// Writes the finished/failed/cancelled jobs to disk (newest first, capped).
+    /// Each record snapshots the live library track's current title/artist when
+    /// it still exists (so post-AI metadata is captured), falling back to the
+    /// job's own last-known values. Safe to call after any queue change.
+    func persistHistory() {
+        let records: [DownloadRecord] = jobs.compactMap { job in
+            let stateRaw: String
+            var failure: String? = nil
+            switch job.state {
+            case .finished: stateRaw = "finished"
+            case .cancelled: stateRaw = "cancelled"
+            case .failed(let message): stateRaw = "failed"; failure = message
+            default: return nil   // in-flight — not persisted
+            }
+            let track = job.trackID.flatMap { id in library.tracks.first { $0.id == id } }
+            let artist: String?
+            if let live = track?.artist, !live.isEmpty, live.lowercased() != "unknown" {
+                artist = live
+            } else {
+                artist = job.artist
+            }
+            return DownloadRecord(url: job.url,
+                                  modeRaw: job.mode.rawValue,
+                                  isPlaylist: job.isPlaylist,
+                                  folderID: job.folderID,
+                                  title: track?.title ?? job.title,
+                                  artist: artist,
+                                  trackID: job.trackID,
+                                  stateRaw: stateRaw,
+                                  failureMessage: failure)
+        }
+        let trimmed = Array(records.prefix(Self.historyLimit))
+        do {
+            let data = try JSONEncoder().encode(trimmed)
+            try data.write(to: AppPaths.downloadsHistory, options: .atomic)
+        } catch {
+            appLog("Couldn't save download history: \(error.localizedDescription)",
+                   level: .warning, category: "Queue")
+        }
     }
 
     /// Enqueues every downloadable link found in `text`, treating whitespace/
@@ -250,6 +342,7 @@ final class DownloadManager: ObservableObject {
 
     func clearFinished() {
         jobs.removeAll { $0.state.isFinishedOrStopped }
+        persistHistory()
     }
 
     /// Stops a job. An active download is cancelled mid-flight; a queued job is
@@ -261,6 +354,7 @@ final class DownloadManager: ObservableObject {
         } else if job.state == .queued {
             job.state = .cancelled
             appLog("Cancelled queued: \(job.url)", level: .warning, category: "Queue")
+            persistHistory()
         }
     }
 
@@ -270,19 +364,22 @@ final class DownloadManager: ObservableObject {
             activeTask?.cancel()
         }
         jobs.removeAll { $0.id == job.id }
+        persistHistory()
     }
 
-    /// Re-runs a job by removing it and enqueuing a fresh attempt for the same URL.
+    /// Re-runs a job by removing it and enqueuing a fresh attempt for the same URL
+    /// (keeping its folder, so a restarted Browse download refiles correctly).
     func restart(_ job: DownloadJob) {
         let url = job.url
         let mode = job.mode
         let wasPlaylist = job.isPlaylist
+        let folderID = job.folderID
         remove(job)
         appLog("Restarting: \(url)", category: "Queue")
         if wasPlaylist {
             enqueuePlaylist(urlString: url, mode: mode)
         } else {
-            enqueue(urlString: url, mode: mode)
+            enqueue(urlString: url, mode: mode, folderID: folderID)
         }
     }
 
@@ -466,16 +563,23 @@ final class DownloadManager: ObservableObject {
             )
             library.add(track)
             job.trackID = track.id
+            job.title = track.title
+            job.artist = track.artist.lowercased() == "unknown" ? nil : track.artist
             job.state = .finished
             appLog("Added to library: \"\(track.title)\" (\(track.duration.asPlaybackTime))",
                    level: .success, category: "Queue")
+            persistHistory()
 
             // Best-effort AI organization (music/podcast + clean metadata), only
             // when the user has set up and opted into AI assist. Runs detached so
-            // it never holds up the queue.
+            // it never holds up the queue; re-snapshots the history once done so
+            // the saved row carries the AI's clean title/artist too.
             if let aiOrganizer {
                 let id = track.id
-                Task { await aiOrganizer.organizeIfEnabled(id) }
+                Task {
+                    await aiOrganizer.organizeIfEnabled(id)
+                    persistHistory()
+                }
             }
         } catch {
             if isCancellation(error) {
@@ -489,6 +593,7 @@ final class DownloadManager: ObservableObject {
                 // (JS-RUNTIME-PLAN "Testing & metrics").
                 appLog("Failure class: \(Self.failureClass(for: error))", level: .warning, category: "Queue")
             }
+            persistHistory()
         }
     }
 
@@ -534,12 +639,14 @@ final class DownloadManager: ObservableObject {
             appLog("Couldn't resolve as a playlist — downloading as a single item.",
                    level: .warning, category: "Queue")
             job.state = .finished
+            persistHistory()
             enqueue(urlString: job.url, mode: job.mode)
             return
         }
 
         if Task.isCancelled {
             job.state = .cancelled
+            persistHistory()
             return
         }
 
@@ -554,16 +661,18 @@ final class DownloadManager: ObservableObject {
         guard let chosen, !chosen.isEmpty else {
             job.state = .cancelled
             appLog("Playlist selection cancelled — nothing downloaded.", level: .warning, category: "Queue")
+            persistHistory()
             return
         }
 
-        let folder = folderForPlaylist(named: playlist.title)
+        let folder = folder(named: playlist.title, fallback: "Playlist")
         for entry in chosen {
             enqueue(urlString: entry.url, mode: job.mode, folderID: folder.id)
         }
         job.state = .finished
         appLog("Playlist \"\(playlist.title)\" → queued \(chosen.count) of \(playlist.entries.count) download(s) into a folder.",
                level: .success, category: "Queue")
+        persistHistory()
     }
 
     /// Publishes the resolved playlist for the UI to present as a selection popup
@@ -592,15 +701,26 @@ final class DownloadManager: ObservableObject {
     }
 
     /// Returns an existing active folder with this name (so re-downloading a
-    /// playlist doesn't spawn duplicates), creating one if none matches.
-    private func folderForPlaylist(named name: String) -> Folder {
+    /// playlist — or refreshing a Browse source — doesn't spawn duplicates),
+    /// creating one if none matches. `fallback` names the folder when the name
+    /// is blank.
+    private func folder(named name: String, fallback: String) -> Folder {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let wanted = trimmed.isEmpty ? "Playlist" : trimmed
+        let wanted = trimmed.isEmpty ? fallback : trimmed
         if let existing = library.folders.first(where: {
             !$0.isArchived && $0.name.localizedCaseInsensitiveCompare(wanted) == .orderedSame
         }) {
             return existing
         }
         return library.createFolder(named: wanted) ?? Folder(name: wanted)
+    }
+
+    /// Enqueues a Browse download filed into a folder named after its source, so
+    /// everything pulled from one Browse source lands together (e.g. a
+    /// "Brian Eno" folder for a Discography source). Blank names fall back to a
+    /// generic "Browse" folder.
+    func enqueue(urlString: String, mode: DownloadMode, browseFolderNamed folderName: String) {
+        let folder = folder(named: folderName, fallback: "Browse")
+        enqueue(urlString: urlString, mode: mode, folderID: folder.id)
     }
 }

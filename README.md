@@ -17,7 +17,13 @@ Five screens (tabs):
    **Audio** or **Video** (default Audio), watch the queue. Links from **any site
    yt-dlp supports** work — YouTube, Vimeo, SoundCloud and ~hundreds more — not
    just YouTube. Swipe a row for **Cancel** (active/queued), **Restart**, or
-   **Clear**; tap a finished row to play it.
+   **Clear**; tap a finished row to play it. Each finished row shows the track's
+   **title and artist** (kept in step with the Library, so an AI-cleaned name
+   shows here too). The queue is a **running history** — it persists across
+   relaunches (`Documents/downloads.json`, capped at the 500 most recent), so
+   what you've downloaded stays listed until you **Clear** it; only in-flight
+   jobs are dropped on quit. The tab's **badge** shows how many downloads are
+   active or queued.
 
    **Search.** The same single input field doubles as a search box: type
    anything that *isn't* a link and the button flips from **Download** to
@@ -174,7 +180,10 @@ actions per item, both acting in the mode set by the **Audio/Video toggle**
 beneath the Browse title:
 
 - **Download** — sends the link straight to the download queue in the
-  toggle's mode, exactly as if it had been pasted into the Download tab.
+  toggle's mode. Browse downloads are filed into a **library folder named
+  after the source** (a "Brian Eno" Discography lands in a "Brian Eno"
+  folder), so everything from one source stays together; those tracks, being
+  unlistened, still surface in the **Inbox** until you play them.
 - **Preview** — opens a modal that downloads the audio — or, in Video mode,
   the video, its picture spanning the full width of the pane — and plays it in
   its own

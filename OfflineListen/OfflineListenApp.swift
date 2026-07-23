@@ -73,6 +73,9 @@ struct OfflineListenApp: App {
                         localSync.scheduleRescan()
                     } else {
                         playback.saveState()
+                        // Snapshot the download history so completed rows (with
+                        // any AI-cleaned titles) survive being backgrounded/killed.
+                        downloads.persistHistory()
                     }
                 }
         }
