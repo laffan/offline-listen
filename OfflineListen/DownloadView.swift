@@ -249,6 +249,15 @@ private struct DownloadJobRow: View {
                 Label("Restart", systemImage: "arrow.clockwise")
             }
             .tint(.blue)
+
+            // The row shows the video's title once it's known, so the link it
+            // came from is otherwise unreachable from here.
+            Button {
+                UIPasteboard.general.string = job.url
+            } label: {
+                Label("Copy URL", systemImage: "doc.on.doc")
+            }
+            .tint(.gray)
         }
     }
 

@@ -139,6 +139,9 @@ enum LibraryRoute: Hashable {
     case inbox
     case watch
     case folder(UUID)
+    /// The optional "Synced" grouping row (Settings ▸ Local Sync): every
+    /// folder mirroring a sync folder, collected in one place.
+    case synced
     case archived
 }
 
@@ -216,6 +219,8 @@ struct LibraryView: View {
                     WatchFolderView(onPlay: onPlay)
                 case .folder(let id):
                     FolderDetailView(folderID: id, onPlay: onPlay, share: $share)
+                case .synced:
+                    SyncedFoldersView()
                 case .archived:
                     ArchivedTracksView(onPlay: onPlay, share: $share)
                 }
@@ -268,6 +273,11 @@ struct LibraryView: View {
                         ForEach(library.displayedFolders) { folder in
                             folderRow(folder)
                         }
+                    }
+                    // With the grouping on, the synced folders come out of the
+                    // list above and live behind this one row instead.
+                    if library.groupSyncedFolders && !library.syncedRootFolders.isEmpty {
+                        syncedRow
                     }
                     if !library.archivedTracks.isEmpty || !library.archivedFolders.isEmpty {
                         archiveRow
@@ -331,6 +341,27 @@ struct LibraryView: View {
                 .textCase(nil)
                 .padding(.bottom, 4)
             }
+        }
+    }
+
+    /// The optional "Synced" grouping row: a tidier home for the folders that
+    /// mirror a sync folder, sitting just above the Archive. Purely visual —
+    /// the folders behave exactly as they do when listed inline.
+    private var syncedRow: some View {
+        NavigationLink(value: LibraryRoute.synced) {
+            HStack(spacing: 12) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24)
+                Text("Synced")
+                    .font(.body)
+                Spacer()
+                Text("\(library.syncedRootFolders.count)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            .padding(.vertical, 4)
         }
     }
 
@@ -639,6 +670,90 @@ struct LibraryView: View {
     private func endEditing() {
         selection.removeAll()
         withAnimation { editMode = .inactive }
+    }
+}
+
+/// The "Synced" grouping screen (Settings ▸ Local Sync ▸ Group synced folders):
+/// the folders that mirror a sync folder, gathered out of the main folder list
+/// so it reads as the user's own. Nothing here is a different kind of folder —
+/// the rows carry the same swipe actions and touch-and-hold menu they'd have
+/// inline — and turning the grouping off puts them straight back.
+struct SyncedFoldersView: View {
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var playback: PlaybackManager
+
+    @State private var renamingFolder: Folder?
+    @State private var renameText = ""
+
+    private var folders: [Folder] { library.syncedRootFolders }
+
+    var body: some View {
+        Group {
+            if folders.isEmpty {
+                ContentUnavailableViewCompat(
+                    title: "Nothing synced",
+                    systemImage: "arrow.triangle.2.circlepath",
+                    description: "Folders that mirror a sync folder appear here. Touch and hold a folder and choose Sync to Local to add one."
+                )
+            } else {
+                List {
+                    ForEach(folders) { folder in
+                        folderRow(folder)
+                    }
+                }
+                .listStyle(.plain)
+            }
+        }
+        .navigationTitle("Synced")
+        .navigationBarTitleDisplayMode(.inline)
+        .alert("Rename Folder", isPresented: renameAlertPresented, presenting: renamingFolder) { folder in
+            TextField("Folder name", text: $renameText)
+            Button("Rename") { library.renameFolder(folder, to: renameText) }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    private var renameAlertPresented: Binding<Bool> {
+        Binding(
+            get: { renamingFolder != nil },
+            set: { if !$0 { renamingFolder = nil } }
+        )
+    }
+
+    private func isPlaying(in folder: Folder) -> Bool {
+        guard let id = playback.currentTrack?.id else { return false }
+        return library.tracks(in: folder.id).contains { $0.id == id }
+    }
+
+    private func folderRow(_ folder: Folder) -> some View {
+        NavigationLink(value: LibraryRoute.folder(folder.id)) {
+            FolderRowLabel(folder: folder,
+                           count: library.tracks(in: folder.id).count,
+                           playingHere: isPlaying(in: folder))
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) {
+                library.deleteFolder(folder)
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+            Button {
+                renameText = folder.name
+                renamingFolder = folder
+            } label: {
+                Label("Rename", systemImage: "pencil")
+            }
+            .tint(.orange)
+            Button {
+                library.setFolderArchived(folder, true)
+            } label: {
+                Label("Archive", systemImage: "archivebox")
+            }
+            .tint(.indigo)
+        }
+        .contextMenu {
+            FolderContextMenu(folder: folder)
+        }
     }
 }
 

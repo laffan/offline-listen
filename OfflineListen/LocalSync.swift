@@ -49,6 +49,13 @@ enum SyncOp: Codable, Equatable {
     case writeMixtapeData(dir: String, folderID: UUID)
     /// Remove `dir/.mixtapedata` from the replica.
     case removeMixtapeData(dir: String)
+
+    /// True for the ops that copy a track's file out — the unit the sync
+    /// progress figure counts (a directory create or a style write isn't one).
+    var isFileCopy: Bool {
+        if case .copyOut = self { return true }
+        return false
+    }
 }
 
 /// A journaled op tagged with the sync root it applies to.
@@ -102,6 +109,14 @@ final class LocalSyncStore: ObservableObject {
     @Published private(set) var isSyncing = false
     /// Journal depth — in-app changes not yet copied to their replicas.
     @Published private(set) var pendingOpCount = 0
+    /// How many track files the pass in flight has copied so far, and how many
+    /// it knows about. The total grows as the pass discovers work (a root's
+    /// exports are counted when its journal is drained, its imports when its
+    /// replica has been scanned), so Settings can say "Syncing 12 of 133
+    /// tracks" instead of a bare spinner. Both are zero between passes — and
+    /// while a pass is still scanning, which is what `isSyncing` covers.
+    @Published private(set) var syncedFileCount = 0
+    @Published private(set) var syncFileTotal = 0
 
     private let library: LibraryStore
     private var records: [SyncRootRecord] = []
@@ -359,6 +374,8 @@ final class LocalSyncStore: ObservableObject {
             return
         }
         isSyncing = true
+        syncedFileCount = 0
+        syncFileTotal = 0
 
         var monitorTargets: [(root: URL, dirs: [String])] = []
         for state in roots {
@@ -377,6 +394,8 @@ final class LocalSyncStore: ObservableObject {
         }
         startMonitoring(targets: monitorTargets)
         pendingOpCount = pendingOps.count
+        syncedFileCount = 0
+        syncFileTotal = 0
 
         isSyncing = false
         if needsAnotherPass {
@@ -392,10 +411,14 @@ final class LocalSyncStore: ObservableObject {
     /// order; superseded ops drop out. Ops only ever append while this runs,
     /// so indices into the array stay valid across awaits.
     private func drainJournal(rootID: UUID, rootURL: URL) async {
+        // Only the file copies count towards the progress figure — a directory
+        // create or a `.mixtapedata` write isn't a track.
+        syncFileTotal += pendingOps.filter { $0.rootID == rootID && $0.op.isFileCopy }.count
         while let index = pendingOps.firstIndex(where: { $0.rootID == rootID }) {
             let entry = pendingOps[index]
             let succeeded = await execute(entry.op, rootID: rootID, root: rootURL)
             guard succeeded else { break }
+            if case .copyOut = entry.op { syncedFileCount += 1 }
             pendingOps.remove(at: index)
             persistJournal()
         }
@@ -506,6 +529,7 @@ final class LocalSyncStore: ObservableObject {
         if !imports.isEmpty {
             appLog("Importing \(imports.count) file(s) from the sync folder…", category: "Sync")
         }
+        syncFileTotal += imports.count
         var failures = 0
         for (index, file) in imports.enumerated() {
             let src = rootURL.appendingPathComponent(file.relativePath)
@@ -513,6 +537,7 @@ final class LocalSyncStore: ObservableObject {
             let ok = await Task.detached(priority: .utility) {
                 Self.coordinatedCopy(from: src, to: dst)
             }.value
+            syncedFileCount += 1
             if ok {
                 newManifest[file.relativePath] = file.stamp
                 let dirPath = (file.relativePath as NSString).deletingLastPathComponent

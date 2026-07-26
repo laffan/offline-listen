@@ -16,8 +16,10 @@ Five screens (tabs):
    http(s) link is queued and the rest of a pasted blob is skipped), choose
    **Audio** or **Video** (default Audio), watch the queue. Links from **any site
    yt-dlp supports** work — YouTube, Vimeo, SoundCloud and ~hundreds more — not
-   just YouTube. Swipe a row for **Cancel** (active/queued), **Restart**, or
-   **Clear**; tap a finished row to play it.
+   just YouTube. Swipe a row for **Cancel** (active/queued), **Restart**,
+   **Clear**, or **Copy URL** (the row shows the video's title once it's known,
+   so the link it came from is otherwise unreachable from there); tap a
+   finished row to play it.
 
    **Search.** The same single input field doubles as a search box: type
    anything that *isn't* a link and the button flips from **Download** to
@@ -98,6 +100,14 @@ Five screens (tabs):
    Archive). To **reorder** the tracks inside a folder, use the **Reorder**
    button in the folder's own screen.
 
+   **The "Synced" grouping.** With several sync folders mirrored in, the
+   folders that mirror them can crowd out your own. Settings ▸ Local Sync ▸
+   **Group under a "Synced" folder** collects them all behind a single
+   **Synced** row (just above the Archive) instead. It's *purely* a display
+   grouping — nothing moves on disk, no folder changes its place in the data,
+   the rows keep the same swipe actions and touch-and-hold menu — so it can be
+   turned on and off at any point with no effect on the sync setup.
+
    The folder list itself sorts two ways, chosen with the toggle on the right of
    the **Folders** header: **Name** (alphabetical) or **User Order**. In User
    Order you set the sequence by hand — **touch and hold a folder and drag** it
@@ -131,6 +141,9 @@ Five screens (tabs):
      any file provider) to sync part of the library with; see
      [Local sync](#local-sync-a-folder-that-mirrors-part-of-the-library).
      Removing the sync folder keeps its files — they just leave the library.
+     A **Group under a "Synced" folder** toggle appears once a sync folder is
+     configured: purely a display choice for the Library's folder list, safe to
+     flip either way at any time.
    - **AI model & API key.** Pick **Haiku** (fast/cheap) or **Sonnet** (more
      capable), paste an Anthropic API key, and **Verify & Save** — the key is
      checked against the API and, on success, stored in the device **Keychain**
@@ -203,7 +216,7 @@ Seven **source types**, in two families:
 
 | Type | How it works |
 |------|--------------|
-| **YouTube Channel** | Scrape/RSS: watches the channel's upload feed (`/feeds/videos.xml`). Accepts a channel URL, `@handle`, or bare `UC…` id — a handle/vanity URL is resolved to its channel id by scraping the channel page once, then cached. |
+| **YouTube Channel** | Scrape/RSS: watches the channel's upload feed (`/feeds/videos.xml`). Accepts a channel URL, `@handle`, bare `UC…` id, or plain channel name — see [Resolving a channel](#resolving-a-channel). |
 | **YouTube Playlist** | Scrape/RSS: watches the playlist's feed. Accepts a playlist URL (anything with `list=`) or a bare playlist id. |
 | **RSS Feed** | RSS reader: parses any RSS/Atom feed and keeps **only the posts that contain YouTube links** (a music blog's roundups, a newsletter's song-of-the-day). A post with several links yields one item per video. |
 | **Blog Agent** | AI agent: RSS-reader behaviour for blogs **without a feed**. The agent fetches the homepage, asks the model which of the page's links are individual recent articles (telling posts apart from nav/category/about links is exactly the judgement call heuristics get wrong — and the model may only *pick from* the links found on the page, never invent one), reads the most recent ones, and pulls out the YouTube links inside — one item per video, titled after its article, with the article's `og:description` and publish date when present. A post with **no YouTube links** isn't a dead end: the agent extracts the **tracks the text mentions** (strictly what the article names — the model is told never to pad) and resolves each on YouTube via the search scraper; only a post that mentions no tracks at all is skipped. A Blog Agent source's list is **grouped by post** — each post is a section header (title + date) with the tracks found in it beneath — and **Settings ▸ Blog Agent** caps how many **posts per refresh** are read and how many **songs per post** are taken (defaults 5 and 5), so a link-heavy blog can't flood the list. |
@@ -224,6 +237,30 @@ and is deliberately **never trusted to produce YouTube links** (it hallucinates
 video ids); each suggestion is instead resolved to a real video by scraping the
 top result of a YouTube search. On a refresh, the model is told what it already
 suggested so it digs deeper instead of repeating itself.
+
+### Resolving a channel
+
+A channel's feed is keyed by its `UC…` id, and most of what people paste isn't
+one — a `/@handle` link, a legacy `/c/…` or `/user/…` vanity URL, a link copied
+from inside the channel (`/@handle/videos`, `?si=…`), or just the channel's
+name. Resolution therefore works through **candidate ids, each verified against
+the feed endpoint before it's accepted**:
+
+1. **The input itself**, when it already carries a `UC…` id.
+2. **The channel page**, fetched in a couple of shapes (as pasted, trimmed back
+   to the channel's own page, and — for a bare name — as `/@name`, `/c/name`
+   and `/user/name`) and read for several markers: the canonical link, then
+   `externalId` / `channelId` / `channel_id=` / `/channel/…`, and finally any
+   `UC…`-looking token. A page mentions plenty of *other* channels, which is
+   why nothing here is trusted on sight.
+3. **YouTube's channel search**, which is what rescues a plain typed name.
+
+Only an id whose feed actually loads is kept, so a wrong guess costs one request
+instead of being cached and failing every refresh afterwards. A cached id is
+re-resolved automatically if its feed ever stops loading, a consent/bot
+interstitial in place of the channel page reports **"Agent blocked"** rather
+than a vague miss, and being offline is never mistaken for "that channel
+doesn't exist".
 
 **Agent blockers.** Sites behind bot protection refuse automated readers —
 a 403/429 for non-browser clients, or a Cloudflare-style challenge
@@ -281,7 +318,11 @@ identical:
   the ops wait and retry on the next pass — the in-app change never fails or
   blocks. Reconciliation is skipped while exports are pending, so a stale
   replica can't undo the changes waiting to be written. Settings shows the
-  mirror's state (Syncing… / N changes waiting / Up to date).
+  mirror's state, counting the files as they go — **Syncing 12 of 133 tracks**
+  (the total grows as the pass discovers work: a root's exports are counted
+  when its journal drains, its imports once its replica has been scanned, and
+  it reads a plain *Syncing…* until the first count is in) / N changes waiting
+  / Up to date.
 
 Synced items wear a **sync icon** (`arrow.triangle.2.circlepath`) but
 otherwise behave exactly like everything else — tap to play, reorder,

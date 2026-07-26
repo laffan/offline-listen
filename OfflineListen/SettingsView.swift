@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 /// below it, and the Log is a section beneath them, opened in a pushed screen.
 struct SettingsView: View {
     @EnvironmentObject private var ai: AISettingsStore
+    @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var localSync: LocalSyncStore
     @EnvironmentObject private var log: LogStore
 
@@ -70,21 +71,26 @@ struct SettingsView: View {
                 Label(localSync.roots.isEmpty ? "Choose Sync Folder…" : "Add Sync Folder…",
                       systemImage: localSync.roots.isEmpty ? "arrow.triangle.2.circlepath" : "plus")
             }
+            if !localSync.roots.isEmpty {
+                Toggle("Group under a \"Synced\" folder", isOn: $library.groupSyncedFolders)
+            }
         } header: {
             Text("Local Sync")
         } footer: {
-            Text("Pick folders (in Files, iCloud Drive, Dropbox, …) to mirror with. \"Sync to Local\" copies a track or folder into one of them, and playable files in a sync folder are copied into the app — so everything keeps playing offline — appearing with the sync icon and disappearing when removed from the folder. Removing a sync folder removes its synced items from your library; the folder's own files are untouched.")
+            Text("Pick folders (in Files, iCloud Drive, Dropbox, …) to mirror with. \"Sync to Local\" copies a track or folder into one of them, and playable files in a sync folder are copied into the app — so everything keeps playing offline — appearing with the sync icon and disappearing when removed from the folder. Removing a sync folder removes its synced items from your library; the folder's own files are untouched.\n\nGrouping is a display choice only: it collects the synced folders behind a single \"Synced\" row in the Library instead of listing them among your own folders. Nothing moves, and switching it back puts them where they were.")
         }
     }
 
-    /// A quiet one-line status for the mirror: syncing, waiting to copy out
+    /// A quiet one-line status for the mirror: syncing (with the track count
+    /// once the pass knows how much there is to copy), waiting to copy out
     /// changes (folder unreachable), or up to date.
     private var syncStatusRow: some View {
         HStack(spacing: 8) {
             if localSync.isSyncing {
                 ProgressView()
-                Text("Syncing…")
+                Text(syncingLabel)
                     .foregroundStyle(.secondary)
+                    .monospacedDigit()
             } else if localSync.pendingOpCount > 0 {
                 Image(systemName: "clock.arrow.circlepath")
                     .foregroundStyle(.orange)
@@ -98,6 +104,16 @@ struct SettingsView: View {
             }
         }
         .font(.callout)
+    }
+
+    /// "Syncing 12 of 133 tracks" once the pass has counted its work; a plain
+    /// "Syncing…" while it's still scanning (a cloud folder listing can take a
+    /// while before the first file count is known).
+    private var syncingLabel: String {
+        let total = localSync.syncFileTotal
+        guard total > 0 else { return "Syncing…" }
+        let done = min(localSync.syncedFileCount, total)
+        return "Syncing \(done) of \(total) track\(total == 1 ? "" : "s")"
     }
 
     // MARK: - Blog Agent

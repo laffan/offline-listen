@@ -19,7 +19,20 @@ final class LibraryStore: ObservableObject {
         }
     }
 
+    /// Purely cosmetic: when on, the folders that mirror a sync folder are
+    /// collected under a single "Synced" row at the root of the library's
+    /// folder list instead of sitting among the user's own folders. Nothing
+    /// moves on disk and no folder's `parentID` changes — it's a display
+    /// grouping, so it can be flipped either way at any time.
+    @Published var groupSyncedFolders: Bool = false {
+        didSet {
+            guard groupSyncedFolders != oldValue else { return }
+            UserDefaults.standard.set(groupSyncedFolders, forKey: Self.groupSyncedKey)
+        }
+    }
+
     private static let folderSortKey = "folderSort"
+    static let groupSyncedKey = "groupSyncedFolders"
 
     /// Set by `LocalSyncStore`: receives a `SyncOp` (with the sync root it
     /// applies to) for every in-app change to synced content, so the change is
@@ -55,9 +68,23 @@ final class LibraryStore: ObservableObject {
     var archivedFolders: [Folder] { folders.filter { $0.isArchived } }
 
     /// Active folders in the order the library should display them: the user's
-    /// hand-set drag order, or alphabetically by name.
+    /// hand-set drag order, or alphabetically by name. With the "Synced"
+    /// grouping on, the synced roots are lifted out into their own row.
     var displayedFolders: [Folder] {
-        sorted(activeFolders.filter { $0.parentID == nil })
+        sorted(activeFolders.filter { $0.parentID == nil && !isGroupedUnderSynced($0) })
+    }
+
+    /// The synced folders the "Synced" row collects: every root-level folder
+    /// that mirrors a sync folder's directory, in display order. (Synced
+    /// folders always sit at the root — the synced tree mirrors the sync
+    /// folder, so they're never filed inside a user folder.)
+    var syncedRootFolders: [Folder] {
+        sorted(activeFolders.filter { $0.parentID == nil && $0.isSynced })
+    }
+
+    /// True when the folder is one the "Synced" row has taken over listing.
+    private func isGroupedUnderSynced(_ folder: Folder) -> Bool {
+        groupSyncedFolders && folder.isSynced && folder.parentID == nil
     }
 
     /// A folder's active subfolders, in display order.
@@ -108,6 +135,7 @@ final class LibraryStore: ObservableObject {
            let sort = FolderSort(rawValue: raw) {
             folderSort = sort
         }
+        groupSyncedFolders = UserDefaults.standard.bool(forKey: Self.groupSyncedKey)
         load()
     }
 
@@ -351,9 +379,13 @@ final class LibraryStore: ObservableObject {
     /// Reorders the active root folders, setting the persisted "User Order".
     /// The root folders are permuted among the slots they occupy in the full
     /// folders array, so archived and nested folders keep their positions.
+    /// The slots match `displayedFolders` exactly — including the synced
+    /// folders the "Synced" grouping lifts out of the list — since that's the
+    /// list the drag offsets come from.
     func moveFolders(fromOffsets source: IndexSet, toOffset destination: Int) {
         let slots = folders.indices.filter {
             folders[$0].parentID == nil && !folderArchived(folders[$0].id)
+                && !isGroupedUnderSynced(folders[$0])
         }
         var active = slots.map { folders[$0] }
         active.move(fromOffsets: source, toOffset: destination)
