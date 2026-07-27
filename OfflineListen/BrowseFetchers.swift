@@ -427,6 +427,11 @@ struct YouTubeSearchResult: Identifiable, Hashable {
     let title: String
     /// The uploading channel's name — usually the artist for music results.
     let channel: String
+    /// The video's length in seconds when the results page exposed one (it's
+    /// absent on live streams, and on any page shape the parse doesn't
+    /// recognise). Used by the Spotify matcher to reject a result that's
+    /// plainly a different recording; nothing else reads it.
+    var durationSeconds: Double? = nil
 
     var id: String { videoID }
     var url: String { BrowseHTTP.watchURL(forVideoID: videoID) }
@@ -500,9 +505,22 @@ enum YouTubeSearchResolver {
             guard !title.isEmpty else { continue }
             results.append(YouTubeSearchResult(videoID: videoID,
                                                title: title,
-                                               channel: decodeJSONStringBody(rawChannel ?? "")))
+                                               channel: decodeJSONStringBody(rawChannel ?? ""),
+                                               durationSeconds: duration(inRenderer: window)))
         }
         return results
+    }
+
+    /// The renderer's `lengthText` ("3:45" / "1:02:11") as seconds. The bounded
+    /// `.{0,300}?` hop is what makes it tolerant of the accessibility label
+    /// YouTube nests between the key and the value; a live stream carries no
+    /// `lengthText` at all, which is why the result is optional.
+    private static func duration(inRenderer window: String) -> Double? {
+        guard let text = BrowseHTTP.firstMatch(#""lengthText":.{0,300}?"simpleText":"(\d{1,2}(?::\d{2}){1,2})""#,
+                                               in: window) else { return nil }
+        let parts = text.split(separator: ":").compactMap { Double($0) }
+        guard !parts.isEmpty else { return nil }
+        return parts.reduce(0) { $0 * 60 + $1 }
     }
 
     /// Un-escapes the body of a JSON string literal ("Beyoncé & JAY-Z").

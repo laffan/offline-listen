@@ -7,6 +7,7 @@ struct OfflineListenApp: App {
     @StateObject private var playback: PlaybackManager
     @StateObject private var aiSettings: AISettingsStore
     @StateObject private var aiOrganizer: AIOrganizer
+    @StateObject private var spotifySettings: SpotifySettingsStore
     @StateObject private var browse: BrowseStore
     @StateObject private var localSync: LocalSyncStore
 
@@ -19,10 +20,14 @@ struct OfflineListenApp: App {
         _localSync = StateObject(wrappedValue: LocalSyncStore(library: library))
         let aiSettings = AISettingsStore()
         let aiOrganizer = AIOrganizer(library: library, settings: aiSettings)
+        let spotifySettings = SpotifySettingsStore()
         _library = StateObject(wrappedValue: library)
         _aiSettings = StateObject(wrappedValue: aiSettings)
         _aiOrganizer = StateObject(wrappedValue: aiOrganizer)
-        _downloads = StateObject(wrappedValue: DownloadManager(library: library, aiOrganizer: aiOrganizer))
+        _spotifySettings = StateObject(wrappedValue: spotifySettings)
+        _downloads = StateObject(wrappedValue: DownloadManager(library: library,
+                                                              aiOrganizer: aiOrganizer,
+                                                              spotifySettings: spotifySettings))
         _browse = StateObject(wrappedValue: BrowseStore(aiSettings: aiSettings))
         let playback = PlaybackManager(library: library)
         _playback = StateObject(wrappedValue: playback)
@@ -59,6 +64,7 @@ struct OfflineListenApp: App {
                 .environmentObject(playback)
                 .environmentObject(aiSettings)
                 .environmentObject(aiOrganizer)
+                .environmentObject(spotifySettings)
                 .environmentObject(browse)
                 .environmentObject(localSync)
                 .environmentObject(LogStore.shared)
@@ -82,10 +88,13 @@ struct OfflineListenApp: App {
     }
 
     /// Drains any URLs handed over by the Share Extension and enqueues them.
+    /// Routed through `enqueueLinks` rather than `enqueue` so a shared *list* —
+    /// a YouTube playlist, a Spotify album — gets the selection popup and its
+    /// own folder, exactly as pasting it into the Download field would.
     private func importShared() {
         for urlString in SharedInbox.takeAll() {
             appLog("Imported shared URL: \(urlString)", category: "Share")
-            downloads.enqueue(urlString: urlString, mode: .audio)
+            downloads.enqueueLinks(from: urlString, mode: .audio)
         }
     }
 }

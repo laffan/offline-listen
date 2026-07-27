@@ -16,7 +16,8 @@ Five screens (tabs):
    http(s) link is queued and the rest of a pasted blob is skipped), choose
    **Audio** or **Video** (default Audio), watch the queue. Links from **any site
    yt-dlp supports** work — YouTube, Vimeo, SoundCloud and ~hundreds more — not
-   just YouTube. Swipe a row for **Cancel** (active/queued), **Restart**, or
+   just YouTube — plus **Spotify** links, which take a different route (see
+   **Spotify links** below). Swipe a row for **Cancel** (active/queued), **Restart**, or
    **Clear**; tap a finished row to play it. Each finished row shows the track's
    **title and artist** (kept in step with the Library, so an AI-cleaned name
    shows here too). The queue is a **running history** — it persists across
@@ -52,7 +53,38 @@ Five screens (tabs):
    **Watch Later** / **Liked** lists are treated as ordinary single-video links,
    not playlists. Resolving the entry list uses the on-device yt-dlp module, so —
    like chapter capture — it works only once that module has been fetched by a
-   prior download.
+   prior download. The same selection popup also serves **Spotify** albums,
+   playlists and artists.
+
+   **Spotify links.** Paste a Spotify **track**, **album**, **playlist** or
+   **artist** — the `open.spotify.com/…` link (localized `intl-xx` share links
+   and `?si=…` share tokens included), the `spotify:track:…` URI, or a
+   `spotify.link` short link — and the app reads its metadata from Spotify,
+   matches **each track to a YouTube video**, and sends the results through the
+   ordinary download pipeline. A single track queues one download, like pasting
+   one YouTube link; an album, playlist or artist gets the **same selection
+   popup** a YouTube playlist does and lands in a **folder named after the
+   album/playlist/artist** (re-pasting reuses that folder rather than making a
+   second one). The queue row counts the matching off — *Resolving 42 of 137…* —
+   since every track costs a YouTube search; one paste resolves at most **200**
+   tracks, and anything past that is dropped and logged.
+
+   Matching is ISRC-first: an ISRC names a specific *recording*, so a hit is
+   almost always the right master rather than a live take or a lyric-video
+   re-upload. Failing that it searches `"artist - title"` and rejects any result
+   whose length differs from Spotify's by more than 15 seconds. A track nothing
+   matches is skipped with a warning — the rest of the playlist still comes
+   through — and the **Log** records every resolution (which query matched, and
+   the video it chose), which is where to look if a wrong track lands.
+
+   This is **not** a Spotify player: nothing is downloaded *from* Spotify, which
+   only supplies the track list. It needs free developer credentials (Settings ▸
+   **Spotify**, below) and reads **public** metadata only,
+   so your saved songs and private playlists aren't visible to it. Podcast
+   episodes and audiobooks aren't supported, and a playlist's local files and
+   episodes are skipped (each noted in the Log). Unlike the YouTube playlist
+   path, none of this touches the on-device yt-dlp module, so Spotify links work
+   on a fresh install — only the downloads they spawn need the extractor.
 2. **Browse** — keeps tabs on and curates different audio **sources** (see
    [Browse: keeping tabs on audio sources](#browse-keeping-tabs-on-audio-sources)).
    Add YouTube channels/playlists, RSS feeds, a **Blog Agent** for blogs
@@ -144,7 +176,8 @@ Five screens (tabs):
    Control Center. For a chaptered track, small **dots** sit along the scrubber
    at each chapter's start and the **current chapter title** shows on its own
    line beneath the title/artist, updating as playback crosses a marker.
-5. **Settings** — AI configuration on top, a **Local Sync** section, a
+5. **Settings** — AI configuration on top, then **Spotify** credentials, a
+   **Local Sync** section, a
    **Blog Agent** section (posts per
    refresh / songs per post limits for the Browse tab's Blog Agent sources),
    and the **Log** as a section beneath them.
@@ -160,6 +193,15 @@ Five screens (tabs):
      checked against the API and, on success, stored in the device **Keychain**
      so it persists between sessions. Once a key is saved, an **AI assist with
      organization** toggle appears.
+   - **Spotify credentials.** A **client ID** and **client secret** from a free
+     app at [developer.spotify.com](https://developer.spotify.com), then
+     **Verify & Save** — checked against Spotify and, on success, stored in the
+     **Keychain**, exactly like the AI key. They're what makes pasted Spotify
+     links work. Authorization is the **Client Credentials** flow: the app signs
+     in as *itself*, not as you, so it reads **public** metadata only — no liked
+     songs, no private or collaborative playlists, no user library. A private
+     playlist's link fails with a message saying so rather than silently
+     returning nothing.
    - **Log** — a row that opens the timestamped, copyable stream of every
      pipeline step (queue, yt-dlp, conversion, AI) with light colour coding, for
      diagnosing downloads.
@@ -423,6 +465,10 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `Logger.swift` | `LogStore` — thread-safe, app-wide log sink. |
 | `AISettings.swift` | `AISettingsStore` (model/key/assist, Keychain-backed), `AIModel`, `Keychain` helper. |
 | `AnthropicClient.swift` | Minimal Anthropic Messages API client (verify + single-shot completion) over URLSession. |
+| `SpotifyRef.swift` | Parses `spotify:` URIs / `open.spotify.com` links into a (kind, id) pair; resolves `spotify.link` short links by redirect. |
+| `SpotifyClient.swift` | Spotify Web API client: Client Credentials token (cached, 401-refreshing) + the track/album/playlist/artist metadata reads, paginated. |
+| `SpotifySettings.swift` | `SpotifySettingsStore` — the Keychain-backed client id/secret (mirrors `AISettingsStore`). |
+| `SpotifyResolver.swift` | Spotify metadata → `ResolvedPlaylist`: ISRC-first YouTube matching with a duration gate, bounded and concurrent. |
 | `AIOrganizer.swift` | Builds the prompt, calls the API, writes music/podcast + clean metadata back to the library. |
 | `BrowseModels.swift` | `BrowseSourceKind`, `BrowseSource`, `BrowseItem` + status — the Browse tab's data model. |
 | `BrowseStore.swift` | Persists sources/items to `Documents/browse.json`; orchestrates refreshes and the new/downloaded/saved/discarded lifecycle. |
@@ -557,6 +603,9 @@ app, etc. into Offline Listen:
    app via the `offlinelisten://` URL scheme.
 3. On launch/foreground the app drains the shared URLs and auto-enqueues them as
    M4A downloads (see `SharedInbox` + `importShared()` in `OfflineListenApp`).
+   A shared *list* — a YouTube playlist, or an album/playlist shared from the
+   Spotify app — takes the same route a pasted one does: the selection popup and
+   its own folder.
 
 The extension does no downloading itself (extensions have a tight memory budget);
 it just hands the URL to the app.

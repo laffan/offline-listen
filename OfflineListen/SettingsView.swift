@@ -2,10 +2,12 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// The Settings tab. Top section configures AI-assisted organization (model +
-/// API key + the assist opt-in); Local Sync and the Blog Agent's limits sit
-/// below it, and the Log is a section beneath them, opened in a pushed screen.
+/// API key + the assist opt-in), then the Spotify credentials; Local Sync and
+/// the Blog Agent's limits sit below them, and the Log is a section beneath
+/// those, opened in a pushed screen.
 struct SettingsView: View {
     @EnvironmentObject private var ai: AISettingsStore
+    @EnvironmentObject private var spotify: SpotifySettingsStore
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var localSync: LocalSyncStore
     @EnvironmentObject private var log: LogStore
@@ -13,6 +15,10 @@ struct SettingsView: View {
     @State private var keyInput = ""
     @State private var verifyState: VerifyState = .idle
     @State private var showFolderPicker = false
+
+    @State private var spotifyIDInput = ""
+    @State private var spotifySecretInput = ""
+    @State private var spotifyVerifyState: VerifyState = .idle
 
     // The Blog Agent's limits — same keys `BlogAgentSettings` reads at
     // refresh time, so a change here applies to the next refresh.
@@ -31,6 +37,7 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 aiSection
+                spotifySection
                 localSyncSection
                 blogAgentSection
                 logSection
@@ -230,6 +237,96 @@ struct SettingsView: View {
                 appLog("AI API key verified and saved.", level: .success, category: "AI")
             } catch {
                 verifyState = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    // MARK: - Spotify
+
+    private var spotifySection: some View {
+        Section {
+            if spotify.isConfigured {
+                HStack {
+                    Label("Credentials saved", systemImage: "checkmark.seal.fill")
+                        .foregroundStyle(.green)
+                    Spacer()
+                    Button("Remove", role: .destructive) {
+                        spotify.clearCredentials()
+                        spotifyIDInput = ""
+                        spotifySecretInput = ""
+                        spotifyVerifyState = .idle
+                    }
+                    .font(.callout)
+                }
+            } else {
+                spotifyCredentialEntry
+            }
+        } header: {
+            Text("Spotify")
+        } footer: {
+            if spotify.isConfigured {
+                Text("Paste a Spotify track, album, playlist or artist link into the Download tab and its tracks are matched to YouTube videos and downloaded. Signing in as an app rather than as you, it reads public metadata only — your saved songs and private playlists aren't visible to it.")
+            } else {
+                Text("Create a free app at developer.spotify.com to get a client ID and secret, then paste them here to download Spotify links. They're stored securely in the device Keychain.")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var spotifyCredentialEntry: some View {
+        TextField("Client ID", text: $spotifyIDInput)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .disabled(spotifyVerifyState == .verifying)
+
+        SecureField("Client secret", text: $spotifySecretInput)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .disabled(spotifyVerifyState == .verifying)
+
+        Button {
+            verifyAndSaveSpotify()
+        } label: {
+            HStack {
+                if spotifyVerifyState == .verifying {
+                    ProgressView()
+                    Text("Verifying…")
+                } else {
+                    Text("Verify & Save")
+                }
+            }
+        }
+        .disabled(spotifyCredentialsIncomplete || spotifyVerifyState == .verifying)
+
+        if case .failed(let message) = spotifyVerifyState {
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.red)
+        }
+    }
+
+    private var spotifyCredentialsIncomplete: Bool {
+        spotifyIDInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || spotifySecretInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func verifyAndSaveSpotify() {
+        let id = spotifyIDInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        let secret = spotifySecretInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty, !secret.isEmpty else { return }
+        spotifyVerifyState = .verifying
+        Task {
+            do {
+                try await SpotifyClient(clientID: id, clientSecret: secret).verify()
+                spotify.saveCredentials(id: id, secret: secret)
+                spotifyIDInput = ""
+                spotifySecretInput = ""
+                spotifyVerifyState = .idle
+                appLog("Spotify credentials verified and saved.", level: .success, category: "Spotify")
+            } catch {
+                spotifyVerifyState = .failed(error.localizedDescription)
+                appLog("Spotify verification failed: \(error.localizedDescription)",
+                       level: .error, category: "Spotify")
             }
         }
     }

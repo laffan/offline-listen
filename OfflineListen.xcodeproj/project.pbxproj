@@ -35,6 +35,10 @@
 		1B00000000000000000000CA /* ChapterSplitter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B8 /* ChapterSplitter.swift */; };
 		1B00000000000000000000CB /* AISettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B9 /* AISettings.swift */; };
 		1B00000000000000000000CC /* AnthropicClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BA /* AnthropicClient.swift */; };
+		1B0000000000000000003A01 /* SpotifyRef.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000003A01 /* SpotifyRef.swift */; };
+		1B0000000000000000003A02 /* SpotifyClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000003A02 /* SpotifyClient.swift */; };
+		1B0000000000000000003A03 /* SpotifySettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000003A03 /* SpotifySettings.swift */; };
+		1B0000000000000000003A04 /* SpotifyResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000003A04 /* SpotifyResolver.swift */; };
 		1B00000000000000000000CD /* AIOrganizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BB /* AIOrganizer.swift */; };
 		1B00000000000000000000CE /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BC /* SettingsView.swift */; };
 		3B00000000000000000000A3 /* SharedInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A00000000000000000000A5 /* SharedInbox.swift */; };
@@ -116,6 +120,10 @@
 		1A00000000000000000000B8 /* ChapterSplitter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChapterSplitter.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B9 /* AISettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISettings.swift; sourceTree = "<group>"; };
 		1A00000000000000000000BA /* AnthropicClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnthropicClient.swift; sourceTree = "<group>"; };
+		1A0000000000000000003A01 /* SpotifyRef.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifyRef.swift; sourceTree = "<group>"; };
+		1A0000000000000000003A02 /* SpotifyClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifyClient.swift; sourceTree = "<group>"; };
+		1A0000000000000000003A03 /* SpotifySettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifySettings.swift; sourceTree = "<group>"; };
+		1A0000000000000000003A04 /* SpotifyResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifyResolver.swift; sourceTree = "<group>"; };
 		1A00000000000000000000BB /* AIOrganizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIOrganizer.swift; sourceTree = "<group>"; };
 		1A00000000000000000000BC /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		1A00000000000000000000AC /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -230,6 +238,10 @@
 				1A00000000000000000000BC /* SettingsView.swift */,
 				1A00000000000000000000B9 /* AISettings.swift */,
 				1A00000000000000000000BA /* AnthropicClient.swift */,
+				1A0000000000000000003A01 /* SpotifyRef.swift */,
+				1A0000000000000000003A02 /* SpotifyClient.swift */,
+				1A0000000000000000003A03 /* SpotifySettings.swift */,
+				1A0000000000000000003A04 /* SpotifyResolver.swift */,
 				1A00000000000000000000BB /* AIOrganizer.swift */,
 				1A00000000000000000000AF /* Logger.swift */,
 				1A00000000000000000000B0 /* LogView.swift */,
@@ -487,6 +499,10 @@
 				1B00000000000000000000C0 /* LogView.swift in Sources */,
 				1B00000000000000000000CB /* AISettings.swift in Sources */,
 				1B00000000000000000000CC /* AnthropicClient.swift in Sources */,
+				1B0000000000000000003A01 /* SpotifyRef.swift in Sources */,
+				1B0000000000000000003A02 /* SpotifyClient.swift in Sources */,
+				1B0000000000000000003A03 /* SpotifySettings.swift in Sources */,
+				1B0000000000000000003A04 /* SpotifyResolver.swift in Sources */,
 				1B00000000000000000000CD /* AIOrganizer.swift in Sources */,
 				1B00000000000000000000CE /* SettingsView.swift in Sources */,
 				1B00000000000000000000C2 /* AudioStreamDownloader.swift in Sources */,
