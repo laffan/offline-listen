@@ -50,6 +50,8 @@ enum BlogAgent {
         /// The blog's own title (for auto-naming the source).
         var blogTitle: String
         var items: [FetchedBrowseItem]
+        /// One entry per article read: its summary and the artists it names.
+        var posts: [FetchedBrowsePost]
     }
 
     static func fetch(source: BrowseSource, settings: AISettingsStore) async throws -> Result {
@@ -84,10 +86,13 @@ enum BlogAgent {
             throw BrowseFetchError.badInput("The AI couldn't identify any article links on that page.")
         }
 
-        // 3. Read each article and harvest its YouTube links. Serially — the
-        //    agent is a polite guest. A single blocked/broken article is
-        //    skipped; if *every* article refused the agent, say so.
+        // 3. Read each article. For every one we produce a **post** — a short
+        //    summary plus the artists it names — and, on top of that, harvest
+        //    any YouTube links it carries as tracks. Serially — the agent is a
+        //    polite guest. A single blocked/broken article is skipped; if
+        //    *every* article refused the agent, say so.
         var items: [FetchedBrowseItem] = []
+        var posts: [FetchedBrowsePost] = []
         var blockedCount = 0
         var fetchedCount = 0
         for articleURL in articleURLs.prefix(maxPosts) {
@@ -112,27 +117,20 @@ enum BlogAgent {
             let description = pageDescription(in: page.html) ?? ""
             let published = pagePublishedDate(in: page.html)
 
-            let videoIDs = Array(BrowseHTTP.youTubeVideoIDs(in: page.html).prefix(maxSongs))
-            guard !videoIDs.isEmpty else {
-                // No links in the post — find the tracks it *mentions* on
-                // YouTube instead. A post that mentions none is skipped.
-                let mentioned = await findMentionedTracks(in: page.html,
-                                                          articleTitle: articleTitle,
-                                                          articleURL: articleURL,
-                                                          published: published,
-                                                          limit: maxSongs,
-                                                          settings: settings)
-                if mentioned.isEmpty {
-                    appLog("Blog agent: no YouTube links or track mentions in \"\(articleTitle)\" — skipping.",
-                           level: .debug, category: "Browse")
-                } else {
-                    appLog("Blog agent: \"\(articleTitle)\" has no YouTube links — resolved \(mentioned.count) mentioned track(s) via search.",
-                           category: "Browse")
-                }
-                items.append(contentsOf: mentioned)
-                continue
-            }
+            // The article's summary + the artists it discusses.
+            let analysis = await analyzeArticle(in: page.html,
+                                                articleTitle: articleTitle,
+                                                settings: settings)
+            posts.append(FetchedBrowsePost(
+                title: articleTitle,
+                url: articleURL.absoluteString,
+                summary: analysis.summary,
+                artists: analysis.artists,
+                datePublished: published
+            ))
 
+            // Any YouTube links actually in the article become tracks.
+            let videoIDs = Array(BrowseHTTP.youTubeVideoIDs(in: page.html).prefix(maxSongs))
             for (index, videoID) in videoIDs.enumerated() {
                 let title = videoIDs.count == 1
                     ? articleTitle
@@ -147,14 +145,16 @@ enum BlogAgent {
                     postURL: articleURL.absoluteString
                 ))
             }
+            appLog("Blog agent: \"\(articleTitle)\" — \(videoIDs.count) link(s), \(analysis.artists.count) artist(s) mentioned.",
+                   level: .debug, category: "Browse")
         }
 
         if fetchedCount == 0 && blockedCount > 0 {
             throw BrowseFetchError.agentBlocked
         }
-        appLog("Blog agent read \(fetchedCount) article(s), found \(items.count) YouTube link(s).",
+        appLog("Blog agent read \(fetchedCount) article(s): \(items.count) YouTube link(s), \(posts.count) summarized.",
                category: "Browse")
-        return Result(blogTitle: blogTitle, items: items)
+        return Result(blogTitle: blogTitle, items: items, posts: posts)
     }
 
     // MARK: - Fetching + block detection
@@ -293,70 +293,68 @@ enum BlogAgent {
             .compactMap { URL(string: $0) }
     }
 
-    // MARK: - Mentioned-track fallback
+    // MARK: - Article summary + artists
 
-    /// For a post with no YouTube links: ask the model which songs the article
-    /// text actually mentions, then resolve each to a real video via the
-    /// search scraper (the same never-trust-the-model-with-links rule as
-    /// `AIDiscovery`). Best-effort — a failure here just means the post is
-    /// skipped, never that the whole refresh fails.
-    private static func findMentionedTracks(in html: String,
-                                            articleTitle: String,
-                                            articleURL: URL,
-                                            published: Date?,
-                                            limit: Int,
-                                            settings: AISettingsStore) async -> [FetchedBrowseItem] {
+    /// Asks the model to summarize one article and list the artists it names.
+    /// Best-effort — a failure here just leaves the post's summary/artists
+    /// empty, never fails the whole refresh.
+    private static func analyzeArticle(in html: String,
+                                       articleTitle: String,
+                                       settings: AISettingsStore) async -> (summary: String, artists: [String]) {
         let text = articleText(from: html)
-        guard !text.isEmpty else { return [] }
+        guard !text.isEmpty else { return ("", []) }
 
         let client = await AnthropicClient(apiKey: settings.apiKey, model: settings.model)
         let raw: String
         do {
             raw = try await client.complete(
                 system: """
-                You extract music tracks from a blog article. List only songs \
-                the article text actually mentions or discusses — never guess, \
-                pad, or add songs the article doesn't name. An article that \
-                mentions no identifiable songs gets an empty array.
+                You read one music-blog article and return a brief summary plus \
+                the artists it discusses.
 
-                Respond with ONLY a JSON array and nothing else — no markdown, \
-                no commentary. At most \(limit) elements (the most prominently \
-                featured songs first), each:
-                {"artist": string, "title": string}
+                Respond with ONLY a JSON object and nothing else — no markdown, \
+                no commentary:
+                {"summary": string, "artists": [string, ...]}
 
-                Do not include YouTube links or video ids — they will be \
-                looked up separately.
+                - "summary": one or two plain sentences on what the article is \
+                about.
+                - "artists": the musical artists or bands the article actually \
+                names, most prominently featured first, de-duplicated. Use an \
+                empty array if it names none. Never invent an artist the \
+                article doesn't mention.
                 """,
                 userText: "Article title: \(articleTitle)\n\nArticle text:\n\(text)",
-                maxTokens: 1000
+                maxTokens: 800
             )
         } catch {
             if !isCancellation(error) {
-                appLog("Blog agent: track extraction failed for \"\(articleTitle)\": \(error.localizedDescription)",
+                appLog("Blog agent: article analysis failed for \"\(articleTitle)\": \(error.localizedDescription)",
                        level: .warning, category: "Browse")
             }
-            return []
+            return ("", [])
         }
+        return parseAnalysis(raw)
+    }
 
-        var items: [FetchedBrowseItem] = []
-        for suggestion in AIDiscovery.parse(raw).prefix(limit) {
-            if Task.isCancelled { break }
-            let query = "\(suggestion.artist) \(suggestion.title)"
-            guard let videoID = await YouTubeSearchResolver.firstVideoID(matching: query) else {
-                appLog("No YouTube result for \"\(query)\" — skipping.", level: .warning, category: "Browse")
-                continue
-            }
-            items.append(FetchedBrowseItem(
-                title: "\(suggestion.artist) — \(suggestion.title)",
-                detail: "",
-                url: BrowseHTTP.watchURL(forVideoID: videoID),
-                videoID: videoID,
-                datePublished: published,
-                postTitle: articleTitle,
-                postURL: articleURL.absoluteString
-            ))
+    /// Parses the `{"summary", "artists"}` object, tolerating surrounding
+    /// text/fences by extracting the outermost `{ … }` span. De-dups artists
+    /// case-insensitively, preserving order.
+    static func parseAnalysis(_ raw: String) -> (summary: String, artists: [String]) {
+        guard let start = raw.firstIndex(of: "{"),
+              let end = raw.lastIndex(of: "}"), start < end,
+              let data = String(raw[start...end]).data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return ("", [])
         }
-        return items
+        let summary = (object["summary"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let rawArtists = (object["artists"] as? [Any])?.compactMap { entry -> String? in
+            let value = (entry as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (value?.isEmpty ?? true) ? nil : value
+        } ?? []
+        var seen = Set<String>()
+        let artists = rawArtists.filter { seen.insert($0.lowercased()).inserted }
+        return (summary, artists)
     }
 
     /// The article's readable text for the model: script/style/nav chrome

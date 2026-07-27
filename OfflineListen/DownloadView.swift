@@ -197,17 +197,48 @@ struct DownloadView: View {
 
 private struct DownloadJobRow: View {
     @EnvironmentObject private var downloads: DownloadManager
+    @EnvironmentObject private var library: LibraryStore
     @ObservedObject var job: DownloadJob
 
     private var isActiveOrQueued: Bool {
         job.state.isActive || job.state == .queued
     }
 
+    /// The library track this finished job produced, while it still exists — so
+    /// the row shows the same (AI-cleaned) title/artist the Library does, and
+    /// keeps up as the AI organizes it.
+    private var track: Track? {
+        guard let id = job.trackID else { return nil }
+        return library.tracks.first { $0.id == id }
+    }
+
+    private var displayTitle: String {
+        let live = track?.title
+        return (live?.isEmpty == false ? live : nil) ?? job.title
+    }
+
+    /// The artist to show beneath the title: the live track's, else the
+    /// persisted snapshot's. Nil (hidden) when it's unknown or still in flight.
+    private var displayArtist: String? {
+        for candidate in [track?.artist, job.artist] {
+            if let a = candidate, !a.isEmpty, a.lowercased() != "unknown" { return a }
+        }
+        return nil
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(job.title)
-                .font(.subheadline)
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(displayTitle)
+                    .font(.subheadline)
+                    .lineLimit(1)
+                if let displayArtist {
+                    Text(displayArtist)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
 
             HStack(spacing: 8) {
                 statusIcon

@@ -8,6 +8,10 @@ import Foundation
 final class BrowseStore: ObservableObject {
     @Published private(set) var sources: [BrowseSource] = []
     @Published private(set) var items: [BrowseItem] = []
+    /// Blog Agent articles (summary + mentioned artists), keyed to their source.
+    /// Separate from `items` because a post can carry a summary/artist list with
+    /// no playable tracks at all.
+    @Published private(set) var posts: [BrowsePost] = []
     /// Sources with a refresh in flight (spinners in the UI).
     @Published private(set) var refreshing: Set<UUID> = []
     /// Most recent refresh error per source, cleared on the next success.
@@ -49,6 +53,13 @@ final class BrowseStore: ObservableObject {
         items.filter { $0.sourceID == sourceID && $0.status == .new }.count
     }
 
+    /// A Blog Agent source's articles, newest first.
+    func posts(for sourceID: UUID) -> [BrowsePost] {
+        posts
+            .filter { $0.sourceID == sourceID }
+            .sorted { ($0.datePublished ?? $0.dateFetched) > ($1.datePublished ?? $1.dateFetched) }
+    }
+
     // MARK: - Source management
 
     @discardableResult
@@ -73,6 +84,7 @@ final class BrowseStore: ObservableObject {
     func removeSource(_ source: BrowseSource) {
         sources.removeAll { $0.id == source.id }
         items.removeAll { $0.sourceID == source.id }
+        posts.removeAll { $0.sourceID == source.id }
         lastError[source.id] = nil
         save()
         appLog("Browse: removed source \"\(source.name)\"", category: "Browse")
@@ -89,6 +101,25 @@ final class BrowseStore: ObservableObject {
 
     func markDownloaded(_ item: BrowseItem) {
         setStatus(.downloaded, for: item.id)
+    }
+
+    /// Marks several items downloaded in one shot — a single rewrite of the
+    /// array (one published change) and a single disk save. The per-item
+    /// `setStatus` would fire a full `browse.json` write per call, so a bulk
+    /// "Download selected" over a big list (a whole discography) would stall
+    /// the main thread on dozens of synchronous writes.
+    func markDownloaded(_ picks: [BrowseItem]) {
+        let ids = Set(picks.map(\.id))
+        guard !ids.isEmpty else { return }
+        var updated = items
+        var changed = false
+        for index in updated.indices where ids.contains(updated[index].id) && updated[index].status != .downloaded {
+            updated[index].status = .downloaded
+            changed = true
+        }
+        guard changed else { return }
+        items = updated
+        save()
     }
 
     func markSaved(_ item: BrowseItem) {
@@ -141,6 +172,9 @@ final class BrowseStore: ObservableObject {
                 let result = try await BlogAgent.fetch(source: source, settings: aiSettings)
                 fetched = result.items
                 feedTitle = result.blogTitle
+                mergePosts(result.posts, into: source.id)
+            case .discography:
+                fetched = try await DiscographyAgent.fetch(source: source, settings: aiSettings).items
             case .artist, .genre, .country:
                 // Tell the model what it already suggested so refreshes dig
                 // deeper instead of repeating (discards included, on purpose).
@@ -186,7 +220,7 @@ final class BrowseStore: ObservableObject {
 
         var added = 0
         for candidate in fetched {
-            let key = candidate.videoID ?? candidate.url
+            let key = candidate.dedupKey
             if let index = known[key] {
                 items[index].title = candidate.title
                 if !candidate.detail.isEmpty { items[index].detail = candidate.detail }
@@ -201,7 +235,8 @@ final class BrowseStore: ObservableObject {
                                       videoID: candidate.videoID,
                                       datePublished: candidate.datePublished,
                                       postTitle: candidate.postTitle,
-                                      postURL: candidate.postURL)
+                                      postURL: candidate.postURL,
+                                      groupKey: candidate.groupKey)
                 items.append(item)
                 known[key] = items.count - 1
                 added += 1
@@ -210,11 +245,39 @@ final class BrowseStore: ObservableObject {
         return added
     }
 
+    /// Merges fetched Blog Agent posts into the store — an article already known
+    /// (same URL) refreshes its summary/artists/date; new ones are appended.
+    /// Like items, posts that fall out of the feed are kept.
+    private func mergePosts(_ fetched: [FetchedBrowsePost], into sourceID: UUID) {
+        var known: [String: Int] = [:]
+        for (index, post) in posts.enumerated() where post.sourceID == sourceID {
+            known[post.dedupKey] = index
+        }
+        for candidate in fetched {
+            if let index = known[candidate.dedupKey] {
+                posts[index].title = candidate.title
+                if !candidate.summary.isEmpty { posts[index].summary = candidate.summary }
+                if !candidate.artists.isEmpty { posts[index].artists = candidate.artists }
+                if let published = candidate.datePublished { posts[index].datePublished = published }
+            } else {
+                posts.append(BrowsePost(sourceID: sourceID,
+                                        title: candidate.title,
+                                        url: candidate.url,
+                                        summary: candidate.summary,
+                                        artists: candidate.artists,
+                                        datePublished: candidate.datePublished))
+                known[candidate.dedupKey] = posts.count - 1
+            }
+        }
+    }
+
     // MARK: - Persistence
 
     private struct BrowseIndex: Codable {
         var sources: [BrowseSource]
         var items: [BrowseItem]
+        /// Optional so a `browse.json` written before posts existed still decodes.
+        var posts: [BrowsePost]?
     }
 
     private func load() {
@@ -223,6 +286,7 @@ final class BrowseStore: ObservableObject {
             let index = try JSONDecoder().decode(BrowseIndex.self, from: data)
             sources = index.sources
             items = index.items
+            posts = index.posts ?? []
         } catch {
             print("[BrowseStore] failed to decode index: \(error)")
         }
@@ -230,7 +294,7 @@ final class BrowseStore: ObservableObject {
 
     private func save() {
         do {
-            let data = try JSONEncoder().encode(BrowseIndex(sources: sources, items: items))
+            let data = try JSONEncoder().encode(BrowseIndex(sources: sources, items: items, posts: posts))
             try data.write(to: AppPaths.browseIndex, options: .atomic)
         } catch {
             print("[BrowseStore] failed to save index: \(error)")

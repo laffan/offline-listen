@@ -16,6 +16,12 @@ enum AppPaths {
         documents.appendingPathComponent("folders.json")
     }
 
+    /// Persisted download history (completed/failed/cancelled jobs), so the
+    /// Download tab survives relaunches instead of clearing on quit.
+    static var downloadsHistory: URL {
+        documents.appendingPathComponent("downloads.json")
+    }
+
     /// The user-chosen sync folders, resolved from their security-scoped
     /// bookmarks by `LocalSyncStore` at launch, keyed by each root's id.
     /// These are *replicas*: the app never plays from them — synced files are

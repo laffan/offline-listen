@@ -8,6 +8,7 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
     case youtubePlaylist
     case rssFeed
     case blogAgent
+    case discography
     case artist
     case genre
     case country
@@ -20,7 +21,8 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
         case .youtubePlaylist: return "YouTube Playlist"
         case .rssFeed: return "RSS Feed"
         case .blogAgent: return "Blog Agent"
-        case .artist: return "Artist"
+        case .discography: return "Artist Discography"
+        case .artist: return "Artist Top 10"
         case .genre: return "Genre"
         case .country: return "Country"
         }
@@ -33,7 +35,8 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
         case .youtubePlaylist: return "YouTube Playlists"
         case .rssFeed: return "RSS Feeds"
         case .blogAgent: return "Blog Agents"
-        case .artist: return "Artists"
+        case .discography: return "Artist Discographies"
+        case .artist: return "Artist Top 10s"
         case .genre: return "Genres"
         case .country: return "Countries"
         }
@@ -45,6 +48,7 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
         case .youtubePlaylist: return "list.and.film"
         case .rssFeed: return "dot.radiowaves.up.forward"
         case .blogAgent: return "doc.text.magnifyingglass"
+        case .discography: return "square.stack"
         case .artist: return "music.mic"
         case .genre: return "guitars"
         case .country: return "globe"
@@ -53,10 +57,11 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
 
     /// AI-driven kinds need an Anthropic key (Settings) to refresh. The Blog
     /// Agent counts: it uses the model to tell article links apart from the
-    /// rest of a homepage.
+    /// rest of a homepage; the Discography agent uses it to lay out an artist's
+    /// catalogue.
     var usesAI: Bool {
         switch self {
-        case .blogAgent, .artist, .genre, .country: return true
+        case .blogAgent, .discography, .artist, .genre, .country: return true
         case .youtubeChannel, .youtubePlaylist, .rssFeed: return false
         }
     }
@@ -66,16 +71,17 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
     var inputIsURL: Bool {
         switch self {
         case .youtubeChannel, .youtubePlaylist, .rssFeed, .blogAgent: return true
-        case .artist, .genre, .country: return false
+        case .discography, .artist, .genre, .country: return false
         }
     }
 
     /// Whether the source can be scoped to a decade (the AI music kinds:
-    /// early Dylan, 1980s synth-pop, 1970s Mali).
+    /// early Dylan, 1980s synth-pop, 1970s Mali). A Discography spans the
+    /// artist's whole catalogue, so it isn't era-scoped.
     var supportsEra: Bool {
         switch self {
         case .artist, .genre, .country: return true
-        case .youtubeChannel, .youtubePlaylist, .rssFeed, .blogAgent: return false
+        case .youtubeChannel, .youtubePlaylist, .rssFeed, .blogAgent, .discography: return false
         }
     }
 
@@ -86,6 +92,7 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
         case .youtubePlaylist: return "Playlist URL or ID"
         case .rssFeed: return "Feed URL"
         case .blogAgent: return "Blog URL"
+        case .discography: return "Artist name"
         case .artist: return "Artist name"
         case .genre: return "Genre (e.g. Bossa Nova)"
         case .country: return "Country (e.g. Mali)"
@@ -102,9 +109,11 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
         case .rssFeed:
             return "Reads the feed and keeps only posts that contain YouTube links."
         case .blogAgent:
-            return "For blogs without a feed: an AI agent visits the site, reads recent articles, and pulls out the YouTube links inside them."
+            return "For blogs without a feed: an AI agent reads recent articles and shows each as a summary, its YouTube links, and the artists it mentions (tap one to follow that artist)."
+        case .discography:
+            return "An AI agent lays out the artist's full discography as a nested list of albums, with a Highlights list of essential songs on top."
         case .artist:
-            return "AI suggests the artist's popular songs and finds them on YouTube."
+            return "AI finds the artist's top 10 most popular tracks on YouTube."
         case .genre:
             return "AI suggests popular songs in the genre and finds them on YouTube."
         case .country:
@@ -182,11 +191,17 @@ struct BrowseItem: Identifiable, Codable, Hashable {
     var datePublished: Date?
     var dateFetched: Date
     var status: BrowseItemStatus
-    /// The post/article the item came from (Blog Agent sources), so the list
-    /// can group tracks under their post. Nil for sources without that
-    /// structure — and for items saved before these fields existed.
+    /// The post/article (Blog Agent) or album (Discography) the item came from,
+    /// so the list can group tracks under their section. Nil for sources
+    /// without that structure — and for items saved before these fields existed.
     var postTitle: String?
     var postURL: String?
+    /// A dedup discriminator for grouped sources where the *same* video may
+    /// legitimately appear in more than one section — notably a Discography's
+    /// Highlights track that is also a track on one of its albums. When set it
+    /// is folded into `dedupKey` so those stay separate items. Nil elsewhere
+    /// (Blog Agent keeps collapsing a video shared across posts to one item).
+    var groupKey: String?
 
     init(id: UUID = UUID(),
          sourceID: UUID,
@@ -198,7 +213,8 @@ struct BrowseItem: Identifiable, Codable, Hashable {
          dateFetched: Date = Date(),
          status: BrowseItemStatus = .new,
          postTitle: String? = nil,
-         postURL: String? = nil) {
+         postURL: String? = nil,
+         groupKey: String? = nil) {
         self.id = id
         self.sourceID = sourceID
         self.title = title
@@ -210,10 +226,21 @@ struct BrowseItem: Identifiable, Codable, Hashable {
         self.status = status
         self.postTitle = postTitle
         self.postURL = postURL
+        self.groupKey = groupKey
     }
 
-    /// Identity across refreshes: the video id when known, else the URL.
-    var dedupKey: String { videoID ?? url }
+    /// Identity across refreshes: the video id when known, else the URL —
+    /// prefixed by `groupKey` when the source keeps per-section copies of a
+    /// video (Discography).
+    var dedupKey: String { Self.dedupKey(videoID: videoID, url: url, groupKey: groupKey) }
+
+    /// Shared so `FetchedBrowseItem` computes the exact same key the merge
+    /// looks up by.
+    static func dedupKey(videoID: String?, url: String, groupKey: String?) -> String {
+        let base = videoID ?? url
+        guard let groupKey else { return base }
+        return "\(groupKey)\u{1}\(base)"
+    }
 }
 
 /// What a fetcher hands back for one discovered link, before the store merges
@@ -224,9 +251,67 @@ struct FetchedBrowseItem {
     var url: String
     var videoID: String?
     var datePublished: Date?
-    /// The post the item was found in (Blog Agent), for grouping.
+    /// The post (Blog Agent) or album (Discography) the item was found in, for
+    /// grouping.
     var postTitle: String? = nil
     var postURL: String? = nil
+    /// Per-section dedup discriminator (see `BrowseItem.groupKey`).
+    var groupKey: String? = nil
+
+    /// The identity the store merges by — matches `BrowseItem.dedupKey`.
+    var dedupKey: String { BrowseItem.dedupKey(videoID: videoID, url: url, groupKey: groupKey) }
+}
+
+/// A Blog Agent article: a short summary and the artists it names, shown around
+/// the YouTube tracks found in the same article (summary above, artists below).
+/// A post can exist with **no** tracks — a text-only write-up — which is why
+/// it's its own record rather than metadata hung off a track. Its tracks tie
+/// back by `url` matching a `BrowseItem`'s `postURL`.
+struct BrowsePost: Identifiable, Codable, Hashable {
+    let id: UUID
+    var sourceID: UUID
+    var title: String
+    /// The article URL, when known — the grouping/dedup key for its tracks.
+    var url: String?
+    /// A one-or-two-sentence plain-language summary of the article.
+    var summary: String
+    /// The artists the article names, most prominent first, for the tappable
+    /// "create a source for this artist" list.
+    var artists: [String]
+    var datePublished: Date?
+    var dateFetched: Date
+
+    init(id: UUID = UUID(),
+         sourceID: UUID,
+         title: String,
+         url: String? = nil,
+         summary: String = "",
+         artists: [String] = [],
+         datePublished: Date? = nil,
+         dateFetched: Date = Date()) {
+        self.id = id
+        self.sourceID = sourceID
+        self.title = title
+        self.url = url
+        self.summary = summary
+        self.artists = artists
+        self.datePublished = datePublished
+        self.dateFetched = dateFetched
+    }
+
+    /// Identity across refreshes: the article URL when known, else the title.
+    var dedupKey: String { url ?? title }
+}
+
+/// What the Blog Agent hands back for one article before the store merges it.
+struct FetchedBrowsePost {
+    var title: String
+    var url: String?
+    var summary: String
+    var artists: [String]
+    var datePublished: Date?
+
+    var dedupKey: String { url ?? title }
 }
 
 extension AppPaths {
