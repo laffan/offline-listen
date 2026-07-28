@@ -1048,7 +1048,17 @@ YouTube chapter markers are captured after a download as a best-effort step
 `Track`. It runs only when the on-device yt-dlp Python module is **already
 present**, so capturing chapters never triggers the tens-of-MB module download
 on its own; without PythonKit/the module, tracks simply carry no chapters and
-everything else is unchanged. Chapters persist in `library.json` (older
+everything else is unchanged.
+
+It also starts the embedded interpreter first if nothing else has this session
+(`PythonBridge.ensurePythonRunning()`), and skips itself entirely if it can't.
+That isn't defensive tidiness: a download served by the **native** Vimeo or
+YouTubeKit extractors never runs a yt-dlp extraction, so chapter capture becomes
+the first thing to touch Python — and touching it uninitialized doesn't throw,
+it kills the process (`ModuleNotFoundError: No module named 'encodings'`), which
+took the app down right after an otherwise perfect download. `PlaylistResolver`
+takes the same guard, since resolving a pasted playlist is often the first thing
+a launch does. Chapters persist in `library.json` (older
 libraries decode with an empty list).
 
 Chapters surface three ways: a jump-to list behind the library row's arrow, dots

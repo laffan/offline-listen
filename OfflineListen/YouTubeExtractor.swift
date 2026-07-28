@@ -1422,6 +1422,7 @@ final class YoutubeDLExtractor: MediaExtractor {
                 (formats, info) = try await resolveInfo(youtubeDL, url: url, category: category, timeout: infoTimeout)
                 // extract_info ran, so Python is bootstrapped for the session.
                 Self.pythonBootstrapped = true
+                PythonBridge.markPythonRunning()
             } catch {
                 // The default extraction stalled (the on-device web client needs
                 // nsig descrambling via the slow pure-Python JS interpreter, which
@@ -1434,6 +1435,7 @@ final class YoutubeDLExtractor: MediaExtractor {
                 // extract_info ran (even though it threw/timed out), so Python is
                 // bootstrapped — a later job can safely wire the JS runtime.
                 Self.pythonBootstrapped = true
+                PythonBridge.markPythonRunning()
                 if isCancellation(error) { throw error }
                 #if canImport(PythonKit)
                 // The forced-client sweep only means anything for YouTube:
