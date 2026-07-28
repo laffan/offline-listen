@@ -229,9 +229,17 @@ final class DownloadManager: ObservableObject {
     init(library: LibraryStore,
          aiOrganizer: AIOrganizer? = nil,
          spotifySettings: SpotifySettingsStore? = nil,
+         // Native extractors first, each claiming only the site it knows
+         // (`canHandle`), with yt-dlp behind them for everything else — and as
+         // the fallback when a native attempt fails. Vimeo leads because its
+         // player config is two plain requests, where the yt-dlp path for the
+         // same link means minutes inside the embedded interpreter.
          extractor: MediaExtractor = CompositeExtractor(
-            primary: YouTubeKitExtractor(), named: "YouTubeKit",
-            fallback: YoutubeDLExtractor(), named: "yt-dlp")) {
+            primary: VimeoExtractor(), named: "Vimeo",
+            fallback: CompositeExtractor(
+                primary: YouTubeKitExtractor(), named: "YouTubeKit",
+                fallback: YoutubeDLExtractor(), named: "yt-dlp"),
+            named: "YouTubeKit/yt-dlp")) {
         self.library = library
         self.aiOrganizer = aiOrganizer
         self.spotifySettings = spotifySettings

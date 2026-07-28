@@ -484,6 +484,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `PythonGate.swift` | App-wide async mutex serializing every embedded-Python call, so the two-slot pipeline never runs concurrent interpreter work. |
 | `YouTubeExtractor.swift` | `MediaExtractor` protocol + YoutubeDL-iOS impl + a mock. |
 | `YouTubeKitExtractor.swift` | Native-Swift (b5i/YouTubeKit) primary extractor. |
+| `VimeoExtractor.swift` | Native-Swift Vimeo extractor: reads the player config JSON for the title, progressive MP4s and HLS playlist — no Python. |
 | `CompositeExtractor.swift` | Tries the native extractor, falls back to yt-dlp. |
 | `JSChallengeSolver.swift` | Solves YouTube's `n`/`sig` challenges by running the `yt-dlp-ejs` scripts in JavaScriptCore. |
 | `POTokenMinter.swift` | Mints PO tokens via BotGuard in a hidden WKWebView (needs vendored `botguard.js`). |
@@ -763,15 +764,28 @@ whose controls call `next()` / `previous()` / `skipForward()` directly.
   every client still yields nothing decodable does the download fail with a clear
   `unplayableVideoCodec` message.
 
-## Extraction: native primary + yt-dlp fallback
+## Extraction: native primaries + yt-dlp fallback
 
 Extraction sits behind the `MediaExtractor` protocol, and `CompositeExtractor`
 tries a primary then a fallback (cancellation is never treated as a failure, so
 Cancel doesn't trigger the fallback). Each extractor advertises which URLs it can
 handle via `canHandle(_:)`, so the composite **skips** a primary that doesn't
-apply (the YouTube-only native extractor on a Vimeo/SoundCloud link) and goes
-straight to yt-dlp, instead of logging a guaranteed failure:
+apply (the YouTube-only native extractor on a SoundCloud link) and goes
+straight to the next one, instead of logging a guaranteed failure. They nest —
+Vimeo, then YouTubeKit, then yt-dlp — so each site takes the fastest route that
+knows it:
 
+0. **`VimeoExtractor` (primary, Vimeo only)** — Vimeo's web player runs off a
+   plain JSON endpoint (`player.vimeo.com/video/{id}/config`) listing the
+   title, duration, any **progressive** MP4s and the **HLS** master playlist.
+   Two HTTPS requests and `Codable` — no Python, no interpreter gate, no
+   90-second window. Progressive files are downloaded directly when Vimeo still
+   offers them (for audio: the smallest rendition, then AVFoundation extracts
+   its audio track, since Vimeo publishes no audio-only stream); otherwise the
+   playlist goes to `HLSDownloader`. Unlisted links (`vimeo.com/{id}/{hash}`)
+   carry their hash through as the config's `?h=`. Anything it can't read —
+   an album, an embed shape it doesn't know, a private or domain-restricted
+   video — throws, and the composite falls through to yt-dlp as before.
 1. **`YouTubeKitExtractor` (primary, YouTube only)** — b5i/YouTubeKit resolves
    the audio-only stream URL natively in Swift (no Python, no engine download,
    fast). Pure `VideoInfosWithDownloadFormatsResponse.sendThrowingRequest` → best
@@ -871,9 +885,10 @@ which formats we pick:
   of our own. Only if there's no readable HLS either does the download fail with
   the `hlsOnly` message. Segmented DASH remains unsupported.
 
-  This is what makes **Vimeo** work. Vimeo retired progressive files for most
-  accounts, so an ordinary Vimeo link offers HLS and nothing else, and the
-  download used to fail before it started. Two limits are inherent: a **live**
+  This is the second half of what makes **Vimeo** work (the first is
+  `VimeoExtractor`, which reaches the same playlist without Python at all).
+  Vimeo retired progressive files for most accounts, so an ordinary Vimeo link
+  offers HLS and nothing else, and the download used to fail before it started. Two limits are inherent: a **live**
   stream never ends, so only VOD can be saved, and video export **re-encodes**
   (the quality picker maps onto AVFoundation's export presets), so it's slower
   than a progressive download of the same video. Audio uses the `AppleM4A`
@@ -917,6 +932,18 @@ as possible rather than collapsing to one opaque line:
   bot", "missing a PO token", "Some formats may be missing", signature/nsig
   failures — appear in the log tagged `yt-dlp(<client>):`, instead of being
   swallowed.
+- **Non-YouTube failures get a diagnostic probe.** The default path goes through
+  YoutubeDL-iOS's structured `extractInfo`, which takes no options — so there's
+  nowhere to hang a `logger`, and on a non-YouTube link (whose failure the
+  YouTube-only forced-client sweep can't help with anyway) a timeout used to
+  read as 90 blank seconds. Now the sweep is skipped for those links, and a
+  **metadata-only probe** re-runs the extraction the one way that *can* be
+  logged — driving Python directly with a capture logger and
+  `download=False, process=False` — purely so yt-dlp says where it got stuck
+  (`yt-dlp(probe): [vimeo] …: Downloading webpage`). Its result is discarded;
+  the job still fails with the original error. A probe that *succeeds* says the
+  extraction works but overran its window — slow on device, not broken — and
+  says so.
 - **Plain-language hints.** `diagnosticHint(for:)` maps common signatures (bot
   check, PO token, private/members-only/age-restricted, unavailable, stale nsig
   engine, network) to a `Hint:` line suggesting the likely cause and next step.

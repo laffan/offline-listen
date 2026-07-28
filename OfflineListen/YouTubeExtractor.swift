@@ -433,8 +433,15 @@ final class YoutubeDLExtractor: MediaExtractor {
             timer.setEventHandler { [weak self] in
                 _ = finish {
                     extraction.cancel()
+                    // Phrase the timeout for the site it happened on: the
+                    // "refresh the engine" advice is YouTube-specific, and
+                    // reading it after a Vimeo/SoundCloud timeout sends you
+                    // chasing the wrong thing.
+                    let advice = Self.isYouTubeURL(url)
+                        ? "YouTube may have changed — try the ⋯ menu → Refresh yt-dlp engine, or a different video."
+                        : "\(url.host ?? "The site") took too long to resolve on device. The log lines that follow are yt-dlp's own account of how far it got."
                     continuation.resume(throwing: ExtractorError.downloadFailed(
-                        "Timed out after \(Int(timeout))s extracting info. YouTube may have changed — try the ⋯ menu → Refresh yt-dlp engine, or a different video."))
+                        "Timed out after \(Int(timeout))s extracting info. \(advice)"))
                 }
                 timer.cancel()
 
@@ -930,6 +937,75 @@ final class YoutubeDLExtractor: MediaExtractor {
         return nil
     }
 
+    /// Asks yt-dlp to describe an extraction it just failed at, and mirrors its
+    /// own log into ours.
+    ///
+    /// This exists because of a real blind spot: the default path goes through
+    /// YoutubeDL-iOS's structured `extractInfo`, which accepts no options — so
+    /// there's nowhere to hang a `logger`, and yt-dlp's running commentary
+    /// ("[vimeo] 953003096: Downloading webpage", "Unable to download JSON
+    /// metadata", a redirect loop, a 403) never reaches the Log. A 90-second
+    /// timeout then reads as 90 blank seconds with no indication of which step
+    /// was slow.
+    ///
+    /// The probe re-runs the extraction the one way that *can* be logged —
+    /// driving Python directly with a capture logger — and metadata-only
+    /// (`download=False, process=False`), so it skips format processing and
+    /// costs a fraction of the real attempt. Its result is discarded: the
+    /// caller still throws the original error. Purely diagnostic, and entirely
+    /// best-effort — it never turns a failed download into a different failure.
+    private func logExtractionDiagnostics(url: URL, category: String) async {
+        // Never start new interpreter work while the timed-out extraction is
+        // still executing in it — the concurrent-Python fault that crashes the
+        // app doesn't care that this call is only for diagnostics.
+        guard await waitForOrphanedExtraction(category: category, cap: 30) else {
+            appLog("Skipping the diagnostic probe — the timed-out extraction is still running in the interpreter.",
+                   level: .warning, category: category)
+            return
+        }
+        appLog("Probing \(url.host ?? "the site") for yt-dlp's own diagnosis (metadata only)…",
+               category: category)
+        do {
+            try await withTimeout("Diagnostic probe", category: category, seconds: 60) {
+                try await PythonGate.shared.run { [self] in
+                    let logger = makeCaptureLogger()
+                    do {
+                        let ytdlpModule = Python.import("yt_dlp")
+                        let options: PythonObject = [
+                            "quiet": true,
+                            "noplaylist": true,
+                            "nocheckcertificate": true,
+                            "logger": logger ?? Python.None,
+                        ]
+                        let ytdlp = ytdlpModule.YoutubeDL(options)
+                        appLog("Running metadata-only extract_info…", level: .debug, category: category)
+                        let info = try ytdlp.extract_info.throwing.dynamicallyCall(withKeywordArguments: [
+                            "": url.absoluteString, "download": false, "process": false,
+                        ])
+                        if let logger { drainCaptureLogger(logger, client: "probe", category: category) }
+                        // A probe that succeeds where the real attempt timed out
+                        // says the extraction works but is *slow* on device —
+                        // a different problem from one that can't resolve at all.
+                        let title = String(info.get("title")) ?? ""
+                        appLog("Probe resolved metadata\(title.isEmpty ? "" : " for \"\(title)\"") — the extraction works but overran its window. The site is slow on device rather than broken.",
+                               level: .warning, category: category)
+                    } catch {
+                        if let logger { drainCaptureLogger(logger, client: "probe", category: category) }
+                        throw error
+                    }
+                }
+            }
+        } catch {
+            if isCancellation(error) { return }
+            appLog("Probe failed too: \(error.localizedDescription)", level: .error, category: category)
+            let detail = String(describing: error)
+            appLog("Probe detail: \(detail)", level: .debug, category: category)
+            if let hint = Self.diagnosticHint(for: "\(error.localizedDescription) \(detail)") {
+                appLog("Hint: \(hint)", level: .warning, category: category)
+            }
+        }
+    }
+
     /// Runs one forced-client `extract_info` and returns the resolved info
     /// dict. Shared by the client loop above and by the mid-download URL
     /// refreshers. Hard per-client cap (the heartbeat alone never bounded this,
@@ -1358,6 +1434,21 @@ final class YoutubeDLExtractor: MediaExtractor {
                 Self.pythonBootstrapped = true
                 if isCancellation(error) { throw error }
                 #if canImport(PythonKit)
+                // The forced-client sweep only means anything for YouTube:
+                // `extractor_args: {"youtube": …}` is ignored by every other
+                // extractor, so on a Vimeo/SoundCloud link it re-runs the exact
+                // extraction that just failed, one client name at a time, for
+                // several more minutes. Non-YouTube failures instead get a
+                // metadata-only probe whose *only* job is to make yt-dlp say
+                // where it got stuck — the structured `extractInfo` API above
+                // takes no `logger`, so its own diagnostics are otherwise
+                // swallowed and the failure reads as 90 blank seconds.
+                guard Self.isYouTubeURL(url) else {
+                    appLog("Default extraction failed (\(error.localizedDescription)). Forced player clients are a YouTube-only recovery, so they're skipped here — probing for yt-dlp's own diagnosis instead…",
+                           level: .warning, category: category)
+                    await logExtractionDiagnostics(url: url, category: category)
+                    throw error
+                }
                 appLog("Default extraction failed (\(error.localizedDescription)) — retrying with forced fast player clients…",
                        level: .warning, category: category)
                 // The forced clients drive Python directly. Running a second
