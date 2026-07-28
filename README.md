@@ -484,7 +484,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `PythonGate.swift` | App-wide async mutex serializing every embedded-Python call, so the two-slot pipeline never runs concurrent interpreter work. |
 | `YouTubeExtractor.swift` | `MediaExtractor` protocol + YoutubeDL-iOS impl + a mock. |
 | `YouTubeKitExtractor.swift` | Native-Swift (b5i/YouTubeKit) primary extractor. |
-| `VimeoExtractor.swift` | Native-Swift Vimeo extractor: reads the player config JSON for the title, progressive MP4s and HLS playlist — no Python. |
+| `VimeoExtractor.swift` | Native-Swift Vimeo extractor: finds the (signed) player config for the title, progressive MP4s and HLS playlist — no Python. |
 | `CompositeExtractor.swift` | Tries the native extractor, falls back to yt-dlp. |
 | `JSChallengeSolver.swift` | Solves YouTube's `n`/`sig` challenges by running the `yt-dlp-ejs` scripts in JavaScriptCore. |
 | `POTokenMinter.swift` | Mints PO tokens via BotGuard in a hidden WKWebView (needs vendored `botguard.js`). |
@@ -776,16 +776,24 @@ Vimeo, then YouTubeKit, then yt-dlp — so each site takes the fastest route tha
 knows it:
 
 0. **`VimeoExtractor` (primary, Vimeo only)** — Vimeo's web player runs off a
-   plain JSON endpoint (`player.vimeo.com/video/{id}/config`) listing the
-   title, duration, any **progressive** MP4s and the **HLS** master playlist.
-   Two HTTPS requests and `Codable` — no Python, no interpreter gate, no
-   90-second window. Progressive files are downloaded directly when Vimeo still
-   offers them (for audio: the smallest rendition, then AVFoundation extracts
-   its audio track, since Vimeo publishes no audio-only stream); otherwise the
-   playlist goes to `HLSDownloader`. Unlisted links (`vimeo.com/{id}/{hash}`)
-   carry their hash through as the config's `?h=`. Anything it can't read —
-   an album, an embed shape it doesn't know, a private or domain-restricted
-   video — throws, and the composite falls through to yt-dlp as before.
+   JSON **player config** listing the title, duration, any **progressive** MP4s
+   and the **HLS** master playlist. Plain HTTPS and `Codable` — no Python, no
+   interpreter gate, no 90-second window. Progressive files are downloaded
+   directly when Vimeo still offers them (for audio: the smallest rendition,
+   then AVFoundation extracts its audio track, since Vimeo publishes no
+   audio-only stream); otherwise the playlist goes to `HLSDownloader`.
+
+   Getting the config is the fiddly part, because **Vimeo signs the config
+   URL**: requesting `player.vimeo.com/video/{id}/config` directly returns
+   **403 even for a public video**. The signature lives on the `config_url`
+   printed into the player's own page, so the extractor reads pages first —
+   the player page (`player.vimeo.com/video/{id}`), which usually inlines the
+   whole config as `window.playerConfig`, then the watch page — and only falls
+   back to the unsigned endpoint, which still serves videos whose owner allows
+   unrestricted embedding. Unlisted links (`vimeo.com/{id}/{hash}`) carry their
+   hash through. Anything it can't read — an album, an embed shape it doesn't
+   know, a password-protected or embed-restricted video — throws, and the
+   composite falls through to yt-dlp as before.
 1. **`YouTubeKitExtractor` (primary, YouTube only)** — b5i/YouTubeKit resolves
    the audio-only stream URL natively in Swift (no Python, no engine download,
    fast). Pure `VideoInfosWithDownloadFormatsResponse.sendThrowingRequest` → best

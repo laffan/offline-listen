@@ -196,41 +196,95 @@ final class VimeoExtractor: MediaExtractor {
         ["User-Agent": userAgent, "Referer": "https://vimeo.com/"]
     }
 
-    /// Fetches `player.vimeo.com/video/{id}/config`, the JSON the web player
-    /// itself runs on.
+    /// Gets the player config, the JSON the web player runs on.
+    ///
+    /// Asking `player.vimeo.com/video/{id}/config` **directly** is the obvious
+    /// route and it mostly doesn't work any more: Vimeo now signs that URL, so
+    /// an unsigned request comes back **403 even for a perfectly public
+    /// video**. The signature (`s=` + `t=`, or an `h=` hash) lives on the
+    /// `config_url` printed into the player's own page — which is why the
+    /// player page comes first here, exactly as yt-dlp's Vimeo extractor does
+    /// it. Three attempts, cheapest first:
+    ///
+    /// 1. The **player page** (`player.vimeo.com/video/{id}`) — usually carries
+    ///    the whole config inline as `window.playerConfig = {…}`, so one
+    ///    request is the whole job.
+    /// 2. The **watch page** (`vimeo.com/{id}`) — same inline config for some
+    ///    videos; otherwise it prints a signed `config_url` to fetch.
+    /// 3. The **unsigned config endpoint**, which still works for videos whose
+    ///    owner allows unrestricted embedding — and whose 403, having got this
+    ///    far, is a real refusal worth reporting.
     private static func fetchConfig(_ reference: Reference, category: String) async throws -> VimeoConfig {
+        var playerComponents = URLComponents(string: "https://player.vimeo.com/video/\(reference.id)")
+        var watchComponents = URLComponents(string: "https://vimeo.com/\(reference.id)")
+        if let hash = reference.hash {
+            playerComponents?.queryItems = [URLQueryItem(name: "h", value: hash)]
+            watchComponents = URLComponents(string: "https://vimeo.com/\(reference.id)/\(hash)")
+        }
+        let pageURLs = [playerComponents?.url, watchComponents?.url].compactMap { $0 }
+
+        for pageURL in pageURLs {
+            if let config = try await config(fromPage: pageURL, category: category) {
+                return config
+            }
+        }
+        return try await fetchConfigDirect(reference, category: category)
+    }
+
+    /// Reads a player/watch page and returns the config it carries — inline
+    /// when the page has it, otherwise by following the **signed** `config_url`
+    /// it advertises. Returns nil (rather than throwing) whenever this page
+    /// simply isn't the one that has it, so the caller moves on to the next.
+    private static func config(fromPage pageURL: URL, category: String) async throws -> VimeoConfig? {
+        guard let (data, status) = try await get(pageURL, accept: "text/html", category: category) else {
+            return nil
+        }
+        guard (200..<300).contains(status) else {
+            appLog("Vimeo: \(pageURL.absoluteString) returned HTTP \(status).", level: .debug, category: category)
+            return nil
+        }
+        let html = String(decoding: data, as: UTF8.self)
+
+        // The page usually inlines the entire config — no second request.
+        if let inline = jsonObject(afterMarker: "playerConfig", in: html),
+           let config = try? JSONDecoder().decode(VimeoConfig.self, from: inline),
+           config.request?.files != nil {
+            appLog("Vimeo: read the player config inline from \(pageURL.host ?? "the page").",
+                   level: .debug, category: category)
+            return config
+        }
+
+        // Otherwise it prints where the (signed) config lives.
+        guard let link = configURL(in: html), let url = URL(string: link) else { return nil }
+        appLog("Vimeo: following the page's signed config URL…", level: .debug, category: category)
+        guard let (configData, configStatus) = try await get(url, accept: "application/json", category: category),
+              (200..<300).contains(configStatus) else { return nil }
+        return try? JSONDecoder().decode(VimeoConfig.self, from: configData)
+    }
+
+    /// The last-resort unsigned config request. Still serves videos whose owner
+    /// allows embedding anywhere; a 403 here, after the pages above have been
+    /// tried, is a genuine refusal.
+    private static func fetchConfigDirect(_ reference: Reference, category: String) async throws -> VimeoConfig {
         var components = URLComponents(string: "https://player.vimeo.com/video/\(reference.id)/config")
         if let hash = reference.hash {
             components?.queryItems = [URLQueryItem(name: "h", value: hash)]
         }
         guard let url = components?.url else { throw ExtractorError.invalidURL }
 
-        var request = URLRequest(url: url)
-        for (key, value) in streamHeaders { request.setValue(value, forHTTPHeaderField: key) }
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 20
-
-        appLog("Fetching Vimeo player config for \(reference.id)…", level: .debug, category: category)
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await URLSession.shared.data(for: request)
-        } catch {
-            if isCancellation(error) { throw error }
-            throw ExtractorError.downloadFailed("Couldn't reach Vimeo: \(error.localizedDescription)")
+        appLog("Fetching Vimeo's unsigned player config for \(reference.id)…", level: .debug, category: category)
+        guard let (data, status) = try await get(url, accept: "application/json", category: category) else {
+            throw ExtractorError.downloadFailed("Couldn't reach Vimeo.")
         }
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 200
         guard (200..<300).contains(status) else {
-            // Vimeo explains itself in the body — a private video, a
-            // password-protected one, or an embed locked to a domain all come
-            // back here with a message worth repeating verbatim.
+            // Vimeo explains itself in the body when it has something to say.
             let message = (try? JSONDecoder().decode(VimeoError.self, from: data))?.message
             appLog("Vimeo config returned HTTP \(status)\(message.map { ": \($0)" } ?? "").",
                    level: .error, category: category)
             switch status {
             case 403:
                 throw ExtractorError.downloadFailed(
-                    "Vimeo won't serve this video to the app\(message.map { " — \($0)" } ?? ""). Private, password-protected and domain-restricted videos aren't downloadable.")
+                    "Vimeo refused to describe this video\(message.map { " — \($0)" } ?? "") — its player page carried no usable config either. Password-protected videos, and videos restricted to embedding on particular sites, aren't downloadable.")
             case 404:
                 throw ExtractorError.downloadFailed("Vimeo has no video at that link (it may have been removed).")
             default:
@@ -245,6 +299,80 @@ final class VimeoExtractor: MediaExtractor {
                    level: .warning, category: category)
             throw ExtractorError.downloadFailed("Vimeo's player config wasn't in the expected shape.")
         }
+    }
+
+    /// A GET carrying the browser headers Vimeo expects. Returns nil only for a
+    /// network-level failure the caller should treat as "this route didn't
+    /// work" (cancellation still propagates).
+    private static func get(_ url: URL, accept: String, category: String) async throws -> (Data, Int)? {
+        var request = URLRequest(url: url)
+        for (key, value) in streamHeaders { request.setValue(value, forHTTPHeaderField: key) }
+        request.setValue(accept, forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 20
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            return (data, (response as? HTTPURLResponse)?.statusCode ?? 200)
+        } catch {
+            if isCancellation(error) { throw error }
+            appLog("Vimeo: \(url.absoluteString) failed: \(error.localizedDescription)",
+                   level: .warning, category: category)
+            return nil
+        }
+    }
+
+    /// The `config_url` a Vimeo page advertises — the **signed** config
+    /// endpoint. Written into the page either as JSON (`"config_url":"https:\/\/…"`)
+    /// or as an HTML attribute (`data-config-url="…&amp;s=…"`), so both forms
+    /// are read and un-escaped with the matching decoder.
+    private static func configURL(in html: String) -> String? {
+        if let raw = BrowseHTTP.firstMatch(#""config_url":"([^"]+)""#, in: html) {
+            // Decode it as the JSON string literal it is: that handles the
+            // escaped slashes and any & in the query.
+            if let decoded = try? JSONDecoder().decode(String.self, from: Data("\"\(raw)\"".utf8)) {
+                return decoded
+            }
+            return raw.replacingOccurrences(of: "\\/", with: "/")
+        }
+        if let raw = BrowseHTTP.firstMatch(#"data-config-url="([^"]+)""#, in: html) {
+            return raw.decodedHTMLEntities
+        }
+        return nil
+    }
+
+    /// The JSON object assigned after `marker` in a page's script — e.g. the
+    /// `{…}` of `window.playerConfig = {…};`. Brace-matched rather than
+    /// regexed, skipping string literals so a `}` inside a title can't end it
+    /// early; nil when the marker isn't there or the object never closes.
+    private static func jsonObject(afterMarker marker: String, in html: String) -> Data? {
+        guard let markerRange = html.range(of: marker),
+              let start = html[markerRange.upperBound...].firstIndex(of: "{") else { return nil }
+        var depth = 0
+        var inString = false
+        var escaped = false
+        var index = start
+        while index < html.endIndex {
+            let character = html[index]
+            if inString {
+                if escaped {
+                    escaped = false
+                } else if character == "\\" {
+                    escaped = true
+                } else if character == "\"" {
+                    inString = false
+                }
+            } else if character == "\"" {
+                inString = true
+            } else if character == "{" {
+                depth += 1
+            } else if character == "}" {
+                depth -= 1
+                if depth == 0 {
+                    return String(html[start...index]).data(using: .utf8)
+                }
+            }
+            index = html.index(after: index)
+        }
+        return nil
     }
 }
 
