@@ -601,15 +601,17 @@ final class YoutubeDLExtractor: MediaExtractor {
             appLog("No progressive stream on offer — saving the HLS playlist \(format.format_id) via AVFoundation.",
                    level: .warning, category: category)
             let ext = mode == .video ? "mp4" : "m4a"
-            let dest = AppPaths.work.appendingPathComponent("\(UUID().uuidString).\(ext)")
+            let scratch = AppPaths.work.appendingPathComponent("\(UUID().uuidString).\(ext)")
             onDownloadStart()
-            _ = try await HLSDownloader.download(playlist: playlist,
-                                                 headers: format.http_headers,
-                                                 mode: mode,
-                                                 quality: quality,
-                                                 to: dest,
-                                                 category: category,
-                                                 onProgress: onProgress)
+            // A muxed or audio-extracted result is a new file, so take the one
+            // the downloader hands back rather than the one it was given.
+            let dest = try await HLSDownloader.download(playlist: playlist,
+                                                        headers: format.http_headers,
+                                                        mode: mode,
+                                                        quality: quality,
+                                                        to: scratch,
+                                                        category: category,
+                                                        onProgress: onProgress)
             let verifiedDuration = try await MediaVerifier.verify(dest, isVideo: mode == .video, category: category)
             appLog("HLS download finished: \(dest.lastPathComponent)", level: .success, category: category)
             return ExtractedMedia(

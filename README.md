@@ -468,7 +468,7 @@ in-app style edit.
 URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──►  Documents/  ──►  AVPlayer
          best audio-only or muxed mp4       (+ audio extract       local file       audio/video
                                              for audio mode)                         playback
-                                       └──►  HLS export (AVFoundation)
+                                       └──►  HLS segments joined (fMP4)
                                              when only a playlist is offered
 ```
 
@@ -492,7 +492,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `ytdlp/` | Bundled (folder reference): the `yt-dlp-ejs` solver scripts + the `yt_dlp_plugins` provider package. |
 | `AudioStreamDownloader.swift` | Shared chunked byte-range stream downloader. |
 | `VideoAudioExtractor.swift` | Extracts audio from a muxed video via AVFoundation. |
-| `HLSDownloader.swift` | Saves an HLS (`.m3u8`) stream to a local m4a/mp4 via `AVAssetExportSession` — the fallback that makes Vimeo (progressive-free) work, with no FFmpeg. |
+| `HLSDownloader.swift` | Saves an HLS (`.m3u8`) stream by fetching and joining its fMP4 segments — the fallback that makes Vimeo (progressive-free) work, with no FFmpeg. |
 | `ChapterFetcher.swift` | Best-effort capture of YouTube chapter markers via the on-device yt-dlp module. |
 | `PlaylistResolver.swift` | Detects playlist links and flat-resolves their entries (on-device yt-dlp) so a playlist downloads into a folder. |
 | `ChapterSplitter.swift` | Exports one file per chapter (AVFoundation) for "Break Chapters into Playlist". |
@@ -887,21 +887,37 @@ which formats we pick:
   **segmented DASH**. So `isProgressiveDownloadable` (and, on the Python path,
   yt-dlp's `protocol` field) picks single-URL streams first — including
   YouTube's DASH renditions, which *are* direct URLs. When a site offers
-  **nothing but HLS**, the playlist goes to `HLSDownloader`, which reads it with
-  **AVFoundation** (`AVAssetExportSession`, the same machinery `AVPlayer`
-  streams with) and writes a finished m4a/mp4 — no FFmpeg, no segment stitching
-  of our own. Only if there's no readable HLS either does the download fail with
-  the `hlsOnly` message. Segmented DASH remains unsupported.
+  **nothing but HLS**, the playlist goes to `HLSDownloader`, which reads the
+  playlist itself: it picks a variant (by resolution, restricted to
+  device-decodable codecs), fetches the `EXT-X-MAP` init segment and every media
+  segment, and appends them into one file. Modern HLS — Vimeo's included — is
+  **fMP4**, and those segments concatenated *are* a valid fragmented MP4 that
+  AVFoundation reads natively. No FFmpeg. Only if there's no readable HLS either
+  does the download fail with the `hlsOnly` message. Segmented DASH remains
+  unsupported, as do **MPEG-TS** segments (joining those doesn't produce
+  anything AVFoundation can open — it's detected and reported rather than saved)
+  and encrypted streams.
+
+  Audio mode takes the master's **audio-only rendition** when there is one — a
+  fraction of the bytes, and no extraction step. A video variant that carries no
+  sound of its own (it names an `AUDIO` group instead) has that rendition
+  fetched too and muxed back in by `VideoMerger`, exactly as the YouTube DASH
+  path already does. A **live** stream is the one inherent limit: it has no end,
+  so only VOD can be saved.
 
   This is the second half of what makes **Vimeo** work (the first is
   `VimeoExtractor`, which reaches the same playlist without Python at all).
   Vimeo retired progressive files for most accounts, so an ordinary Vimeo link
-  offers HLS and nothing else, and the download used to fail before it started. Two limits are inherent: a **live**
-  stream never ends, so only VOD can be saved, and video export **re-encodes**
-  (the quality picker maps onto AVFoundation's export presets), so it's slower
-  than a progressive download of the same video. Audio uses the `AppleM4A`
-  preset, which keeps only the audio track — so an HLS variant that carries
-  picture still yields a clean audio file.
+  offers HLS and nothing else, and the download used to fail before it started.
+
+  > The first cut of this handed the playlist to `AVAssetExportSession`
+  > instead. That was wrong twice over: a remote HLS `AVURLAsset` exposes **no
+  > `AVAssetTrack`s at all** (they only materialize through an `AVPlayerItem`),
+  > so the "does this carry video?" precheck rejected every stream it was given;
+  > and an HLS asset reports itself non-exportable anyway. Apple's supported
+  > offline-HLS route, `AVAssetDownloadTask`, produces a `.movpkg` bundle — not
+  > a file this app can move into the library, play by path, share, or send to
+  > the watch.
 - **Playable containers.** Audio is saved raw only when it's a container
   AVFoundation can decode (`m4a`/`mp3`/`aac`/`wav`/`aiff` — so SoundCloud's
   progressive **mp3** saves directly, while an opus/webm-only stream routes to

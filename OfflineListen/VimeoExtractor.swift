@@ -5,13 +5,12 @@ import Foundation
 /// yt-dlp for a site this simple is slow, opaque, and (on device) the step that
 /// actually fails.
 ///
-/// Vimeo's web player fetches its own stream list from a plain JSON endpoint —
-/// `player.vimeo.com/video/{id}/config` — and that JSON is all we need: the
-/// title, the duration, any **progressive** MP4s, and the **HLS** master
-/// playlist. Two HTTPS requests, `Codable`, no interpreter, no Python gate, and
-/// no 90-second timeout to sit through. (It's what yt-dlp's own Vimeo extractor
-/// reads, minus the dozen fallback paths for embeds, albums and Vimeo Pro
-/// review links, which still go to yt-dlp.)
+/// Vimeo's web player runs off a JSON **player config** carrying everything we
+/// need: the title, the duration, any **progressive** MP4s, and the **HLS**
+/// master playlist. Plain HTTPS and `Codable` — no interpreter, no Python gate,
+/// and no 90-second timeout to sit through. (It's what yt-dlp's own Vimeo
+/// extractor reads, minus the dozen fallback paths for embeds, albums and
+/// Vimeo Pro review links, which still go to yt-dlp.)
 ///
 /// This is deliberately best-effort: any failure throws, and
 /// `CompositeExtractor` falls straight through to yt-dlp, so the worst case is
@@ -100,7 +99,7 @@ final class VimeoExtractor: MediaExtractor {
         }
 
         // Vimeo retired progressive files for most accounts, so this is the
-        // usual path now: hand the master playlist to AVFoundation.
+        // usual path now: the HLS master, fetched segment by segment.
         guard let playlist = Self.hlsURL(from: files?.hls, mode: mode) else {
             throw ExtractorError.downloadFailed(
                 "Vimeo returned no downloadable files for this video — it may be a live stream, or restricted to particular sites.")
@@ -109,15 +108,17 @@ final class VimeoExtractor: MediaExtractor {
                level: .warning, category: category)
 
         let ext = mode == .video ? "mp4" : "m4a"
-        let dest = AppPaths.work.appendingPathComponent("\(UUID().uuidString).\(ext)")
+        let scratch = AppPaths.work.appendingPathComponent("\(UUID().uuidString).\(ext)")
         onDownloadStart()
-        _ = try await HLSDownloader.download(playlist: playlist,
-                                             headers: Self.streamHeaders,
-                                             mode: mode,
-                                             quality: quality,
-                                             to: dest,
-                                             category: category,
-                                             onProgress: onProgress)
+        // The returned file isn't always the one handed in — a muxed or
+        // audio-extracted result is a new file.
+        let dest = try await HLSDownloader.download(playlist: playlist,
+                                                    headers: Self.streamHeaders,
+                                                    mode: mode,
+                                                    quality: quality,
+                                                    to: scratch,
+                                                    category: category,
+                                                    onProgress: onProgress)
         let verified = try await MediaVerifier.verify(dest, isVideo: mode == .video, category: category)
         appLog("Vimeo download finished: \(dest.lastPathComponent)", level: .success, category: category)
         return ExtractedMedia(fileURL: dest,
