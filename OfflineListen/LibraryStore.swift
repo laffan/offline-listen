@@ -7,6 +7,10 @@ import AVFoundation
 final class LibraryStore: ObservableObject {
     @Published private(set) var tracks: [Track] = []
     @Published private(set) var folders: [Folder] = []
+    /// The listening log behind the **Recent** folder, newest first. Persisted
+    /// separately from the library (`recents.json`) — it's a record of
+    /// behaviour, not of what's on disk.
+    @Published private(set) var recentListens: [RecentListen] = []
     /// Bumped whenever a mixtape cover image is (re)written, so views that
     /// render covers from disk know to reload even when the style is unchanged.
     @Published private(set) var coverRevision = 0
@@ -119,6 +123,46 @@ final class LibraryStore: ObservableObject {
     var unfiledActiveTracks: [Track] { activeTracks.filter { $0.folderID == nil } }
     /// Active tracks that haven't been listened to yet — the Inbox.
     var inboxTracks: [Track] { activeTracks.filter { !$0.hasBeenPlayed } }
+
+    /// The **Recent** folder: one row per logged play, newest first, resolved
+    /// against the live library so a deleted track simply drops out. Repeats
+    /// are kept (it's a log of listening, not a set of tracks) — each entry
+    /// carries its own id, so the list can show the same track twice.
+    var recentListenEntries: [RecentListenRow] {
+        recentListens.compactMap { entry in
+            guard let track = tracks.first(where: { $0.id == entry.trackID }) else { return nil }
+            return RecentListenRow(entry: entry, track: track)
+        }
+    }
+
+    /// The distinct tracks behind the Recent list, in first-heard-most-recently
+    /// order — the playback queue for that screen (a queue with the same track
+    /// twice would confuse next/previous).
+    var recentTracks: [Track] {
+        var seen = Set<UUID>()
+        return recentListenEntries.compactMap { seen.insert($0.track.id).inserted ? $0.track : nil }
+    }
+
+    /// Active tracks whose title or artist matches `query` — the Library's
+    /// search. Unlike the main list this reaches **into folders**, since
+    /// "where did I put that track" is the question search exists to answer.
+    /// Matching is `localizedStandardContains`: case- and diacritic-insensitive,
+    /// so "beyonce" finds "Beyoncé".
+    func searchTracks(matching query: String) -> [Track] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        return activeTracks.filter {
+            $0.title.localizedStandardContains(trimmed) || $0.artist.localizedStandardContains(trimmed)
+        }
+    }
+
+    /// Non-archived folders whose name matches `query`, so search can offer the
+    /// folder itself alongside the tracks inside it.
+    func searchFolders(matching query: String) -> [Folder] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        return folders.filter { !$0.isArchived && $0.name.localizedStandardContains(trimmed) }
+    }
     /// Tracks pushed to the Apple Watch — the "Watch" virtual folder. Like the
     /// Inbox, these still live wherever they normally do in the library; this is
     /// just a filtered view for managing what's on the watch.
@@ -140,6 +184,7 @@ final class LibraryStore: ObservableObject {
     }
 
     func load() {
+        loadRecents()
         guard let data = try? Data(contentsOf: AppPaths.libraryIndex) else {
             tracks = []
             loadFolders()
@@ -152,6 +197,62 @@ final class LibraryStore: ObservableObject {
             tracks = []
         }
         loadFolders()
+    }
+
+    // MARK: - Recent listens
+
+    /// How many plays the log keeps. Generous enough to scroll back through a
+    /// few weeks, bounded so the file can't grow forever.
+    private static let recentListenLimit = 200
+
+    private func loadRecents() {
+        guard let data = try? Data(contentsOf: AppPaths.recentListens) else { return }
+        do {
+            recentListens = try JSONDecoder().decode([RecentListen].self, from: data)
+        } catch {
+            print("[LibraryStore] failed to decode recents: \(error)")
+            recentListens = []
+        }
+    }
+
+    private func saveRecents() {
+        do {
+            let data = try JSONEncoder().encode(recentListens)
+            try data.write(to: AppPaths.recentListens, options: .atomic)
+        } catch {
+            print("[LibraryStore] failed to save recents: \(error)")
+        }
+    }
+
+    /// Logs a play for the Recent folder. Called the moment playback *starts*
+    /// — a track doesn't have to finish to count as listened to. A repeat of
+    /// whatever is already at the top is ignored, so restarting the current
+    /// track (or an autoplay that circles back to it) doesn't stack identical
+    /// rows; a repeat with anything in between is kept, because that really is
+    /// a separate listen.
+    func recordListen(_ trackID: UUID) {
+        guard recentListens.first?.trackID != trackID else { return }
+        recentListens.insert(RecentListen(trackID: trackID), at: 0)
+        if recentListens.count > Self.recentListenLimit {
+            recentListens.removeLast(recentListens.count - Self.recentListenLimit)
+        }
+        saveRecents()
+    }
+
+    /// Removes one logged play (the Recent list's swipe action).
+    func removeRecentListen(_ id: UUID) {
+        guard let index = recentListens.firstIndex(where: { $0.id == id }) else { return }
+        recentListens.remove(at: index)
+        saveRecents()
+    }
+
+    /// Empties the listening log. Deletes nothing — Recent is a view of what
+    /// you played, not a place tracks live.
+    func clearRecentListens() {
+        guard !recentListens.isEmpty else { return }
+        recentListens.removeAll()
+        saveRecents()
+        appLog("Cleared the Recent listening log.", category: "Library")
     }
 
     private func loadFolders() {

@@ -25,11 +25,11 @@ struct BrowseSourceView: View {
         browse.sources.first(where: { $0.id == sourceID })
     }
 
-    /// Blog Agent lists group by article (summary + tracks + artists);
-    /// Discography groups by album (with a Highlights section on top); the
-    /// rest are a single flat list.
+    /// Blog Agent lists group by article (summary + tracks + artists); an
+    /// Artist source in Discography mode groups by album (with a Highlights
+    /// section on top); the rest are a single flat list.
     private var isBlogAgent: Bool { source?.kind == .blogAgent }
-    private var isDiscography: Bool { source?.kind == .discography }
+    private var isDiscography: Bool { source?.isDiscography == true }
 
     /// The AI music sources title their items "Artist — Song", so the row can
     /// lift the artist onto its own line (Library-style). Feed titles (video/
@@ -46,6 +46,51 @@ struct BrowseSourceView: View {
         // A Blog Agent source can have posts (summary + artists) with no tracks,
         // so it isn't "empty" just because there are no items.
         let posts = isBlogAgent ? browse.posts(for: sourceID) : []
+        VStack(spacing: 0) {
+            // The same Audio/Video toggle the Browse tab's own screen carries:
+            // this list's Download and Preview act in this mode too, and having
+            // to go back a screen to change it was the wrong shape.
+            modeBar
+            content(items: items, posts: posts)
+        }
+        .navigationTitle(source?.name ?? "Source")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar { toolbarContent(items: items) }
+        .sheet(item: $previewItem) { item in
+            BrowsePreviewView(item: item, mode: browse.downloadMode)
+        }
+        .confirmationDialog(
+            "Follow this artist",
+            isPresented: presentingArtist,
+            titleVisibility: .visible,
+            presenting: artistForSource
+        ) { artist in
+            Button("Top 10") { addArtistSource(.topTracks, name: artist) }
+            Button("Discography") { addArtistSource(.discography, name: artist) }
+            Button("Cancel", role: .cancel) {}
+        } message: { artist in
+            Text("Add “\(artist)” as a new Artist source.")
+        }
+    }
+
+    private var modeBar: some View {
+        HStack {
+            Picker("Mode", selection: $browse.downloadMode) {
+                ForEach(DownloadMode.allCases) { m in
+                    Text(m.displayName).tag(m)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 200)
+
+            Spacer()
+        }
+        .padding(.horizontal)
+        .padding(.bottom, 6)
+    }
+
+    @ViewBuilder
+    private func content(items: [BrowseItem], posts: [BrowsePost]) -> some View {
         Group {
             if items.isEmpty && posts.isEmpty {
                 VStack(spacing: 16) {
@@ -90,66 +135,95 @@ struct BrowseSourceView: View {
                             header(count: items.count)
                         }
                     }
+                    // Foot of every layout — a Blog Agent's article sections
+                    // page just as a flat feed list does.
+                    moreSection
                 }
                 .listStyle(.plain)
                 .environment(\.editMode, $editMode)
                 .refreshable { await refreshAsync() }
             }
         }
-        .navigationTitle(source?.name ?? "Source")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            if editMode.isEditing {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button {
-                        downloadSelected()
-                    } label: {
-                        Label(selection.isEmpty ? "Download" : "Download (\(selection.count))",
-                              systemImage: "arrow.down.circle")
-                    }
-                    .disabled(selection.isEmpty)
-                }
-            }
-            ToolbarItemGroup(placement: .navigationBarTrailing) {
-                if !editMode.isEditing {
-                    if browse.refreshing.contains(sourceID) {
+    }
+
+    /// The **More** row at the foot of the list: pulls the next page of the
+    /// source's listing (older uploads, the feed's next page, the blog's next
+    /// batch of articles). A refresh only ever re-reads the newest page, so
+    /// this is the only way further back. Hidden in select mode, and it retires
+    /// itself once the source reports there's nothing older.
+    @ViewBuilder
+    private var moreSection: some View {
+        if let source, source.kind.supportsMore, !editMode.isEditing {
+            Section {
+                if browse.loadingMore.contains(sourceID) {
+                    HStack(spacing: 10) {
                         ProgressView().controlSize(.small)
-                    } else {
-                        Button {
-                            refresh()
-                        } label: {
-                            Image(systemName: "arrow.clockwise")
-                        }
-                        .accessibilityLabel("Refresh")
+                        Text("Loading older items…")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
                     }
-                }
-                Button(editMode.isEditing ? "Done" : "Select") {
-                    withAnimation {
-                        if editMode.isEditing {
-                            editMode = .inactive
-                            selection.removeAll()
-                        } else {
-                            editMode = .active
-                        }
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 6)
+                } else if source.canLoadMore {
+                    Button {
+                        Task { await browse.loadMore(source) }
+                    } label: {
+                        Label("More", systemImage: "arrow.down.circle")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.vertical, 6)
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                } else {
+                    Text("Nothing older to load")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 6)
                 }
-                .disabled(items.isEmpty && !editMode.isEditing)
             }
         }
-        .sheet(item: $previewItem) { item in
-            BrowsePreviewView(item: item, mode: browse.downloadMode)
+    }
+
+    @ToolbarContentBuilder
+    private func toolbarContent(items: [BrowseItem]) -> some ToolbarContent {
+        if editMode.isEditing {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button {
+                    downloadSelected()
+                } label: {
+                    Label(selection.isEmpty ? "Download" : "Download (\(selection.count))",
+                          systemImage: "arrow.down.circle")
+                }
+                .disabled(selection.isEmpty)
+            }
         }
-        .confirmationDialog(
-            "Follow this artist",
-            isPresented: presentingArtist,
-            titleVisibility: .visible,
-            presenting: artistForSource
-        ) { artist in
-            Button("Artist Top 10") { addArtistSource(.artist, name: artist) }
-            Button("Artist Discography") { addArtistSource(.discography, name: artist) }
-            Button("Cancel", role: .cancel) {}
-        } message: { artist in
-            Text("Add “\(artist)” as a new Browse source.")
+        ToolbarItemGroup(placement: .navigationBarTrailing) {
+            if !editMode.isEditing {
+                if browse.refreshing.contains(sourceID) {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button {
+                        refresh()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .accessibilityLabel("Refresh")
+                }
+            }
+            Button(editMode.isEditing ? "Done" : "Select") {
+                withAnimation {
+                    if editMode.isEditing {
+                        editMode = .inactive
+                        selection.removeAll()
+                    } else {
+                        editMode = .active
+                    }
+                }
+            }
+            .disabled(items.isEmpty && !editMode.isEditing)
         }
     }
 
@@ -158,10 +232,10 @@ struct BrowseSourceView: View {
                 set: { if !$0 { artistForSource = nil } })
     }
 
-    /// Adds an Artist Top 10 / Artist Discography source for `name` and kicks
-    /// off its first refresh.
-    private func addArtistSource(_ kind: BrowseSourceKind, name: String) {
-        let source = browse.addSource(kind: kind, name: name, input: name)
+    /// Adds an Artist source for `name` — following either its top tracks or
+    /// its whole discography — and kicks off its first refresh.
+    private func addArtistSource(_ mode: ArtistSourceMode, name: String) {
+        let source = browse.addSource(kind: .artist, name: name, input: name, artistMode: mode)
         Task { await browse.refresh(source) }
     }
 
@@ -179,7 +253,13 @@ struct BrowseSourceView: View {
             showsDate: !isDiscography,
             parsesArtist: parsesArtist,
             onDownload: { download(item) },
-            onPreview: { previewItem = item }
+            // Marked as soon as it's opened: the row's filled play icon is a
+            // "you've heard this one" breadcrumb, not a record of a decision,
+            // so dismissing the modal doesn't take it back.
+            onPreview: {
+                browse.markPreviewed(item)
+                previewItem = item
+            }
         )
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(role: .destructive) {
@@ -194,7 +274,7 @@ struct BrowseSourceView: View {
 
     /// Blog Agent layout: one section per article — a **summary**, then the
     /// YouTube **tracks** found in it, then the **artists** it names (each
-    /// tappable to spin up a new Artist Top 10 / Discography source). Posts
+    /// tappable to spin up a new Artist source, Top 10 or Discography). Posts
     /// newest-first; any legacy tracks whose article wasn't summarized gather
     /// in a trailing "Other finds" section.
     @ViewBuilder
@@ -258,7 +338,7 @@ struct BrowseSourceView: View {
     }
 
     /// A labeled list of the artists an article names; tapping one opens the
-    /// popup to create an Artist Top 10 / Discography source for it.
+    /// popup to create an Artist source — Top 10 or Discography — for it.
     @ViewBuilder
     private func artistList(_ artists: [String]) -> some View {
         if !artists.isEmpty {
@@ -508,10 +588,13 @@ private struct BrowseItemRow: View {
                     }
                     .accessibilityLabel("Download")
 
+                    // Filled once it's been auditioned — the same
+                    // already-dealt-with cue the Download action gets, while
+                    // the button itself keeps working.
                     Button(action: onPreview) {
-                        Image(systemName: "play.circle")
+                        Image(systemName: item.wasPreviewed ? "play.circle.fill" : "play.circle")
                     }
-                    .accessibilityLabel("Preview")
+                    .accessibilityLabel(item.wasPreviewed ? "Preview again" : "Preview")
                 }
                 .font(.title2)
                 .buttonStyle(.borderless)

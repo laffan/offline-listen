@@ -59,7 +59,7 @@ struct BrowseView: View {
 
     private var addMenu: some View {
         Menu {
-            ForEach(BrowseSourceKind.allCases) { kind in
+            ForEach(BrowseSourceKind.addable) { kind in
                 Button {
                     addingKind = kind
                 } label: {
@@ -80,7 +80,7 @@ struct BrowseView: View {
                 description: "Add a YouTube channel or playlist, an RSS feed, or let AI dig up popular songs by artist, genre or country."
             )
             Menu {
-                ForEach(BrowseSourceKind.allCases) { kind in
+                ForEach(BrowseSourceKind.addable) { kind in
                     Button {
                         addingKind = kind
                     } label: {
@@ -98,7 +98,7 @@ struct BrowseView: View {
 
     private var sourceList: some View {
         List {
-            ForEach(BrowseSourceKind.allCases) { kind in
+            ForEach(BrowseSourceKind.addable) { kind in
                 let ofKind = browse.sources(of: kind)
                 if !ofKind.isEmpty {
                     Section(kind.pluralName) {
@@ -195,10 +195,26 @@ struct AddBrowseSourceView: View {
     @State private var input = ""
     /// Decade scope for an AI music source; empty means any era.
     @State private var era = ""
+    /// What an Artist source follows — the choice that used to be two separate
+    /// source kinds in the "+" menu.
+    @State private var artistMode: ArtistSourceMode = .topTracks
     /// Presents the all-countries picker (Country kind only).
     @State private var showingCountryList = false
 
     private var aiBlocked: Bool { kind.usesAI && !aiSettings.isAuthenticated }
+
+    private var isArtist: Bool { kind == .artist }
+
+    /// The era picker applies to the AI music kinds — but not to an Artist
+    /// source in Discography mode, which spans the whole catalogue.
+    private var showsEra: Bool {
+        kind.supportsEra && (!isArtist || artistMode.supportsEra)
+    }
+
+    private var footerText: String {
+        if isArtist { return artistMode.help }
+        return showsEra ? "\(kind.help) Pick a decade to focus the suggestions on that era." : kind.help
+    }
 
     var body: some View {
         NavigationStack {
@@ -221,7 +237,15 @@ struct AddBrowseSourceView: View {
                             .accessibilityLabel("Choose from a list of countries")
                         }
                     }
-                    if kind.supportsEra {
+                    if isArtist {
+                        Picker("Follow", selection: $artistMode) {
+                            ForEach(ArtistSourceMode.allCases) { mode in
+                                Text(mode.displayName).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                    if showsEra {
                         Picker("Era", selection: $era) {
                             Text("Any era").tag("")
                             ForEach(BrowseEra.decades, id: \.self) { decade in
@@ -232,9 +256,7 @@ struct AddBrowseSourceView: View {
                     TextField(kind.inputIsURL ? "Name (optional — uses the site's title)" : "Name (optional)",
                               text: $name)
                 } footer: {
-                    Text(kind.supportsEra
-                         ? "\(kind.help) Pick a decade to focus the suggestions on that era."
-                         : kind.help)
+                    Text(footerText)
                 }
 
                 if aiBlocked {
@@ -270,7 +292,8 @@ struct AddBrowseSourceView: View {
         let source = browse.addSource(kind: kind,
                                       name: name,
                                       input: input,
-                                      era: era.isEmpty ? nil : era)
+                                      era: (showsEra && !era.isEmpty) ? era : nil,
+                                      artistMode: isArtist ? artistMode : nil)
         // First refresh happens right away so the source lands populated.
         Task { await browse.refresh(source) }
         dismiss()

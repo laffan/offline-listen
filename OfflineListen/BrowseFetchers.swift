@@ -367,6 +367,159 @@ enum YouTubeBrowseFeed {
         return name.hasPrefix("@") ? String(name.dropFirst()) : name
     }
 
+    // MARK: - More (older uploads)
+
+    /// The next page of a channel's uploads.
+    ///
+    /// YouTube's RSS feed carries only the latest **15** entries and offers no
+    /// pagination at all, so "More" leaves the feed behind: the first pull
+    /// scrapes the channel's own `/videos` page (~30 uploads), and each pull
+    /// after that follows the `continuation` token YouTube's own web client
+    /// uses to page that list — the same request the site makes when you scroll.
+    ///
+    /// Best-effort by design: a page shape it can't read comes back as an empty
+    /// page with no cursor, which retires the button rather than erroring.
+    static func fetchMore(source: BrowseSource, cursor: String?) async throws -> BrowseMorePage {
+        if let cursor, let continuation = Continuation(cursor: cursor) {
+            return try await fetchContinuation(continuation)
+        }
+
+        let channelID: String
+        if let cached = source.resolvedChannelID {
+            channelID = cached
+        } else {
+            channelID = try await resolveChannelFeed(from: source.input).id
+        }
+        guard let url = URL(string: "https://www.youtube.com/channel/\(channelID)/videos") else {
+            throw BrowseFetchError.channelNotFound
+        }
+        let (data, status, _) = try await BrowseHTTP.getRaw(url)
+        guard (200..<300).contains(status) else {
+            throw BrowseFetchError.network("HTTP \(status) from youtube.com")
+        }
+        let html = String(decoding: data, as: UTF8.self)
+        if BrowseHTTP.looksLikeChallenge(html) { throw BrowseFetchError.agentBlocked }
+        return BrowseMorePage(items: videoItems(inPage: html),
+                              cursor: Continuation(page: html)?.cursor)
+    }
+
+    /// The uploads on a channel page (or in a continuation response — both
+    /// carry the same `videoRenderer` JSON, which is why one parser serves
+    /// both). Dated from YouTube's relative label so they interleave correctly
+    /// with the exactly-dated entries the RSS feed provided.
+    private static func videoItems(inPage text: String) -> [FetchedBrowseItem] {
+        YouTubeSearchResolver.parseResults(in: text, limit: 60).map { result in
+            FetchedBrowseItem(
+                title: result.title,
+                detail: "",
+                url: BrowseHTTP.watchURL(forVideoID: result.videoID),
+                videoID: result.videoID,
+                datePublished: result.publishedText.flatMap(approximateDate(fromRelative:))
+            )
+        }
+    }
+
+    /// "3 weeks ago" → roughly that date. A channel page dates its uploads
+    /// only relatively, and an approximate date sorts an old upload correctly
+    /// against the feed's exact ones — which is all the list needs it for.
+    /// Nil when there's no number+unit to read (a live badge, say).
+    static func approximateDate(fromRelative text: String) -> Date? {
+        let lower = text.lowercased()
+        guard let count = BrowseHTTP.firstMatch(#"(\d+)\s*(?:second|minute|hour|day|week|month|year)"#, in: lower)
+            .flatMap(Double.init),
+              let unit = BrowseHTTP.firstMatch(#"\d+\s*(second|minute|hour|day|week|month|year)"#, in: lower)
+        else { return nil }
+        let seconds: Double
+        switch unit {
+        case "second": seconds = 1
+        case "minute": seconds = 60
+        case "hour": seconds = 3600
+        case "day": seconds = 86_400
+        case "week": seconds = 604_800
+        case "month": seconds = 2_629_800     // a mean Gregorian month
+        default: seconds = 31_557_600         // a mean Julian year
+        }
+        return Date().addingTimeInterval(-count * seconds)
+    }
+
+    /// What YouTube's own web client needs to ask for the next page of a list:
+    /// its innertube API key, the client version it identifies as, and the
+    /// continuation token. Packed into the source's opaque `moreCursor`.
+    private struct Continuation {
+        var apiKey: String
+        var clientVersion: String
+        var token: String
+
+        /// Reads all three out of a freshly-fetched channel page.
+        init?(page html: String) {
+            guard let key = BrowseHTTP.firstMatch(#""INNERTUBE_API_KEY":"([^"]+)""#, in: html),
+                  let token = Continuation.token(in: html) else { return nil }
+            apiKey = key
+            clientVersion = BrowseHTTP.firstMatch(#""INNERTUBE_CLIENT_VERSION":"([^"]+)""#, in: html)
+                ?? "2.20240101.00.00"
+            self.token = token
+        }
+
+        init?(cursor: String) {
+            let parts = cursor.components(separatedBy: "\u{1}")
+            guard parts.count == 3, !parts.contains(where: \.isEmpty) else { return nil }
+            apiKey = parts[0]
+            clientVersion = parts[1]
+            token = parts[2]
+        }
+
+        static func token(in text: String) -> String? {
+            BrowseHTTP.firstMatch(#""continuationCommand":\{"token":"([^"]+)""#, in: text)
+        }
+
+        var cursor: String { "\(apiKey)\u{1}\(clientVersion)\u{1}\(token)" }
+    }
+
+    /// Asks YouTube's browse endpoint for the page `continuation` points at.
+    /// Anything unexpected (a non-2xx, an unreadable body, no further token)
+    /// ends the paging quietly — there's no user-actionable error in "the list
+    /// ran out".
+    private static func fetchContinuation(_ continuation: Continuation) async throws -> BrowseMorePage {
+        guard let url = URL(string: "https://www.youtube.com/youtubei/v1/browse?key=\(continuation.apiKey)&prettyPrint=false") else {
+            return BrowseMorePage()
+        }
+        let body: [String: Any] = [
+            "context": ["client": ["clientName": "WEB",
+                                   "clientVersion": continuation.clientVersion,
+                                   "hl": "en"]],
+            "continuation": continuation.token,
+        ]
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(BrowseHTTP.userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("1", forHTTPHeaderField: "X-YouTube-Client-Name")
+        request.setValue(continuation.clientVersion, forHTTPHeaderField: "X-YouTube-Client-Version")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        request.timeoutInterval = 30
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            if isCancellation(error) { throw error }
+            throw BrowseFetchError.network(error.localizedDescription)
+        }
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            appLog("Browse: YouTube's continuation request returned HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0) — no more pages.",
+                   level: .debug, category: "Browse")
+            return BrowseMorePage()
+        }
+        let json = String(decoding: data, as: UTF8.self)
+        var next = continuation
+        guard let token = Continuation.token(in: json) else {
+            return BrowseMorePage(items: videoItems(inPage: json))
+        }
+        next.token = token
+        return BrowseMorePage(items: videoItems(inPage: json), cursor: next.cursor)
+    }
+
     /// Pulls a playlist id out of a URL's `list=` param, or accepts a bare id.
     static func playlistID(from input: String) throws -> String {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -391,13 +544,15 @@ enum RSSBrowseFeed {
     }
 
     static func fetch(source: BrowseSource) async throws -> Result {
-        let trimmed = source.input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmed), url.scheme?.hasPrefix("http") == true else {
-            throw BrowseFetchError.badInput("Enter the feed's URL (https://…).")
-        }
+        let url = try feedURL(from: source.input)
         let data = try await BrowseHTTP.get(url)
         guard let feed = FeedParser.parse(data) else { throw BrowseFetchError.notAFeed }
+        return Result(feedTitle: feed.title, items: items(in: feed))
+    }
 
+    /// One item per YouTube video found in the feed's entries (a post with
+    /// several links yields several items).
+    private static func items(in feed: ParsedFeed) -> [FetchedBrowseItem] {
         var items: [FetchedBrowseItem] = []
         for entry in feed.entries {
             // Scan the entry's link and every raw body for YouTube links.
@@ -416,7 +571,73 @@ enum RSSBrowseFeed {
                 ))
             }
         }
-        return Result(feedTitle: feed.title, items: items)
+        return items
+    }
+
+    private static func feedURL(from input: String) throws -> URL {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed), url.scheme?.hasPrefix("http") == true else {
+            throw BrowseFetchError.badInput("Enter the feed's URL (https://…).")
+        }
+        return url
+    }
+
+    // MARK: - More (older posts)
+
+    /// The next page of a feed. A feed's window is whatever the publisher chose
+    /// (often 10–20 posts), so older ones are only reachable by paging: RFC
+    /// 5005 feeds advertise the next page with `<link rel="next">`, and nearly
+    /// every blog engine also honours `?paged=N`. The cursor is simply the URL
+    /// to fetch next; no next URL retires the button.
+    static func fetchMore(source: BrowseSource, cursor: String?) async throws -> BrowseMorePage {
+        let base = try feedURL(from: source.input)
+
+        let target: URL
+        if let cursor, let url = URL(string: cursor) {
+            target = url
+        } else {
+            // First "More": read page one purely to see where it says its next
+            // page is, falling back to the ?paged= convention.
+            let data = try await BrowseHTTP.get(base)
+            let xml = String(decoding: data, as: UTF8.self)
+            guard let next = nextPageURL(after: base, in: xml) else {
+                appLog("Browse: \"\(source.name)\" advertises no next page — nothing older to fetch.",
+                       level: .debug, category: "Browse")
+                return BrowseMorePage()
+            }
+            target = next
+        }
+
+        let data = try await BrowseHTTP.get(target)
+        guard let feed = FeedParser.parse(data), !feed.entries.isEmpty else {
+            appLog("Browse: \(target.absoluteString) isn't a further page of the feed — that's the end of it.",
+                   level: .debug, category: "Browse")
+            return BrowseMorePage()
+        }
+        let xml = String(decoding: data, as: UTF8.self)
+        return BrowseMorePage(items: items(in: feed),
+                              cursor: nextPageURL(after: target, in: xml)?.absoluteString)
+    }
+
+    /// Where the page after `current` lives: the feed's own `rel="next"` link
+    /// when it publishes one, else `current` with its `paged` parameter
+    /// incremented (starting at 2). Nil only when neither applies.
+    private static func nextPageURL(after current: URL, in xml: String) -> URL? {
+        if let href = BrowseHTTP.firstMatch(#"<(?:atom:)?link[^>]*rel=["']next["'][^>]*href=["']([^"']+)["']"#, in: xml)
+            ?? BrowseHTTP.firstMatch(#"<(?:atom:)?link[^>]*href=["']([^"']+)["'][^>]*rel=["']next["']"#, in: xml),
+           let url = URL(string: href.decodedHTMLEntities, relativeTo: current)?.absoluteURL {
+            return url
+        }
+        guard var components = URLComponents(url: current, resolvingAgainstBaseURL: false) else { return nil }
+        var queryItems = components.queryItems ?? []
+        if let index = queryItems.firstIndex(where: { $0.name == "paged" }) {
+            let page = Int(queryItems[index].value ?? "") ?? 1
+            queryItems[index].value = String(page + 1)
+        } else {
+            queryItems.append(URLQueryItem(name: "paged", value: "2"))
+        }
+        components.queryItems = queryItems
+        return components.url
     }
 }
 
@@ -432,6 +653,10 @@ struct YouTubeSearchResult: Identifiable, Hashable {
     /// recognise). Used by the Spotify matcher to reject a result that's
     /// plainly a different recording; nothing else reads it.
     var durationSeconds: Double? = nil
+    /// YouTube's relative publish label ("3 weeks ago") when the renderer
+    /// carried one — the only date a results/channel page exposes. Read by the
+    /// channel pager to date the uploads it scrapes.
+    var publishedText: String? = nil
 
     var id: String { videoID }
     var url: String { BrowseHTTP.watchURL(forVideoID: videoID) }
@@ -506,7 +731,9 @@ enum YouTubeSearchResolver {
             results.append(YouTubeSearchResult(videoID: videoID,
                                                title: title,
                                                channel: decodeJSONStringBody(rawChannel ?? ""),
-                                               durationSeconds: duration(inRenderer: window)))
+                                               durationSeconds: duration(inRenderer: window),
+                                               publishedText: BrowseHTTP.firstMatch(
+                                                #""publishedTimeText":\{"simpleText":"([^"]+)""#, in: window)))
         }
         return results
     }

@@ -342,6 +342,17 @@ final class YoutubeDLExtractor: MediaExtractor {
         return true
     }
 
+    /// Whether a format is an **HLS** playlist specifically (as opposed to
+    /// segmented DASH, which nothing here can read). These are the ones
+    /// `HLSDownloader` can still save via AVFoundation, so a site that offers
+    /// only HLS — Vimeo, since it retired progressive files — downloads instead
+    /// of failing with `hlsOnly`.
+    static func isHLSPlaylist(formatID: String, ext: String, url: String) -> Bool {
+        ext.lowercased() == "m3u8"
+            || url.lowercased().contains(".m3u8")
+            || formatID.lowercased().contains("hls")
+    }
+
     /// Returns whether the fresh module actually landed, so the automatic
     /// retry path only re-runs extraction (and only spends its once-per-session
     /// budget) when the refresh succeeded.
@@ -553,6 +564,55 @@ final class YoutubeDLExtractor: MediaExtractor {
             Self.isProgressiveDownloadable(formatID: f.format_id, ext: f.ext, url: f.url)
         }
 
+        /// Last resort for a site that offers **only HLS** — Vimeo since it
+        /// retired progressive files, and most embedded players. The chunked
+        /// downloader can't fetch a playlist of segments, but AVFoundation can
+        /// read one natively, so the playlist goes to `HLSDownloader` instead
+        /// of the job failing with `hlsOnly`. Returns nil when there's no HLS
+        /// on offer either, leaving the caller to throw as before.
+        func hlsMedia() async throws -> ExtractedMedia? {
+            let playlists = formats.filter {
+                !progressive($0) && Self.isHLSPlaylist(formatID: $0.format_id, ext: $0.ext, url: $0.url)
+            }
+            guard !playlists.isEmpty else { return nil }
+
+            let pick: Format?
+            if mode == .video {
+                let withPicture = playlists.filter { !$0.isAudioOnly }
+                pick = quality.pick(from: withPicture, height: { $0.height ?? 0 }) ?? playlists.first
+            } else {
+                // A real audio rendition when the stream has one (Vimeo's HLS
+                // does); otherwise the smallest variant that carries sound —
+                // the AppleM4A preset keeps only its audio either way.
+                pick = playlists.filter { $0.isAudioOnly }
+                    .max(by: { ($0.abr ?? $0.tbr ?? 0) < ($1.abr ?? $1.tbr ?? 0) })
+                    ?? playlists.filter { !$0.isVideoOnly }.min(by: { ($0.height ?? .max) < ($1.height ?? .max) })
+                    ?? playlists.first
+            }
+            guard let format = pick, let playlist = URL(string: format.url) else { return nil }
+
+            appLog("No progressive stream on offer — saving the HLS playlist \(format.format_id) via AVFoundation.",
+                   level: .warning, category: category)
+            let ext = mode == .video ? "mp4" : "m4a"
+            let dest = AppPaths.work.appendingPathComponent("\(UUID().uuidString).\(ext)")
+            onDownloadStart()
+            _ = try await HLSDownloader.download(playlist: playlist,
+                                                 headers: format.http_headers,
+                                                 mode: mode,
+                                                 quality: quality,
+                                                 to: dest,
+                                                 category: category,
+                                                 onProgress: onProgress)
+            let verifiedDuration = try await MediaVerifier.verify(dest, isVideo: mode == .video, category: category)
+            appLog("HLS download finished: \(dest.lastPathComponent)", level: .success, category: category)
+            return ExtractedMedia(
+                fileURL: dest,
+                title: info.title.isEmpty ? url.absoluteString : info.title,
+                duration: info.duration ?? verifiedDuration,
+                isVideo: mode == .video
+            )
+        }
+
         // Best audio-only (m4a preferred), restricted to containers
         // AVFoundation can play directly — so an opus/webm-only stream isn't
         // saved raw but routes to the muxed + extraction fallback below. Used
@@ -584,7 +644,8 @@ final class YoutubeDLExtractor: MediaExtractor {
                 let hadAnyVideo = formats.contains { !$0.isAudioOnly && ($0.vcodec ?? "none") != "none" }
                 let hadProgressiveVideo = formats.contains { !$0.isAudioOnly && progressive($0) }
                 if hadAnyVideo && !hadProgressiveVideo {
-                    appLog("Only HLS/streaming video formats offered — none progressively downloadable.",
+                    if let media = try await hlsMedia() { return media }
+                    appLog("Only HLS/streaming video formats offered — none progressively downloadable, and none readable as HLS.",
                            level: .error, category: category)
                     throw ExtractorError.hlsOnly
                 }
@@ -627,11 +688,15 @@ final class YoutubeDLExtractor: MediaExtractor {
             // progressive muxed MP4 and extract its audio.
             let muxedMP4 = formats.filter { !$0.isAudioOnly && !$0.isVideoOnly && $0.ext == "mp4" && progressive($0) }
             guard let video = muxedMP4.min(by: { ($0.height ?? .max) < ($1.height ?? .max) }) else {
+                // Nothing progressive to extract audio from. An HLS playlist
+                // still saves via AVFoundation; only if there isn't one either
+                // is this a real dead end.
+                if let media = try await hlsMedia() { return media }
                 // If the site offered formats but none were progressive, the
                 // blocker is HLS, not a missing audio track — say which.
                 let hadProgressive = formats.contains { progressive($0) }
                 if !formats.isEmpty && !hadProgressive {
-                    appLog("Only HLS/streaming formats offered — none progressively downloadable.",
+                    appLog("Only HLS/streaming formats offered — none progressively downloadable, and none readable as HLS.",
                            level: .error, category: category)
                     throw ExtractorError.hlsOnly
                 }

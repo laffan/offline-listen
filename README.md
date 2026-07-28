@@ -88,9 +88,8 @@ Five screens (tabs):
 2. **Browse** — keeps tabs on and curates different audio **sources** (see
    [Browse: keeping tabs on audio sources](#browse-keeping-tabs-on-audio-sources)).
    Add YouTube channels/playlists, RSS feeds, a **Blog Agent** for blogs
-   without a feed, an **Artist Discography** agent that lays out an artist's
-   whole catalogue as a nested list of albums, or AI-curated **Artist Top 10**
-   / Genre / Country
+   without a feed, an **Artist** source (following either their **Top 10** or
+   their whole **Discography**), or AI-curated Genre / Country
    lists; each refresh surfaces YouTube links, shown as compact
    name-over-artist rows, and
    every item offers **Download** (sends it to the download queue) and
@@ -99,7 +98,13 @@ Five screens (tabs):
    batch of items and download them all in one tap. An
    **Audio/Video toggle** beneath the Browse title — the same one the Download
    tab has — sets which mode both buttons (and the bulk download) act in.
-3. **Library** — downloaded tracks; tap to play. A **filter** (All / Music /
+3. **Library** — downloaded tracks; tap to play. A **search** field sits under
+   the title: type anything and the list becomes results — matching **folders**
+   first, then every track whose **title or artist** matches, *including tracks
+   inside folders* (the normal list shows only unfiled ones, but "where did I
+   put that track" is the question search exists to answer). Matching ignores
+   case and accents, so "beyonce" finds "Beyoncé", and the media-type filter
+   still applies. A **filter** (All / Music /
    Podcasts / Video) sits directly beneath the **Tracks** header. Swipe **left**
    for Delete/Share/Archive (and bulk versions via **Select**); swipe **right**
    on an audio track to classify it **Song** or **Podcast**. Songs start from the
@@ -118,6 +123,16 @@ Five screens (tabs):
    curated playlist**, though, so it **plays straight through in list order**
    regardless of type — tap any track and the whole folder plays in sequence.
 
+   **Recent.** A virtual folder — the mirror image of the Inbox — listing what
+   you've **played**, most recent first, with each row showing when. A track
+   joins it the moment playback *starts*; it doesn't have to finish. It's a
+   **log, not a set**: the same track appears once per listen, so a track you
+   keep coming back to shows up repeatedly — only *consecutive* repeats are
+   collapsed, since restarting the track you're already on isn't a new listen.
+   Nothing lives there (the tracks stay wherever they are), so removing a row —
+   or **Clear** — only forgets the listen. The log keeps the last 200 plays in
+   `Documents/recents.json`.
+
    **Chapters.** Tracks that carry YouTube chapter markers show an **arrow**
    after the title, set off by a left border so it reads as a button distinct
    from the row: tapping the **title** plays the track normally, tapping the
@@ -130,7 +145,8 @@ Five screens (tabs):
    **Folders** organize the library, under a **Folders** header (mirroring the
    Tracks one): an **Inbox** pinned to the top collects every track you haven't
    listened to yet (starting playback — or a **Mark Played** swipe — clears it
-   from the Inbox), user folders sit below it, and the **Archive** is pinned to
+   from the Inbox), **Recent** and **Watch** sit beneath it, user folders below
+   those, and the **Archive** is pinned to
    the bottom. Create folders with the toolbar's folder button; move tracks in
    via touch-and-hold → **Move to Folder** (or the bulk Select menu). The Inbox
    is itself a move target — moving a track there returns it to unlistened.
@@ -241,7 +257,9 @@ beneath the Browse title:
   after the source** (a "Brian Eno" Discography lands in a "Brian Eno"
   folder), so everything from one source stays together; those tracks, being
   unlistened, still surface in the **Inbox** until you play them.
-- **Preview** — opens a modal that downloads the audio — or, in Video mode,
+- **Preview** — its icon **fills in** once you've opened it, so a long list
+  shows at a glance what you've already auditioned (the button keeps working —
+  it's a breadcrumb, not a decision). It opens a modal that downloads the audio — or, in Video mode,
   the video, its picture spanning the full width of the pane — and plays it in
   its own
   **mini player** (scrubber, play/pause — separate from the main Player, which
@@ -268,6 +286,20 @@ beneath the Browse title:
   the modal without deciding deletes the temp file and leaves the item
   untouched.
 
+**More.** A **YouTube Channel**, **RSS Feed** or **Blog Agent** list ends with a
+**More** button that pulls the *next page* of what the source lists — a refresh
+only ever re-reads the newest page, so this is the only way further back. Each
+kind pages the way it can: a channel leaves the RSS feed behind (it carries only
+the latest 15 entries and doesn't paginate) and reads the channel's own videos
+page, then follows YouTube's continuation tokens the way the site does when you
+scroll; a feed follows its `rel="next"` link, or `?paged=N`; a Blog Agent
+re-triages the homepage and reads the articles it hasn't read yet. Older items
+merge in like any refresh — already-curated rows keep their state — and when a
+source has nothing further the button retires to "Nothing older to load".
+
+The **Audio/Video toggle** appears on a source's own screen too, not just the
+Browse root, so the mode can be changed where the Download/Preview buttons are.
+
 **Bulk download.** A **Select** button at the top of a source's list turns on
 multi-select (the same edit-mode selection the Library uses): the per-row
 Download/Preview buttons give way to selection circles, you tick as many items
@@ -275,35 +307,35 @@ as you like — across albums or posts in a grouped list — and a **Download (N
 button queues the whole set at once, in the current Audio/Video mode. Picks that
 were already sent or saved are skipped, and **Done** leaves select mode.
 
-Eight **source types**, in two families:
+Seven **source types**, in two families:
 
 | Type | How it works |
 |------|--------------|
 | **YouTube Channel** | Scrape/RSS: watches the channel's upload feed (`/feeds/videos.xml`). Accepts a channel URL, `@handle`, bare `UC…` id, or plain channel name — see [Resolving a channel](#resolving-a-channel). |
 | **YouTube Playlist** | Scrape/RSS: watches the playlist's feed. Accepts a playlist URL (anything with `list=`) or a bare playlist id. |
 | **RSS Feed** | RSS reader: parses any RSS/Atom feed and keeps **only the posts that contain YouTube links** (a music blog's roundups, a newsletter's song-of-the-day). A post with several links yields one item per video. |
-| **Blog Agent** | AI agent: RSS-reader behaviour for blogs **without a feed**. The agent fetches the homepage, asks the model which of the page's links are individual recent articles (telling posts apart from nav/category/about links is exactly the judgement call heuristics get wrong — and the model may only *pick from* the links found on the page, never invent one), then reads the most recent ones. Each article becomes a **post** — a section headed by its title + date, with three parts: a one-or-two-sentence **summary**, the **YouTube tracks** actually linked in the article (Download/Preview like any Browse item), and a list of the **artists it names**. Tapping an artist opens a popup to spin up a new **Artist Top 10** or **Artist Discography** source for that name on the spot — so a text-only write-up with no embedded videos still turns into something to follow. (This replaces the earlier "guess the songs and search YouTube for each" step, which resolved unreliably.) **Settings ▸ Blog Agent** caps how many **posts per refresh** are read and how many **songs per post** are taken (defaults 5 and 5), so a link-heavy blog can't flood the list. |
-| **Artist Discography** | AI agent (blog-agent style): given an **artist**, the model lays out their discography — a short **Highlights** list of essential songs, then the studio **albums** each with its year and tracklist. The list is **grouped by album** (a nested list of sections, newest album first) with the **Highlights** section pinned on top; the same signature song can appear both in Highlights and on its album. As everywhere in Browse, the model supplies only album/song **names** — every track is resolved to a real video via the search scraper, never a model-supplied link. Each track costs a YouTube search, so a refresh is **capped** (12 highlights, up to 20 albums × 16 tracks, 120 lookups total); anything past the ceiling is dropped and logged. |
-| **Artist Top 10** | AI: the model lists the artist's **top 10 most popular tracks**, ranked; each is resolved to a real video via the search scraper. |
+| **Blog Agent** | AI agent: RSS-reader behaviour for blogs **without a feed**. The agent fetches the homepage, asks the model which of the page's links are individual recent articles (telling posts apart from nav/category/about links is exactly the judgement call heuristics get wrong — and the model may only *pick from* the links found on the page, never invent one), then reads the most recent ones. Each article becomes a **post** — a section headed by its title + date, with three parts: a one-or-two-sentence **summary**, the **YouTube tracks** actually linked in the article (Download/Preview like any Browse item), and a list of the **artists it names**. Tapping an artist opens a popup to spin up a new **Artist** source — Top 10 or Discography — for that name on the spot — so a text-only write-up with no embedded videos still turns into something to follow. (This replaces the earlier "guess the songs and search YouTube for each" step, which resolved unreliably.) **Settings ▸ Blog Agent** caps how many **posts per refresh** are read and how many **songs per post** are taken (defaults 5 and 5), so a link-heavy blog can't flood the list. |
+| **Artist** | AI, in one of two **modes** picked when the source is added. **Top 10**: the model lists the artist's **top 10 most popular tracks**, ranked, digging deeper on each refresh. **Discography** (blog-agent style): the model lays out their whole catalogue — a short **Highlights** list of essential songs, then the studio **albums** each with its year and tracklist. The list is **grouped by album** (a nested list of sections, newest album first) with the **Highlights** section pinned on top; the same signature song can appear both in Highlights and on its album. As everywhere in Browse, the model supplies only album/song **names** — every track is resolved to a real video via the search scraper, never a model-supplied link. Each track costs a YouTube search, so a refresh is **capped** (12 highlights, up to 20 albums × 16 tracks, 120 lookups total); anything past the ceiling is dropped and logged. (These were two separate source types once; sources created back then keep working and appear as Artist sources in Discography mode.) |
 | **Genre** | AI: popular songs in a genre, across artists. |
 | **Country** | AI: popular songs from a country (by artists from that country). The country field has a **globe button** that opens a searchable modal of every country (built from the system's localized ISO region list) in case the right name isn't obvious. |
 
-All three AI music types can be scoped to an **era**: the add sheet offers an
+The AI music types can be scoped to an **era** (Artist only in Top 10 mode — a
+discography spans the whole catalogue by definition): the add sheet offers an
 **Era** picker (Any era, or a decade from 1950s–2020s), the chosen decade
 steers the suggestions — early Dylan, 1980s synth-pop, 1970s Mali — and a
 blank name auto-fills with the era folded in, e.g. "Mali (1970s)", so two
 eras of the same subject read apart in the source list.
 
 The AI types use the **Anthropic key from Settings** (they're unavailable until
-one is saved). For Artist Top 10 / Genre / Country (and Artist Discography) the model is asked for
+one is saved). For Artist / Genre / Country the model is asked for
 real, well-known songs — title and artist —
 and is deliberately **never trusted to produce YouTube links** (it hallucinates
 video ids); each suggestion is instead resolved to a real video by scraping the
-top result of a YouTube search. For Artist Top 10 / Genre / Country, on a refresh
-the model is told what it already suggested so it digs deeper instead of
-repeating itself (so refreshing an Artist Top 10 keeps surfacing the next-most-
-popular tracks); an Artist Discography refresh re-lays the catalogue and merges
-it in, so re-confirmed tracks stay put and only genuinely new ones are added.
+top result of a YouTube search. For Artist (Top 10) / Genre / Country, on a
+refresh the model is told what it already suggested so it digs deeper instead of
+repeating itself (so refreshing keeps surfacing the next-most-popular tracks); a
+Discography refresh re-lays the catalogue and merges it in, so re-confirmed
+tracks stay put and only genuinely new ones are added.
 
 **Agent blockers.** Sites behind bot protection refuse automated readers —
 a 403/429 for non-browser clients, or a Cloudflare-style challenge
@@ -436,6 +468,8 @@ in-app style edit.
 URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──►  Documents/  ──►  AVPlayer
          best audio-only or muxed mp4       (+ audio extract       local file       audio/video
                                              for audio mode)                         playback
+                                       └──►  HLS export (AVFoundation)
+                                             when only a playlist is offered
 ```
 
 ### Source layout (`OfflineListen/`)
@@ -457,6 +491,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `ytdlp/` | Bundled (folder reference): the `yt-dlp-ejs` solver scripts + the `yt_dlp_plugins` provider package. |
 | `AudioStreamDownloader.swift` | Shared chunked byte-range stream downloader. |
 | `VideoAudioExtractor.swift` | Extracts audio from a muxed video via AVFoundation. |
+| `HLSDownloader.swift` | Saves an HLS (`.m3u8`) stream to a local m4a/mp4 via `AVAssetExportSession` — the fallback that makes Vimeo (progressive-free) work, with no FFmpeg. |
 | `ChapterFetcher.swift` | Best-effort capture of YouTube chapter markers via the on-device yt-dlp module. |
 | `PlaylistResolver.swift` | Detects playlist links and flat-resolves their entries (on-device yt-dlp) so a playlist downloads into a folder. |
 | `ChapterSplitter.swift` | Exports one file per chapter (AVFoundation) for "Break Chapters into Playlist". |
@@ -819,19 +854,31 @@ YouTube's token checks shift mid-download:
   the forced-client loop itself, one client's download failure moves to the
   next client rather than sinking the whole recovery.
 
-### Any yt-dlp site (Vimeo, SoundCloud, …) — progressive only
+### Any yt-dlp site (Vimeo, SoundCloud, …)
 
 The yt-dlp path isn't YouTube-specific: it resolves whatever URL it's given, so
 Vimeo, SoundCloud and the rest of yt-dlp's catalogue work. Two constraints shape
 which formats we pick:
 
-- **Progressive only.** `AudioStreamDownloader` fetches a single file over byte
-  ranges; it can't assemble an **HLS** playlist or **segmented DASH**. So
-  `isProgressiveDownloadable` (and, on the Python path, yt-dlp's `protocol`
-  field) filters those out, keeping only single-URL streams — including
-  YouTube's DASH renditions, which *are* direct URLs. A link that offers
-  **only** HLS fails fast with the clear `hlsOnly` message rather than
-  downloading an unplayable playlist.
+- **Progressive first, HLS as a fallback.** `AudioStreamDownloader` fetches a
+  single file over byte ranges; it can't assemble an **HLS** playlist or
+  **segmented DASH**. So `isProgressiveDownloadable` (and, on the Python path,
+  yt-dlp's `protocol` field) picks single-URL streams first — including
+  YouTube's DASH renditions, which *are* direct URLs. When a site offers
+  **nothing but HLS**, the playlist goes to `HLSDownloader`, which reads it with
+  **AVFoundation** (`AVAssetExportSession`, the same machinery `AVPlayer`
+  streams with) and writes a finished m4a/mp4 — no FFmpeg, no segment stitching
+  of our own. Only if there's no readable HLS either does the download fail with
+  the `hlsOnly` message. Segmented DASH remains unsupported.
+
+  This is what makes **Vimeo** work. Vimeo retired progressive files for most
+  accounts, so an ordinary Vimeo link offers HLS and nothing else, and the
+  download used to fail before it started. Two limits are inherent: a **live**
+  stream never ends, so only VOD can be saved, and video export **re-encodes**
+  (the quality picker maps onto AVFoundation's export presets), so it's slower
+  than a progressive download of the same video. Audio uses the `AppleM4A`
+  preset, which keeps only the audio track — so an HLS variant that carries
+  picture still yields a clean audio file.
 - **Playable containers.** Audio is saved raw only when it's a container
   AVFoundation can decode (`m4a`/`mp3`/`aac`/`wav`/`aiff` — so SoundCloud's
   progressive **mp3** saves directly, while an opus/webm-only stream routes to

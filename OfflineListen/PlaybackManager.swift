@@ -192,10 +192,11 @@ final class PlaybackManager: NSObject, ObservableObject {
             try? AVAudioSession.sharedInstance().setActive(true)
             player.play()
             // Starting playback counts as listened — the track leaves the
-            // Inbox. (The preview-save handoff opts out: an auditioned save
-            // should still land in the Inbox.)
+            // Inbox and joins the Recent log. (The preview-save handoff opts
+            // out: an auditioned save should still land in the Inbox.)
             if countsAsListened {
                 library.markPlayed(track.id)
+                library.recordListen(track.id)
             }
         }
         startTicker()
