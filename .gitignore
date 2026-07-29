@@ -16,3 +16,4 @@ xcuserdata/
 # Resolved SPM versions are intentionally tracked so builds are reproducible:
 # (uncomment the next line if you'd rather not commit it)
 # OfflineListen.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+__pycache__/

@@ -72,6 +72,10 @@
 		1B00000000000000000002E4 /* BrowseFetchers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E4 /* BrowseFetchers.swift */; };
 		1B00000000000000000002E5 /* AIDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E5 /* AIDiscovery.swift */; };
 		1B00000000000000000002E6 /* BrowseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E6 /* BrowseView.swift */; };
+		1B0000000000000000004E01 /* EveryNoiseData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000004E01 /* EveryNoiseData.swift */; };
+		1B0000000000000000004E02 /* NoiseMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000004E02 /* NoiseMapView.swift */; };
+		1B0000000000000000004E03 /* EveryNoiseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000004E03 /* EveryNoiseView.swift */; };
+		1B0000000000000000004E04 /* EveryNoiseData in Resources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000004E04 /* EveryNoiseData */; };
 		1B00000000000000000002E7 /* BrowseSourceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E7 /* BrowseSourceView.swift */; };
 		1B00000000000000000002E8 /* BrowsePreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E8 /* BrowsePreviewView.swift */; };
 		1B00000000000000000002E9 /* BlogAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E9 /* BlogAgent.swift */; };
@@ -165,6 +169,10 @@
 		1A00000000000000000002E4 /* BrowseFetchers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseFetchers.swift; sourceTree = "<group>"; };
 		1A00000000000000000002E5 /* AIDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIDiscovery.swift; sourceTree = "<group>"; };
 		1A00000000000000000002E6 /* BrowseView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseView.swift; sourceTree = "<group>"; };
+		1A0000000000000000004E01 /* EveryNoiseData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EveryNoiseData.swift; sourceTree = "<group>"; };
+		1A0000000000000000004E02 /* NoiseMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoiseMapView.swift; sourceTree = "<group>"; };
+		1A0000000000000000004E03 /* EveryNoiseView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EveryNoiseView.swift; sourceTree = "<group>"; };
+		1A0000000000000000004E04 /* EveryNoiseData */ = {isa = PBXFileReference; lastKnownFileType = folder; path = EveryNoiseData; sourceTree = "<group>"; };
 		1A00000000000000000002E7 /* BrowseSourceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseSourceView.swift; sourceTree = "<group>"; };
 		1A00000000000000000002E8 /* BrowsePreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowsePreviewView.swift; sourceTree = "<group>"; };
 		1A00000000000000000002E9 /* BlogAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlogAgent.swift; sourceTree = "<group>"; };
@@ -232,6 +240,9 @@
 				1A00000000000000000002E6 /* BrowseView.swift */,
 				1A00000000000000000002E7 /* BrowseSourceView.swift */,
 				1A00000000000000000002E8 /* BrowsePreviewView.swift */,
+				1A0000000000000000004E01 /* EveryNoiseData.swift */,
+				1A0000000000000000004E02 /* NoiseMapView.swift */,
+				1A0000000000000000004E03 /* EveryNoiseView.swift */,
 				1A00000000000000000000AA /* LibraryView.swift */,
 				1A00000000000000000000B6 /* FolderView.swift */,
 				1A00000000000000000000BF /* MixtapeViews.swift */,
@@ -264,6 +275,7 @@
 				1A00000000000000000001E1 /* POTokenMinter.swift */,
 				1A00000000000000000001E2 /* PythonBridge.swift */,
 				1A00000000000000000001E3 /* ytdlp */,
+				1A0000000000000000004E04 /* EveryNoiseData */,
 				1A00000000000000000000AC /* Assets.xcassets */,
 				1A00000000000000000000AD /* Info.plist */,
 				3A00000000000000000000A6 /* OfflineListen.entitlements */,
@@ -449,6 +461,7 @@
 			files = (
 				1B00000000000000000000BC /* Assets.xcassets in Resources */,
 				1B00000000000000000001E3 /* ytdlp in Resources */,
+				1B0000000000000000004E04 /* EveryNoiseData in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -493,6 +506,9 @@
 				1B00000000000000000002E6 /* BrowseView.swift in Sources */,
 				1B00000000000000000002E7 /* BrowseSourceView.swift in Sources */,
 				1B00000000000000000002E8 /* BrowsePreviewView.swift in Sources */,
+				1B0000000000000000004E01 /* EveryNoiseData.swift in Sources */,
+				1B0000000000000000004E02 /* NoiseMapView.swift in Sources */,
+				1B0000000000000000004E03 /* EveryNoiseView.swift in Sources */,
 				1B00000000000000000000BA /* LibraryView.swift in Sources */,
 				1B00000000000000000000C8 /* FolderView.swift in Sources */,
 				1B00000000000000000000D0 /* LocalSync.swift in Sources */,

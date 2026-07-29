@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "placeholder": true,
+  "genres": 0,
+  "note": "Run tools/everynoise/scrape.py to fill this folder with the one-time Every Noise dataset."
+}

@@ -8,6 +8,8 @@ struct BrowseView: View {
 
     /// The kind picked from the "+" menu, driving the add sheet.
     @State private var addingKind: BrowseSourceKind?
+    /// The world button beside "+": the Every Noise at Once browser.
+    @State private var showingEveryNoise = false
 
     var body: some View {
         NavigationStack {
@@ -47,12 +49,21 @@ struct BrowseView: View {
                     .disabled(browse.sources.isEmpty || !browse.refreshing.isEmpty)
                     .accessibilityLabel("Refresh all sources")
                 }
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItemGroup(placement: .navigationBarTrailing) {
+                    Button {
+                        showingEveryNoise = true
+                    } label: {
+                        Image(systemName: "globe.americas")
+                    }
+                    .accessibilityLabel("Browse the Every Noise genre map")
                     addMenu
                 }
             }
             .sheet(item: $addingKind) { kind in
                 AddBrowseSourceView(kind: kind)
+            }
+            .fullScreenCover(isPresented: $showingEveryNoise) {
+                EveryNoiseView()
             }
         }
     }

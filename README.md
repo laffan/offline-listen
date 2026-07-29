@@ -93,7 +93,11 @@ Five screens (tabs):
    lists; each refresh surfaces YouTube links, shown as compact
    name-over-artist rows, and
    every item offers **Download** (sends it to the download queue) and
-   **Preview** (a listen-first modal with **Save** / **Discard**). A **Select**
+   **Preview** (a listen-first modal with **Save** / **Discard**). A **world
+   button** beside the "+" opens the **Every Noise browser** — the whole
+   [Every Noise at Once](https://everynoise.com) genre map, bundled into the
+   app, browsable offline, and wired straight into the Artist sources (see
+   [The Every Noise browser](#the-every-noise-browser)). A **Select**
    button in a source's list flips it into multi-select, so you can tick a
    batch of items and download them all in one tap. An
    **Audio/Video toggle** beneath the Browse title — the same one the Download
@@ -354,6 +358,56 @@ Sources refresh on demand (per-source, or pull-to-refresh / the toolbar button
 for everything); refresh errors show on the source row and in the **Log**
 (category `Browse`).
 
+### The Every Noise browser
+
+The **world button** beside Browse's "+" opens an in-app rendition of
+[Every Noise at Once](https://everynoise.com) — Glenn McDonald's
+readability-adjusted scatter-plot of the musical genre space. The site froze in
+late 2024 when Spotify revoked its API access, so its data is static — which is
+what makes bundling it reasonable: a **one-time scrape**
+(`tools/everynoise/scrape.py`, a modernized descendant of
+[laffan/everynoise-scrape](https://github.com/laffan/everynoise-scrape)) bakes
+the whole map into the app, and everything below works offline except the
+preview snippets themselves.
+
+It mirrors the site's own controls — **Map**, **List** and **Scan** modes plus
+a **Find** field — at both levels:
+
+- **Map** is the genre scatter-plot itself: every genre in the site's own
+  position, color and size (nearby genres really do sound alike). Tapping a
+  genre reveals its **constituent artists**, likewise positioned in rough
+  relation to one another on the genre's own map.
+- **List** is the same set alphabetically, each genre in its map color with a
+  per-row preview play button.
+- **Scan** auto-plays through the example tracks in map order — the site's
+  scan mode as a bottom transport bar (prev / play-pause / next), with the map
+  following along and the current entry drawn inverted. It works on the genre
+  map and inside any genre's artist map, remembers where it left off on the
+  genre level, and skips entries with no preview.
+- **Find** filters: in list mode it narrows the list; over a map it drops down
+  the matches and tapping one flies the map there.
+
+Tapping an **artist** plays a **30-second preview of their top song** (the
+snippet URL is embedded in the scraped data — no Spotify account or API key is
+involved) and opens an action bar with a **"+"** that files that artist into
+Browse as a regular **Artist source** — **Top 10** or **Discography**, the
+same two depths offered everywhere else — with the first refresh kicked off
+immediately.
+
+**Why it isn't laggy.** The dataset is big (~6,300 genres, on the order of a
+million artist rows), and the site itself chugs on an iPad, so nothing is ever
+loaded or laid out wholesale. The genre **index** (`genres.json`) is read once,
+off the main thread, when the browser opens. Each genre's **artist shard**
+(`EveryNoiseData/genres/<key>.z`, raw-DEFLATE-compressed JSON) is inflated only
+when that genre is opened, with a small LRU keeping recent genres warm. And the
+maps are **virtualized**: a `UIScrollView` with a spatial grid materializes
+only the labels intersecting the visible rect (plus a margin), recycling them
+from a pool as the map pans — a few hundred live views at most, whatever the
+dataset size (`NoiseMapView`). A build without the dataset (the repo ships a
+placeholder until the one-time scrape is run — see
+`tools/everynoise/README.md`) shows a clear explanation instead of an empty
+map.
+
 Preview downloads run through the **same pipeline** as the download queue but
 jump ahead of queued jobs, since the user is sitting in the modal waiting.
 While every pipeline slot is busy the modal says so ("Waiting for the
@@ -513,7 +567,11 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `AIDiscovery.swift` | AI song discovery for Artist/Genre/Country sources (suggestions via the Messages API, links via the search resolver). |
 | `BlogAgent.swift` | The Blog Agent source: homepage fetch → AI link triage → article reads → per-article summary + artist extraction + YouTube-link harvest, with bot-protection ("agent blocked") detection. |
 | `DiscographyAgent.swift` | The Discography source: AI lays out an artist's albums (+ a Highlights list); each track is resolved to a YouTube link via the search scraper, bounded by per-refresh caps. |
-| `BrowseView.swift` | The Browse tab: sources grouped by type, add-source sheet, refresh. |
+| `BrowseView.swift` | The Browse tab: sources grouped by type, add-source sheet, refresh, and the world button into the Every Noise browser. |
+| `EveryNoiseData.swift` | The bundled Every Noise dataset: models, the lazy/LRU shard-loading store, and the 30-second preview player. |
+| `NoiseMapView.swift` | The virtualized `UIScrollView` scatter map (spatial grid + recycled labels) both noise maps render through. |
+| `EveryNoiseView.swift` | The Every Noise browser: Map/List/Scan modes + Find at both levels, the scan transport, and the artist bar whose "+" creates Artist sources. |
+| `EveryNoiseData/` | Bundled (folder reference): `genres.json` index + per-genre artist shards, written by the one-time `tools/everynoise/scrape.py`. |
 | `BrowseSourceView.swift` | One source's items with per-row Download/Preview/Discard, plus a **Select** mode for bulk download. |
 | `BrowsePreviewView.swift` | The preview modal: pipeline download, mini player, Save/Discard. |
 | `*View.swift` | The five SwiftUI screens (Download, Browse, Library, Player, Settings — which embeds the Log). |
@@ -702,6 +760,12 @@ on your own device).
 4. Set your **Signing Team** under *Signing & Capabilities* and adjust
    `PRODUCT_BUNDLE_IDENTIFIER` (default `com.offlinelisten.app`) if needed.
 5. Build & run.
+6. *(Optional, once)* Fill in the **Every Noise browser's** dataset:
+   `python3 tools/everynoise/scrape.py` scrapes everynoise.com straight into
+   `OfflineListen/EveryNoiseData/` (already wired into the project as a folder
+   reference), and the next build bundles it. Until then the world button
+   explains what's missing instead of showing an empty map. See
+   `tools/everynoise/README.md`.
 
 > **First download is slow:** YoutubeDL-iOS fetches the `yt-dlp` Python module
 > (tens of MB) on first use, then caches it. A network connection is required
