@@ -21,12 +21,14 @@ struct DownloadView: View {
     @State private var failedQuery: String?
 
     /// The input reads as a search term when it's non-empty and contains no
-    /// downloadable link — then the button flips from Download to Search.
+    /// downloadable link — then the button flips from Download to Search. A
+    /// Spotify reference counts as a link (including the `spotify:track:…` URI
+    /// form, which isn't a URL at all).
     private var isSearch: Bool {
         let trimmed = urlText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
         return !trimmed.split(whereSeparator: { $0.isWhitespace })
-            .contains { DownloadManager.isQueueableURL(String($0)) }
+            .contains { DownloadManager.isDownloadableToken(String($0)) }
     }
 
     var body: some View {
@@ -38,7 +40,7 @@ struct DownloadView: View {
                     ContentUnavailableViewCompat(
                         title: "No downloads yet",
                         systemImage: "arrow.down.circle",
-                        description: "Paste a video or playlist URL above to start downloading, or type anything else to search YouTube. A playlist downloads into its own folder."
+                        description: "Paste a video, playlist or Spotify link above to start downloading, or type anything else to search YouTube. A playlist or album downloads into its own folder."
                     )
                     .frame(maxHeight: .infinity)
                 } else {
@@ -242,7 +244,10 @@ private struct DownloadJobRow: View {
 
             HStack(spacing: 8) {
                 statusIcon
-                Text(job.state.label)
+                // A long resolution (a Spotify album's per-track YouTube
+                // matching) counts itself off here; everything else reads the
+                // plain state label.
+                Text(job.progressNote ?? job.state.label)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

@@ -407,3 +407,108 @@ struct InboxView: View {
         }
     }
 }
+
+/// The **Recent** virtual folder: what you've played, most recent first.
+///
+/// A log rather than a place — the tracks live wherever they normally do, and
+/// nothing here moves or deletes them. A track appears once per listen (with
+/// consecutive repeats collapsed), which is why rows are keyed by the *entry*
+/// and not by the track. Playback continues through the distinct tracks in the
+/// list, so a repeat doesn't send `next` backwards.
+struct RecentTracksView: View {
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var playback: PlaybackManager
+
+    let onPlay: () -> Void
+    @Binding var share: SharePayload?
+
+    @State private var editingTrack: Track?
+    @State private var chapterContext: ChapterContext?
+    @State private var confirmingClear = false
+
+    private var entries: [RecentListenRow] { library.recentListenEntries }
+    /// The playback queue: each track once, in the order it was last heard.
+    private var queue: [Track] { library.recentTracks }
+
+    var body: some View {
+        Group {
+            if entries.isEmpty {
+                ContentUnavailableViewCompat(
+                    title: "Nothing played yet",
+                    systemImage: "clock.arrow.circlepath",
+                    description: "Tracks appear here as you play them — most recent first."
+                )
+            } else {
+                List {
+                    ForEach(entries) { pair in
+                        TrackRow(
+                            track: pair.track,
+                            isCurrent: playback.currentTrack?.id == pair.track.id,
+                            onShowChapters: {
+                                chapterContext = ChapterContext(track: pair.track, queue: queue)
+                            },
+                            trailingDetail: relativeDate(pair.entry.date)
+                        )
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                playback.play(pair.track, in: queue)
+                                onPlay()
+                            }
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                // Removes the log entry only — the track itself
+                                // is untouched, wherever it lives.
+                                Button(role: .destructive) {
+                                    library.removeRecentListen(pair.entry.id)
+                                } label: {
+                                    Label("Remove", systemImage: "clock.badge.xmark")
+                                }
+                                Button {
+                                    share = SharePayload(urls: [pair.track.fileURL])
+                                } label: {
+                                    Label("Share", systemImage: "square.and.arrow.up")
+                                }
+                                .tint(.blue)
+                            }
+                            .contextMenu {
+                                Button {
+                                    editingTrack = pair.track
+                                } label: {
+                                    Label("Edit Metadata", systemImage: "pencil")
+                                }
+                                SendToWatchButton(track: pair.track)
+                                AIOrganizeButton(track: pair.track)
+                            }
+                    }
+                }
+                .listStyle(.plain)
+            }
+        }
+        .navigationTitle("Recent")
+        .navigationBarTitleDisplayMode(.inline)
+        .editMetadataSheet(for: $editingTrack)
+        .sheet(item: $chapterContext) { context in
+            ChapterListView(track: context.track, queue: context.queue, onPlay: onPlay)
+        }
+        .toolbar {
+            if !entries.isEmpty {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Clear", role: .destructive) { confirmingClear = true }
+                }
+            }
+        }
+        .confirmationDialog("Clear the Recent list?",
+                            isPresented: $confirmingClear,
+                            titleVisibility: .visible) {
+            Button("Clear", role: .destructive) { library.clearRecentListens() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This only empties the list of what you've played. No tracks are deleted.")
+        }
+    }
+
+    /// "2h ago" / "yesterday" — when this listen happened, on the row's
+    /// trailing edge where a library row shows its duration.
+    private func relativeDate(_ date: Date) -> String {
+        date.formatted(.relative(presentation: .numeric))
+    }
+}

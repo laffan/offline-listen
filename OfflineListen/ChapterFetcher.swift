@@ -32,7 +32,20 @@ enum ChapterFetcher {
             // chapters parse — runs under the app-wide gate so it can't overlap
             // another pipeline slot's interpreter work.
             let chapters = try await PythonGate.shared.run { () throws -> [Chapter] in
-                // Instantiating YoutubeDL configures PythonKit's module search path so
+                // Start the interpreter if nothing has yet this session. This is
+                // load-bearing, not defensive: a download served by the native
+                // Vimeo/YouTubeKit extractors never runs a yt-dlp extraction, so
+                // chapter capture would be the *first* thing to touch Python —
+                // and touching it uninitialized kills the process outright
+                // ("No module named 'encodings'"), taking the app down after an
+                // otherwise perfect download. If it can't be started, skip:
+                // chapters are best-effort and never worth a crash.
+                guard PythonBridge.ensurePythonRunning() else {
+                    appLog("Embedded Python isn't running and can't be started — skipping chapter lookup.",
+                           level: .debug, category: category)
+                    return []
+                }
+                // Instantiating YoutubeDL configures the wrapper's own state so
                 // `import yt_dlp` resolves even when this download went through the
                 // native extractor.
                 _ = YoutubeDL()

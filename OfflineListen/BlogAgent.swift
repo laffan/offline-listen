@@ -57,14 +57,7 @@ enum BlogAgent {
     static func fetch(source: BrowseSource, settings: AISettingsStore) async throws -> Result {
         guard await settings.isAuthenticated else { throw BrowseFetchError.aiNotConfigured }
 
-        let trimmed = source.input.trimmingCharacters(in: .whitespacesAndNewlines)
-        var normalized = trimmed
-        if !normalized.lowercased().hasPrefix("http") {
-            normalized = "https://\(normalized)"
-        }
-        guard let homeURL = URL(string: normalized), homeURL.host != nil else {
-            throw BrowseFetchError.badInput("Enter the blog's URL (https://…).")
-        }
+        let homeURL = try homepageURL(from: source.input)
 
         // 1. Fetch the homepage; a refusal here means the whole site is closed
         //    to the agent.
@@ -86,22 +79,95 @@ enum BlogAgent {
             throw BrowseFetchError.badInput("The AI couldn't identify any article links on that page.")
         }
 
-        // 3. Read each article. For every one we produce a **post** — a short
-        //    summary plus the artists it names — and, on top of that, harvest
-        //    any YouTube links it carries as tracks. Serially — the agent is a
-        //    polite guest. A single blocked/broken article is skipped; if
-        //    *every* article refused the agent, say so.
+        // 3. Read the articles (each becomes a post, plus any tracks it links).
+        let read = try await readArticles(Array(articleURLs.prefix(maxPosts)),
+                                          maxSongs: maxSongs,
+                                          settings: settings)
+        if read.fetchedCount == 0 && read.blockedCount > 0 {
+            throw BrowseFetchError.agentBlocked
+        }
+        appLog("Blog agent read \(read.fetchedCount) article(s): \(read.items.count) YouTube link(s), \(read.posts.count) summarized.",
+               category: "Browse")
+        return Result(blogTitle: blogTitle, items: read.items, posts: read.posts)
+    }
+
+    /// Normalizes what the user typed into the blog's homepage URL.
+    private static func homepageURL(from input: String) throws -> URL {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = trimmed.lowercased().hasPrefix("http") ? trimmed : "https://\(trimmed)"
+        guard let url = URL(string: normalized), url.host != nil else {
+            throw BrowseFetchError.badInput("Enter the blog's URL (https://…).")
+        }
+        return url
+    }
+
+    // MARK: - More (older articles)
+
+    /// The next batch of articles. A Blog Agent source has no feed to page —
+    /// its listing *is* the homepage — so "More" re-triages the homepage
+    /// asking for a longer list and reads only the articles it hasn't read
+    /// before. The cursor counts how many it has taken so far, which is what
+    /// widens each successive ask; when the homepage stops offering anything
+    /// new the button retires.
+    static func fetchMore(source: BrowseSource,
+                          settings: AISettingsStore,
+                          cursor: String?,
+                          knownArticleURLs: Set<String>) async throws -> BrowseMorePage {
+        guard await settings.isAuthenticated else { throw BrowseFetchError.aiNotConfigured }
+
+        let homeURL = try homepageURL(from: source.input)
+        let home = try await fetchPage(homeURL)
+        let anchors = collectAnchors(in: home.html, base: home.finalURL)
+        guard !anchors.isEmpty else { return BrowseMorePage() }
+
+        let maxPosts = BlogAgentSettings.maxPosts
+        let alreadyRead = cursor.flatMap(Int.init) ?? maxPosts
+        let candidates = try await selectArticleURLs(from: anchors,
+                                                     homeURL: home.finalURL,
+                                                     limit: alreadyRead + maxPosts,
+                                                     settings: settings)
+        let fresh = candidates.filter { !knownArticleURLs.contains($0.absoluteString) }.prefix(maxPosts)
+        guard !fresh.isEmpty else {
+            appLog("Blog agent: \(homeURL.host ?? "the homepage") lists nothing beyond the \(alreadyRead) article(s) already read.",
+                   level: .warning, category: "Browse")
+            return BrowseMorePage()
+        }
+
+        let read = try await readArticles(Array(fresh),
+                                          maxSongs: BlogAgentSettings.maxSongsPerPost,
+                                          settings: settings)
+        guard read.fetchedCount > 0 else { return BrowseMorePage() }
+        appLog("Blog agent read \(read.fetchedCount) older article(s): \(read.items.count) YouTube link(s).",
+               category: "Browse")
+        return BrowseMorePage(items: read.items,
+                              posts: read.posts,
+                              cursor: String(alreadyRead + read.fetchedCount))
+    }
+
+    // MARK: - Reading articles
+
+    private struct ReadResult {
         var items: [FetchedBrowseItem] = []
         var posts: [FetchedBrowsePost] = []
-        var blockedCount = 0
         var fetchedCount = 0
-        for articleURL in articleURLs.prefix(maxPosts) {
+        var blockedCount = 0
+    }
+
+    /// Reads each article: for every one a **post** — a short summary plus the
+    /// artists it names — and, on top of that, any YouTube links it carries as
+    /// tracks. Serially — the agent is a polite guest. A single blocked/broken
+    /// article is skipped; the caller decides what an all-blocked run means.
+    private static func readArticles(_ articleURLs: [URL],
+                                     maxSongs: Int,
+                                     settings: AISettingsStore) async throws -> ReadResult {
+        var result = ReadResult()
+        for articleURL in articleURLs {
             if Task.isCancelled { break }
             let page: Page
             do {
                 page = try await fetchPage(articleURL)
             } catch BrowseFetchError.agentBlocked {
-                blockedCount += 1
+                result.blockedCount += 1
                 appLog("Blog agent blocked at \(articleURL.absoluteString) — skipping.",
                        level: .warning, category: "Browse")
                 continue
@@ -111,7 +177,7 @@ enum BlogAgent {
                        level: .warning, category: "Browse")
                 continue
             }
-            fetchedCount += 1
+            result.fetchedCount += 1
 
             let articleTitle = pageTitle(in: page.html) ?? articleURL.lastPathComponent
             let description = pageDescription(in: page.html) ?? ""
@@ -121,7 +187,7 @@ enum BlogAgent {
             let analysis = await analyzeArticle(in: page.html,
                                                 articleTitle: articleTitle,
                                                 settings: settings)
-            posts.append(FetchedBrowsePost(
+            result.posts.append(FetchedBrowsePost(
                 title: articleTitle,
                 url: articleURL.absoluteString,
                 summary: analysis.summary,
@@ -135,7 +201,7 @@ enum BlogAgent {
                 let title = videoIDs.count == 1
                     ? articleTitle
                     : "\(articleTitle) (\(index + 1) of \(videoIDs.count))"
-                items.append(FetchedBrowseItem(
+                result.items.append(FetchedBrowseItem(
                     title: title,
                     detail: description,
                     url: BrowseHTTP.watchURL(forVideoID: videoID),
@@ -149,12 +215,7 @@ enum BlogAgent {
                    level: .debug, category: "Browse")
         }
 
-        if fetchedCount == 0 && blockedCount > 0 {
-            throw BrowseFetchError.agentBlocked
-        }
-        appLog("Blog agent read \(fetchedCount) article(s): \(items.count) YouTube link(s), \(posts.count) summarized.",
-               category: "Browse")
-        return Result(blogTitle: blogTitle, items: items, posts: posts)
+        return result
     }
 
     // MARK: - Fetching + block detection

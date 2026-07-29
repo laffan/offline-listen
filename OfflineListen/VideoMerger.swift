@@ -43,7 +43,10 @@ enum VideoMerger {
         return try await merge(video: videoFile, audio: audioDest, category: category)
     }
 
-    private static func merge(video: URL, audio: URL, category: String) async throws -> URL {
+    /// Muxes a video file and an audio file into one MP4 (passthrough — no
+    /// re-encode). Also used by `HLSDownloader`, whose video variants often
+    /// carry no sound of their own and whose audio arrives as its own rendition.
+    static func merge(video: URL, audio: URL, category: String) async throws -> URL {
         appLog("Building merge composition…", level: .debug, category: category)
         let composition = AVMutableComposition()
         let videoAsset = AVURLAsset(url: video)

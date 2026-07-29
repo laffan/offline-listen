@@ -26,8 +26,10 @@
 		1B00000000000000000000C2 /* AudioStreamDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B1 /* AudioStreamDownloader.swift */; };
 		1B00000000000000000000C3 /* CompositeExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B2 /* CompositeExtractor.swift */; };
 		1B00000000000000000000C4 /* YouTubeKitExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B3 /* YouTubeKitExtractor.swift */; };
+		1B0000000000000000003A06 /* VimeoExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000003A06 /* VimeoExtractor.swift */; };
 		1B00000000000000000000C5 /* YouTubeKit in Frameworks */ = {isa = PBXBuildFile; productRef = 2300000000000000000000A3 /* YouTubeKit */; };
 		1B00000000000000000000C6 /* VideoAudioExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B4 /* VideoAudioExtractor.swift */; };
+		1B0000000000000000003A05 /* HLSDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000003A05 /* HLSDownloader.swift */; };
 		1B00000000000000000000C7 /* VideoMerger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B5 /* VideoMerger.swift */; };
 		1B00000000000000000000C8 /* FolderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B6 /* FolderView.swift */; };
 		1B00000000000000000000C9 /* ChapterFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B7 /* ChapterFetcher.swift */; };
@@ -35,6 +37,10 @@
 		1B00000000000000000000CA /* ChapterSplitter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B8 /* ChapterSplitter.swift */; };
 		1B00000000000000000000CB /* AISettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B9 /* AISettings.swift */; };
 		1B00000000000000000000CC /* AnthropicClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BA /* AnthropicClient.swift */; };
+		1B0000000000000000003A01 /* SpotifyRef.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000003A01 /* SpotifyRef.swift */; };
+		1B0000000000000000003A02 /* SpotifyClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000003A02 /* SpotifyClient.swift */; };
+		1B0000000000000000003A03 /* SpotifySettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000003A03 /* SpotifySettings.swift */; };
+		1B0000000000000000003A04 /* SpotifyResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000003A04 /* SpotifyResolver.swift */; };
 		1B00000000000000000000CD /* AIOrganizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BB /* AIOrganizer.swift */; };
 		1B00000000000000000000CE /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BC /* SettingsView.swift */; };
 		3B00000000000000000000A3 /* SharedInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A00000000000000000000A5 /* SharedInbox.swift */; };
@@ -108,7 +114,9 @@
 		1A00000000000000000000B1 /* AudioStreamDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioStreamDownloader.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B2 /* CompositeExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositeExtractor.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B3 /* YouTubeKitExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubeKitExtractor.swift; sourceTree = "<group>"; };
+		1A0000000000000000003A06 /* VimeoExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VimeoExtractor.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B4 /* VideoAudioExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoAudioExtractor.swift; sourceTree = "<group>"; };
+		1A0000000000000000003A05 /* HLSDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HLSDownloader.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B5 /* VideoMerger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoMerger.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B6 /* FolderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderView.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B7 /* ChapterFetcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChapterFetcher.swift; sourceTree = "<group>"; };
@@ -116,6 +124,10 @@
 		1A00000000000000000000B8 /* ChapterSplitter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChapterSplitter.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B9 /* AISettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISettings.swift; sourceTree = "<group>"; };
 		1A00000000000000000000BA /* AnthropicClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnthropicClient.swift; sourceTree = "<group>"; };
+		1A0000000000000000003A01 /* SpotifyRef.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifyRef.swift; sourceTree = "<group>"; };
+		1A0000000000000000003A02 /* SpotifyClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifyClient.swift; sourceTree = "<group>"; };
+		1A0000000000000000003A03 /* SpotifySettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifySettings.swift; sourceTree = "<group>"; };
+		1A0000000000000000003A04 /* SpotifyResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifyResolver.swift; sourceTree = "<group>"; };
 		1A00000000000000000000BB /* AIOrganizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIOrganizer.swift; sourceTree = "<group>"; };
 		1A00000000000000000000BC /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		1A00000000000000000000AC /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -230,13 +242,19 @@
 				1A00000000000000000000BC /* SettingsView.swift */,
 				1A00000000000000000000B9 /* AISettings.swift */,
 				1A00000000000000000000BA /* AnthropicClient.swift */,
+				1A0000000000000000003A01 /* SpotifyRef.swift */,
+				1A0000000000000000003A02 /* SpotifyClient.swift */,
+				1A0000000000000000003A03 /* SpotifySettings.swift */,
+				1A0000000000000000003A04 /* SpotifyResolver.swift */,
 				1A00000000000000000000BB /* AIOrganizer.swift */,
 				1A00000000000000000000AF /* Logger.swift */,
 				1A00000000000000000000B0 /* LogView.swift */,
 				1A00000000000000000000B1 /* AudioStreamDownloader.swift */,
 				1A00000000000000000000B2 /* CompositeExtractor.swift */,
 				1A00000000000000000000B3 /* YouTubeKitExtractor.swift */,
+				1A0000000000000000003A06 /* VimeoExtractor.swift */,
 				1A00000000000000000000B4 /* VideoAudioExtractor.swift */,
+				1A0000000000000000003A05 /* HLSDownloader.swift */,
 				1A00000000000000000000B5 /* VideoMerger.swift */,
 				3A00000000000000000000A5 /* SharedInbox.swift */,
 				5A0000000000000000000001 /* WatchManifest.swift */,
@@ -487,12 +505,18 @@
 				1B00000000000000000000C0 /* LogView.swift in Sources */,
 				1B00000000000000000000CB /* AISettings.swift in Sources */,
 				1B00000000000000000000CC /* AnthropicClient.swift in Sources */,
+				1B0000000000000000003A01 /* SpotifyRef.swift in Sources */,
+				1B0000000000000000003A02 /* SpotifyClient.swift in Sources */,
+				1B0000000000000000003A03 /* SpotifySettings.swift in Sources */,
+				1B0000000000000000003A04 /* SpotifyResolver.swift in Sources */,
 				1B00000000000000000000CD /* AIOrganizer.swift in Sources */,
 				1B00000000000000000000CE /* SettingsView.swift in Sources */,
 				1B00000000000000000000C2 /* AudioStreamDownloader.swift in Sources */,
 				1B00000000000000000000C3 /* CompositeExtractor.swift in Sources */,
 				1B00000000000000000000C4 /* YouTubeKitExtractor.swift in Sources */,
+				1B0000000000000000003A06 /* VimeoExtractor.swift in Sources */,
 				1B00000000000000000000C6 /* VideoAudioExtractor.swift in Sources */,
+				1B0000000000000000003A05 /* HLSDownloader.swift in Sources */,
 				1B00000000000000000000C7 /* VideoMerger.swift in Sources */,
 				3B00000000000000000000A3 /* SharedInbox.swift in Sources */,
 				6B0000000000000000000001 /* WatchManifest.swift in Sources */,

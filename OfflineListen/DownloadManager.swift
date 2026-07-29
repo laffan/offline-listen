@@ -8,13 +8,22 @@ final class DownloadJob: ObservableObject, Identifiable {
     let url: String
     let mode: DownloadMode
     /// When true this job doesn't download a file: it resolves a playlist URL
-    /// into a folder and enqueues one child job per entry.
+    /// (or a Spotify reference) into a folder and enqueues one child job per
+    /// entry.
     let isPlaylist: Bool
+    /// The Spotify reference this job resolves, when the queued token was a
+    /// Spotify link or URI. Set on live jobs only — a restored history row
+    /// re-parses its URL if it's restarted.
+    let spotifyRef: SpotifyRef?
     /// The folder a finished track should be filed into, or nil for the main
     /// library list. Set on the child jobs a playlist expands into.
     let folderID: UUID?
 
     @Published var title: String
+    /// A live sub-status shown in place of the state label while a long
+    /// resolution runs ("Resolving 42 of 137…"), so a big playlist doesn't
+    /// look hung. Nil for every other job.
+    @Published var progressNote: String?
     /// The artist, once known — snapshotted from the finished track so restored
     /// history still reads right if the track is later deleted. The live row
     /// prefers the library track's current artist while it exists.
@@ -24,13 +33,30 @@ final class DownloadJob: ObservableObject, Identifiable {
     /// The library track produced by this job, once finished (for tap-to-play).
     @Published var trackID: UUID?
 
-    init(url: String, mode: DownloadMode, isPlaylist: Bool = false, folderID: UUID? = nil) {
+    init(url: String, mode: DownloadMode, isPlaylist: Bool = false,
+         spotifyRef: SpotifyRef? = nil, folderID: UUID? = nil) {
         self.url = url
         self.mode = mode
         self.isPlaylist = isPlaylist
+        self.spotifyRef = spotifyRef
         self.folderID = folderID
-        self.title = isPlaylist ? "Playlist" : url
+        if let spotifyRef {
+            self.title = DownloadJob.spotifyPlaceholder(for: spotifyRef)
+        } else {
+            self.title = isPlaylist ? "Playlist" : url
+        }
         self.state = .queued
+    }
+
+    /// What the queue row reads while a Spotify reference is being resolved —
+    /// replaced by the track's or collection's real name as soon as the
+    /// metadata lands.
+    private static func spotifyPlaceholder(for ref: SpotifyRef) -> String {
+        switch ref {
+        case .direct(let kind, _): return "Spotify \(kind.rawValue)"
+        case .shortLink: return "Spotify link"
+        case .unsupported: return "Spotify link"
+        }
     }
 
     enum State: Equatable {
@@ -169,6 +195,9 @@ final class DownloadManager: ObservableObject {
     /// Optional AI organizer; when present and the user has opted in, finished
     /// downloads are classified/cleaned automatically.
     private let aiOrganizer: AIOrganizer?
+    /// The Spotify credentials, when configured. Only the Spotify branch reads
+    /// them; without it a pasted Spotify link fails pointing at Settings.
+    private let spotifySettings: SpotifySettingsStore?
 
     /// How many downloads may run at once. Every phase that touches the
     /// embedded Python interpreter is serialized app-wide through
@@ -199,11 +228,21 @@ final class DownloadManager: ObservableObject {
 
     init(library: LibraryStore,
          aiOrganizer: AIOrganizer? = nil,
+         spotifySettings: SpotifySettingsStore? = nil,
+         // Native extractors first, each claiming only the site it knows
+         // (`canHandle`), with yt-dlp behind them for everything else — and as
+         // the fallback when a native attempt fails. Vimeo leads because its
+         // player config is two plain requests, where the yt-dlp path for the
+         // same link means minutes inside the embedded interpreter.
          extractor: MediaExtractor = CompositeExtractor(
-            primary: YouTubeKitExtractor(), named: "YouTubeKit",
-            fallback: YoutubeDLExtractor(), named: "yt-dlp")) {
+            primary: VimeoExtractor(), named: "Vimeo",
+            fallback: CompositeExtractor(
+                primary: YouTubeKitExtractor(), named: "YouTubeKit",
+                fallback: YoutubeDLExtractor(), named: "yt-dlp"),
+            named: "YouTubeKit/yt-dlp")) {
         self.library = library
         self.aiOrganizer = aiOrganizer
+        self.spotifySettings = spotifySettings
         self.extractor = extractor
         loadHistory()
     }
@@ -280,16 +319,22 @@ final class DownloadManager: ObservableObject {
 
     /// Enqueues every downloadable link found in `text`, treating whitespace/
     /// newlines as separators (URLs contain no spaces). Anything that isn't an
-    /// http(s) URL is skipped, so pasting a blob of prose only queues the links.
-    /// We accept *any* site (not just YouTube) and let yt-dlp decide — it
-    /// supports Vimeo, SoundCloud and ~hundreds of others.
+    /// http(s) URL or a Spotify reference is skipped, so pasting a blob of
+    /// prose only queues the links. We accept *any* site (not just YouTube) and
+    /// let yt-dlp decide — it supports Vimeo, SoundCloud and ~hundreds of
+    /// others.
     func enqueueLinks(from text: String, mode: DownloadMode) {
         let tokens = text.split(whereSeparator: { $0.isWhitespace })
         var added = 0
         var skipped = 0
         for token in tokens {
             let link = String(token)
-            if Self.isQueueableURL(link) {
+            // Spotify first: an open.spotify.com link is also a well-formed
+            // http(s) URL, and yt-dlp can do nothing with one.
+            if let ref = SpotifyRef.parse(link) {
+                enqueueSpotify(ref: ref, urlString: link, mode: mode)
+                added += 1
+            } else if Self.isQueueableURL(link) {
                 if PlaylistURL.isPlaylistURL(link) {
                     enqueuePlaylist(urlString: link, mode: mode)
                 } else {
@@ -314,6 +359,17 @@ final class DownloadManager: ObservableObject {
     static func isQueueableURL(_ string: String) -> Bool {
         guard let url = URL(string: string), let scheme = url.scheme?.lowercased() else { return false }
         return (scheme == "http" || scheme == "https") && (url.host?.isEmpty == false)
+    }
+
+    /// Everything the Download field should treat as a *link* rather than a
+    /// search term: an http(s) URL, or a Spotify reference (`spotify:track:…`
+    /// isn't a URL at all, and `open.spotify.com/…` needs the Spotify branch).
+    ///
+    /// Deliberately separate from `isQueueableURL`, which stays the narrow
+    /// "real http(s) URL" test `enqueue` gates on — a `spotify:` URI reaching
+    /// `enqueue` would be rejected as invalid.
+    static func isDownloadableToken(_ string: String) -> Bool {
+        isQueueableURL(string) || SpotifyRef.parse(string) != nil
     }
 
     static func isYouTubeURL(_ string: String) -> Bool {
@@ -352,6 +408,21 @@ final class DownloadManager: ObservableObject {
         processNext()
     }
 
+    /// Adds a Spotify reference to the queue. The job resolves Spotify metadata
+    /// (plain HTTPS — never the Python gate) and matches each track to a
+    /// YouTube video; a single track then enqueues one ordinary download, while
+    /// an album/playlist/artist goes through the same selection popup and
+    /// folder flow a YouTube playlist does.
+    func enqueueSpotify(ref: SpotifyRef, urlString: String, mode: DownloadMode) {
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Collections get the playlist row treatment; a single track expands
+        // into exactly one download but is still a resolver job, not a file.
+        let job = DownloadJob(url: trimmed, mode: mode, isPlaylist: true, spotifyRef: ref)
+        jobs.insert(job, at: 0)
+        appLog("Queued Spotify reference: \(trimmed)", category: "Queue")
+        processNext()
+    }
+
     func clearFinished() {
         jobs.removeAll { $0.state.isFinishedOrStopped }
         persistHistory()
@@ -386,7 +457,11 @@ final class DownloadManager: ObservableObject {
         let folderID = job.folderID
         remove(job)
         appLog("Restarting: \(url)", category: "Queue")
-        if wasPlaylist {
+        // Re-read the reference from the URL rather than trusting the job's:
+        // a row restored from history carries no live `spotifyRef`.
+        if let ref = SpotifyRef.parse(url) {
+            enqueueSpotify(ref: ref, urlString: url, mode: mode)
+        } else if wasPlaylist {
             enqueuePlaylist(urlString: url, mode: mode)
         } else {
             enqueue(urlString: url, mode: mode, folderID: folderID)
@@ -517,6 +592,13 @@ final class DownloadManager: ObservableObject {
     }
 
     private func run(_ job: DownloadJob) async {
+        // A Spotify job's URL may be a `spotify:` URI, which isn't a URL we can
+        // hand to anything else — resolve it before the URL check below.
+        if let ref = job.spotifyRef {
+            await runSpotify(job, ref: ref)
+            return
+        }
+
         guard let url = URL(string: job.url) else {
             job.state = .failed(ExtractorError.invalidURL.localizedDescription)
             return
@@ -684,6 +766,95 @@ final class DownloadManager: ObservableObject {
         appLog("Playlist \"\(playlist.title)\" → queued \(chosen.count) of \(playlist.entries.count) download(s) into a folder.",
                level: .success, category: "Queue")
         persistHistory()
+    }
+
+    /// Expands a Spotify reference: metadata → a YouTube match per track → the
+    /// ordinary download path.
+    ///
+    /// Everything here is plain HTTPS. The Spotify path deliberately never
+    /// touches the embedded Python interpreter (no `PythonGate`, no yt-dlp, no
+    /// `PlaylistResolver`), so a pasted Spotify link works on a fresh install —
+    /// before the yt-dlp module has ever been fetched. Only the per-track
+    /// *downloads* it spawns go through the normal extractor.
+    ///
+    /// A single track enqueues one ordinary download and shows no popup; an
+    /// album, playlist or artist reuses the playlist machinery wholesale —
+    /// selection popup, `folder(named:fallback:)`, one child job per pick.
+    private func runSpotify(_ job: DownloadJob, ref: SpotifyRef) async {
+        job.state = .extracting
+        defer { job.progressNote = nil }
+
+        guard let client = spotifySettings?.client else {
+            job.state = .failed(SpotifyError.notConfigured.localizedDescription)
+            appLog("A Spotify link was pasted but no credentials are saved — add them in Settings ▸ Spotify.",
+                   level: .error, category: "Queue")
+            persistHistory()
+            return
+        }
+
+        do {
+            let (kind, id) = try await ref.resolved()
+            appLog("Resolving Spotify \(kind.rawValue) \(id)…", category: "Queue")
+
+            if kind == .track {
+                let track = try await client.track(id: id)
+                job.title = track.displayTitle
+                job.artist = track.primaryArtist.isEmpty ? nil : track.primaryArtist
+                try Task.checkCancellation()
+                guard let url = await SpotifyResolver.youTubeURL(for: track) else {
+                    throw SpotifyError.noMatches(track.displayTitle)
+                }
+                try Task.checkCancellation()
+                job.state = .finished
+                appLog("Spotify track \"\(track.displayTitle)\" → \(url)", level: .success, category: "Queue")
+                persistHistory()
+                enqueue(urlString: url, mode: job.mode)
+                return
+            }
+
+            let collection = try await client.collection(kind: kind, id: id)
+            job.title = collection.name
+            guard !collection.tracks.isEmpty else { throw SpotifyError.noMatches(collection.name) }
+            try Task.checkCancellation()
+
+            // Each track costs a YouTube search, so this is the slow part —
+            // the row counts them off rather than sitting on "Preparing…".
+            let playlist = await SpotifyResolver.resolve(collection) { done, total in
+                job.progressNote = "Resolving \(done) of \(total)…"
+            }
+            job.progressNote = nil
+            try Task.checkCancellation()
+            guard !playlist.entries.isEmpty else { throw SpotifyError.noMatches(collection.name) }
+
+            // From here it's the YouTube playlist flow, unchanged.
+            let chosen = await requestPlaylistSelection(playlist, mode: job.mode, jobID: job.id)
+            if pendingPlaylist?.jobID == job.id { pendingPlaylist = nil }
+
+            guard let chosen, !chosen.isEmpty else {
+                job.state = .cancelled
+                appLog("Spotify selection cancelled — nothing downloaded.", level: .warning, category: "Queue")
+                persistHistory()
+                return
+            }
+
+            let folder = folder(named: playlist.title, fallback: kind.rawValue.capitalized)
+            for entry in chosen {
+                enqueue(urlString: entry.url, mode: job.mode, folderID: folder.id)
+            }
+            job.state = .finished
+            appLog("Spotify \(kind.rawValue) \"\(playlist.title)\" → queued \(chosen.count) of \(playlist.entries.count) download(s) into a folder.",
+                   level: .success, category: "Queue")
+            persistHistory()
+        } catch {
+            if isCancellation(error) {
+                job.state = .cancelled
+                appLog("Cancelled Spotify resolution: \(job.url)", level: .warning, category: "Queue")
+            } else {
+                job.state = .failed(error.localizedDescription)
+                appLog("Spotify job failed: \(error.localizedDescription)", level: .error, category: "Queue")
+            }
+            persistHistory()
+        }
     }
 
     /// Publishes the resolved playlist for the UI to present as a selection popup

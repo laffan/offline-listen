@@ -138,6 +138,8 @@ extension View {
 enum LibraryRoute: Hashable {
     case inbox
     case watch
+    /// The **Recent** virtual folder: what you've played, most recent first.
+    case recent
     case folder(UUID)
     /// The optional "Synced" grouping row (Settings ▸ Local Sync): every
     /// folder mirroring a sync folder, collected in one place.
@@ -167,8 +169,24 @@ struct LibraryView: View {
     @State private var chapterContext: ChapterContext?
     @State private var splittingTrack: Track?
 
+    @State private var searchText = ""
+
     private var filteredTracks: [Track] {
         library.unfiledActiveTracks.filter { filter.matches($0) }
+    }
+
+    private var isSearching: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Search results honour the media-type filter, so a search inside
+    /// "Podcasts" stays inside podcasts.
+    private var trackResults: [Track] {
+        library.searchTracks(matching: searchText).filter { filter.matches($0) }
+    }
+
+    private var folderResults: [Folder] {
+        library.searchFolders(matching: searchText)
     }
 
     /// Wraps `path` to reject a consecutive-duplicate push synchronously, before
@@ -198,11 +216,16 @@ struct LibraryView: View {
                         description: "Downloaded tracks appear here, ready to play offline."
                     )
                     .frame(maxHeight: .infinity)
+                } else if isSearching {
+                    searchList
                 } else {
                     libraryList
                 }
             }
             .navigationTitle("Library")
+            .searchable(text: $searchText,
+                        placement: .navigationBarDrawer(displayMode: .automatic),
+                        prompt: "Search titles and artists")
             .toolbar { toolbarContent }
             .environment(\.editMode, $editMode)
             .sheet(item: $share) { payload in
@@ -217,6 +240,8 @@ struct LibraryView: View {
                     InboxView(onPlay: onPlay, share: $share)
                 case .watch:
                     WatchFolderView(onPlay: onPlay)
+                case .recent:
+                    RecentTracksView(onPlay: onPlay, share: $share)
                 case .folder(let id):
                     FolderDetailView(folderID: id, onPlay: onPlay, share: $share)
                 case .synced:
@@ -250,12 +275,45 @@ struct LibraryView: View {
         )
     }
 
+    /// Search replaces the whole list rather than filtering it in place: the
+    /// normal list shows only *unfiled* tracks, but the question search answers
+    /// ("where is that track?") is usually about one that's already in a folder.
+    private var searchList: some View {
+        List(selection: $selection) {
+            if !folderResults.isEmpty && !editMode.isEditing {
+                Section {
+                    ForEach(folderResults) { folder in
+                        folderRow(folder)
+                    }
+                } header: {
+                    Text("Folders")
+                }
+            }
+            Section {
+                ForEach(trackResults) { track in
+                    row(for: track, in: trackResults)
+                }
+                if trackResults.isEmpty {
+                    Text("No tracks match “\(searchText)”")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Tracks")
+            }
+        }
+        .listStyle(.plain)
+    }
+
     private var libraryList: some View {
         List(selection: $selection) {
             // Folders are hidden while selecting tracks for bulk actions.
             if !editMode.isEditing {
                 Section {
                     inboxRow
+                    // Recent sits between the two other virtual folders: what
+                    // you've played, as against what you haven't (Inbox).
+                    recentRow
                     // The Watch folder sits directly below the Inbox, always
                     // present like the Inbox. It's a virtual folder (its tracks
                     // live elsewhere) for managing what's pushed to the Apple Watch.
@@ -289,7 +347,7 @@ struct LibraryView: View {
 
             Section {
                 ForEach(filteredTracks) { track in
-                    row(for: track)
+                    row(for: track, in: filteredTracks)
                 }
                 if filteredTracks.isEmpty && !library.unfiledActiveTracks.isEmpty {
                     Text("Nothing in \(filter.displayName)")
@@ -410,6 +468,27 @@ struct LibraryView: View {
         }
     }
 
+    /// The Recent folder: a virtual folder listing what you've played, newest
+    /// first. Like the Inbox and Watch rows its tracks live wherever they
+    /// normally do — this is a log, not a location.
+    private var recentRow: some View {
+        NavigationLink(value: LibraryRoute.recent) {
+            HStack(spacing: 12) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24)
+                Text("Recent")
+                    .font(.body)
+                Spacer()
+                Text("\(library.recentListenEntries.count)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
     /// The Watch folder: a virtual folder pinned just under the Inbox, listing
     /// every track pushed to the Apple Watch (wherever it otherwise lives).
     private var watchRow: some View {
@@ -470,12 +549,14 @@ struct LibraryView: View {
 
     // MARK: - Track rows
 
+    /// One track row. `queue` is the list the row belongs to — what playback
+    /// continues through after it, and what the chapter sheet advances within.
     @ViewBuilder
-    private func row(for track: Track) -> some View {
+    private func row(for track: Track, in queue: [Track]) -> some View {
         let base = TrackRow(
             track: track,
             isCurrent: playback.currentTrack?.id == track.id,
-            onShowChapters: { chapterContext = ChapterContext(track: track, queue: filteredTracks) }
+            onShowChapters: { chapterContext = ChapterContext(track: track, queue: queue) }
         )
             .contentShape(Rectangle())
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
@@ -559,7 +640,7 @@ struct LibraryView: View {
             base
         } else {
             base.onTapGesture {
-                playback.play(track, in: filteredTracks)
+                playback.play(track, in: queue)
                 onPlay()
             }
         }
@@ -865,6 +946,9 @@ struct TrackRow: View {
     /// When set and the track has chapters, a tappable arrow appears after the
     /// title that opens the chapter list (instead of playing the track).
     var onShowChapters: (() -> Void)? = nil
+    /// Replaces the trailing duration with something list-specific — the
+    /// Recent folder shows when the track was played there instead.
+    var trailingDetail: String? = nil
 
     private var hasArtist: Bool {
         !track.artist.isEmpty && track.artist.lowercased() != "unknown"
@@ -935,7 +1019,11 @@ struct TrackRow: View {
 
             Spacer()
 
-            if !showsProgress, track.duration > 0 {
+            if let trailingDetail {
+                Text(trailingDetail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if !showsProgress, track.duration > 0 {
                 Text(track.duration.asPlaybackTime)
                     .font(.caption)
                     .foregroundStyle(.secondary)

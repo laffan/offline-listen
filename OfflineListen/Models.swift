@@ -22,6 +22,11 @@ enum AppPaths {
         documents.appendingPathComponent("downloads.json")
     }
 
+    /// The listening log behind the Library's **Recent** folder.
+    static var recentListens: URL {
+        documents.appendingPathComponent("recents.json")
+    }
+
     /// The user-chosen sync folders, resolved from their security-scoped
     /// bookmarks by `LocalSyncStore` at launch, keyed by each root's id.
     /// These are *replicas*: the app never plays from them — synced files are
@@ -418,6 +423,35 @@ struct Folder: Identifiable, Codable, Hashable {
         guard isMixtape else { return nil }
         return AppPaths.mixtapeCovers.appendingPathComponent("\(id.uuidString).jpg")
     }
+}
+
+/// One entry in the listening log behind the Library's **Recent** folder.
+///
+/// A *log*, not a set: the same track legitimately appears more than once
+/// (you played it on Tuesday and again on Friday), so each play is its own
+/// entry with its own identity. Only *consecutive* repeats are collapsed —
+/// restarting the track you're already on, or an autoplay loop, shouldn't fill
+/// the list with the same row.
+struct RecentListen: Identifiable, Codable, Hashable {
+    let id: UUID
+    let trackID: UUID
+    let date: Date
+
+    init(id: UUID = UUID(), trackID: UUID, date: Date = Date()) {
+        self.id = id
+        self.trackID = trackID
+        self.date = date
+    }
+}
+
+/// One row of the Recent list: a logged play resolved against the live library.
+/// Identified by the *entry*, not the track, so the same track listed twice is
+/// two distinct rows.
+struct RecentListenRow: Identifiable {
+    let entry: RecentListen
+    let track: Track
+
+    var id: UUID { entry.id }
 }
 
 /// A single downloaded track stored in the library.

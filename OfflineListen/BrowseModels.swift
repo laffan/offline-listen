@@ -8,12 +8,21 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
     case youtubePlaylist
     case rssFeed
     case blogAgent
+    /// **Legacy.** Artist Discography used to be its own kind; it's now the
+    /// `.discography` *mode* of an `.artist` source. The case survives only so
+    /// a `browse.json` written before the merge still decodes — `BrowseStore`
+    /// migrates any such source to `.artist` on load, and `addable` keeps it
+    /// out of the UI, so nothing creates one any more.
     case discography
     case artist
     case genre
     case country
 
     var id: String { rawValue }
+
+    /// The kinds offered in the "+" menu and used to section the source list —
+    /// every case except the legacy `.discography` shim.
+    static var addable: [BrowseSourceKind] { allCases.filter { $0 != .discography } }
 
     var displayName: String {
         switch self {
@@ -22,7 +31,7 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
         case .rssFeed: return "RSS Feed"
         case .blogAgent: return "Blog Agent"
         case .discography: return "Artist Discography"
-        case .artist: return "Artist Top 10"
+        case .artist: return "Artist"
         case .genre: return "Genre"
         case .country: return "Country"
         }
@@ -36,9 +45,21 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
         case .rssFeed: return "RSS Feeds"
         case .blogAgent: return "Blog Agents"
         case .discography: return "Artist Discographies"
-        case .artist: return "Artist Top 10s"
+        case .artist: return "Artists"
         case .genre: return "Genres"
         case .country: return "Countries"
+        }
+    }
+
+    /// Whether the source can be asked for **more** — an older page of what it
+    /// lists. The feed kinds cap out at what one page carries (a YouTube feed
+    /// at 15 entries, an RSS feed at its window, the Blog Agent at its
+    /// per-refresh article limit), so a "More" button pulls the next page.
+    /// The AI kinds already dig deeper on every refresh, so they don't need one.
+    var supportsMore: Bool {
+        switch self {
+        case .youtubeChannel, .rssFeed, .blogAgent: return true
+        case .youtubePlaylist, .discography, .artist, .genre, .country: return false
         }
     }
 
@@ -76,8 +97,9 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
     }
 
     /// Whether the source can be scoped to a decade (the AI music kinds:
-    /// early Dylan, 1980s synth-pop, 1970s Mali). A Discography spans the
-    /// artist's whole catalogue, so it isn't era-scoped.
+    /// early Dylan, 1980s synth-pop, 1970s Mali). An Artist source only offers
+    /// it in Top 10 mode — a Discography spans the artist's whole catalogue —
+    /// which is why the add sheet consults `ArtistSourceMode.supportsEra` too.
     var supportsEra: Bool {
         switch self {
         case .artist, .genre, .country: return true
@@ -110,10 +132,8 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
             return "Reads the feed and keeps only posts that contain YouTube links."
         case .blogAgent:
             return "For blogs without a feed: an AI agent reads recent articles and shows each as a summary, its YouTube links, and the artists it mentions (tap one to follow that artist)."
-        case .discography:
-            return "An AI agent lays out the artist's full discography as a nested list of albums, with a Highlights list of essential songs on top."
-        case .artist:
-            return "AI finds the artist's top 10 most popular tracks on YouTube."
+        case .discography, .artist:
+            return "AI follows one artist — their top tracks, or their whole discography."
         case .genre:
             return "AI suggests popular songs in the genre and finds them on YouTube."
         case .country:
@@ -125,6 +145,37 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
 /// The decades an AI music source (Artist/Genre/Country) can be scoped to.
 enum BrowseEra {
     static let decades = ["1950s", "1960s", "1970s", "1980s", "1990s", "2000s", "2010s", "2020s"]
+}
+
+/// What an **Artist** source follows. Picked in the add sheet — the two used to
+/// be separate source kinds ("Artist Top 10" and "Artist Discography"), which
+/// made the "+" menu read as two unrelated things rather than one artist with
+/// two depths.
+enum ArtistSourceMode: String, Codable, CaseIterable, Identifiable {
+    case topTracks
+    case discography
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .topTracks: return "Top 10"
+        case .discography: return "Discography"
+        }
+    }
+
+    var help: String {
+        switch self {
+        case .topTracks:
+            return "AI finds the artist's 10 most popular tracks on YouTube, digging deeper on each refresh."
+        case .discography:
+            return "An AI agent lays out the artist's full discography as a nested list of albums, with a Highlights list of essential songs on top."
+        }
+    }
+
+    /// Only Top 10 can be scoped to a decade — a discography spans the
+    /// artist's whole catalogue by definition.
+    var supportsEra: Bool { self == .topTracks }
 }
 
 /// One configured source inside the Browse tab (a channel, a feed, an artist…).
@@ -146,6 +197,16 @@ struct BrowseSource: Identifiable, Codable, Hashable {
     /// (one of `BrowseEra.decades`). Nil means any era — and nil for every
     /// kind that doesn't support one.
     var era: String?
+    /// What an `.artist` source follows (`ArtistSourceMode`). Nil — including
+    /// on every source written before the modes merged — reads as Top 10.
+    var artistMode: String?
+    /// Opaque per-kind cursor for the **More** button: a YouTube continuation
+    /// token, the next feed page's URL, or how many articles the Blog Agent has
+    /// already read. Nil before the first "More".
+    var moreCursor: String?
+    /// Set once a "More" pull came back with nothing further — the button then
+    /// reads "No more items" instead of pretending there's another page.
+    var moreExhausted: Bool?
 
     init(id: UUID = UUID(),
          kind: BrowseSourceKind,
@@ -154,7 +215,10 @@ struct BrowseSource: Identifiable, Codable, Hashable {
          dateAdded: Date = Date(),
          lastRefreshed: Date? = nil,
          resolvedChannelID: String? = nil,
-         era: String? = nil) {
+         era: String? = nil,
+         artistMode: String? = nil,
+         moreCursor: String? = nil,
+         moreExhausted: Bool? = nil) {
         self.id = id
         self.kind = kind
         self.name = name
@@ -163,7 +227,27 @@ struct BrowseSource: Identifiable, Codable, Hashable {
         self.lastRefreshed = lastRefreshed
         self.resolvedChannelID = resolvedChannelID
         self.era = era
+        self.artistMode = artistMode
+        self.moreCursor = moreCursor
+        self.moreExhausted = moreExhausted
     }
+
+    /// What this source follows when it's an Artist source. Anything else
+    /// reads as Top 10 and never consults it.
+    var artistSourceMode: ArtistSourceMode {
+        artistMode.flatMap(ArtistSourceMode.init(rawValue:)) ?? .topTracks
+    }
+
+    /// True when the source lays out a whole discography — either an Artist
+    /// source in Discography mode or a legacy `.discography` source that
+    /// hasn't been migrated yet. Drives the album-grouped list layout.
+    var isDiscography: Bool {
+        kind == .discography || (kind == .artist && artistSourceMode == .discography)
+    }
+
+    /// Whether the "More" button should be offered: the kind pages at all, and
+    /// a previous pull hasn't reported the end.
+    var canLoadMore: Bool { kind.supportsMore && moreExhausted != true }
 }
 
 /// What the user has done with a browse item. `discarded` items stay in the
@@ -196,6 +280,11 @@ struct BrowseItem: Identifiable, Codable, Hashable {
     /// without that structure — and for items saved before these fields existed.
     var postTitle: String?
     var postURL: String?
+    /// Set once the user has opened this item in the preview modal, so the row
+    /// can show a filled play icon — the same "you've already been here" cue
+    /// the Download action gets, without changing the item's status (previewing
+    /// is browsing, not a decision).
+    var previewed: Bool?
     /// A dedup discriminator for grouped sources where the *same* video may
     /// legitimately appear in more than one section — notably a Discography's
     /// Highlights track that is also a track on one of its albums. When set it
@@ -214,6 +303,7 @@ struct BrowseItem: Identifiable, Codable, Hashable {
          status: BrowseItemStatus = .new,
          postTitle: String? = nil,
          postURL: String? = nil,
+         previewed: Bool? = nil,
          groupKey: String? = nil) {
         self.id = id
         self.sourceID = sourceID
@@ -226,8 +316,12 @@ struct BrowseItem: Identifiable, Codable, Hashable {
         self.status = status
         self.postTitle = postTitle
         self.postURL = postURL
+        self.previewed = previewed
         self.groupKey = groupKey
     }
+
+    /// Whether this item has been auditioned in the preview modal.
+    var wasPreviewed: Bool { previewed == true }
 
     /// Identity across refreshes: the video id when known, else the URL —
     /// prefixed by `groupKey` when the source keeps per-section copies of a
@@ -260,6 +354,16 @@ struct FetchedBrowseItem {
 
     /// The identity the store merges by — matches `BrowseItem.dedupKey`.
     var dedupKey: String { BrowseItem.dedupKey(videoID: videoID, url: url, groupKey: groupKey) }
+}
+
+/// One page of *older* items from a source, fetched by the "More" button.
+/// `cursor` is what the next "More" should pass back (nil when the source has
+/// nothing further to give — the button then retires).
+struct BrowseMorePage {
+    var items: [FetchedBrowseItem] = []
+    /// Blog Agent articles, when the source has them.
+    var posts: [FetchedBrowsePost] = []
+    var cursor: String? = nil
 }
 
 /// A Blog Agent article: a short summary and the artists it names, shown around

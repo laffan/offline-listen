@@ -14,6 +14,8 @@ final class BrowseStore: ObservableObject {
     @Published private(set) var posts: [BrowsePost] = []
     /// Sources with a refresh in flight (spinners in the UI).
     @Published private(set) var refreshing: Set<UUID> = []
+    /// Sources with a "More" page in flight (the button shows a spinner).
+    @Published private(set) var loadingMore: Set<UUID> = []
     /// Most recent refresh error per source, cleared on the next success.
     @Published private(set) var lastError: [UUID: String] = [:]
 
@@ -63,7 +65,11 @@ final class BrowseStore: ObservableObject {
     // MARK: - Source management
 
     @discardableResult
-    func addSource(kind: BrowseSourceKind, name: String, input: String, era: String? = nil) -> BrowseSource {
+    func addSource(kind: BrowseSourceKind,
+                   name: String,
+                   input: String,
+                   era: String? = nil,
+                   artistMode: ArtistSourceMode? = nil) -> BrowseSource {
         let trimmedInput = input.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         // Feed sources may leave the name blank — it's filled from the feed's
@@ -71,10 +77,16 @@ final class BrowseStore: ObservableObject {
         // (with the era folded in for an era-scoped Country source).
         var fallbackName = trimmedInput.isEmpty ? kind.displayName : trimmedInput
         if let era { fallbackName += " (\(era))" }
+        // Two Artist sources for the same artist — a Top 10 and a Discography —
+        // would otherwise be two identically-named rows.
+        if kind == .artist, artistMode == .discography, trimmedName.isEmpty {
+            fallbackName += " (Discography)"
+        }
         let source = BrowseSource(kind: kind,
                                   name: trimmedName.isEmpty ? fallbackName : trimmedName,
                                   input: trimmedInput,
-                                  era: era)
+                                  era: era,
+                                  artistMode: artistMode?.rawValue)
         sources.append(source)
         save()
         appLog("Browse: added \(kind.displayName) source \"\(source.name)\"", category: "Browse")
@@ -130,6 +142,17 @@ final class BrowseStore: ObservableObject {
         setStatus(.discarded, for: item.id)
     }
 
+    /// Records that an item has been auditioned in the preview modal, so its
+    /// row can show a filled play icon. Deliberately *not* a status change —
+    /// previewing is browsing, not a decision, and the item stays actionable.
+    /// A no-op for the transient items the Download tab's search builds.
+    func markPreviewed(_ item: BrowseItem) {
+        guard let index = items.firstIndex(where: { $0.id == item.id }),
+              items[index].previewed != true else { return }
+        items[index].previewed = true
+        save()
+    }
+
     private func setStatus(_ status: BrowseItemStatus, for id: UUID) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].status = status
@@ -176,12 +199,16 @@ final class BrowseStore: ObservableObject {
             case .discography:
                 fetched = try await DiscographyAgent.fetch(source: source, settings: aiSettings).items
             case .artist, .genre, .country:
-                // Tell the model what it already suggested so refreshes dig
-                // deeper instead of repeating (discards included, on purpose).
-                let existingTitles = items.filter { $0.sourceID == source.id }.map(\.title)
-                fetched = try await AIDiscovery.fetch(source: source,
-                                                      settings: aiSettings,
-                                                      excludingTitles: existingTitles)
+                if source.isDiscography {
+                    fetched = try await DiscographyAgent.fetch(source: source, settings: aiSettings).items
+                } else {
+                    // Tell the model what it already suggested so refreshes dig
+                    // deeper instead of repeating (discards included, on purpose).
+                    let existingTitles = items.filter { $0.sourceID == source.id }.map(\.title)
+                    fetched = try await AIDiscovery.fetch(source: source,
+                                                          settings: aiSettings,
+                                                          excludingTitles: existingTitles)
+                }
             }
 
             let added = merge(fetched, into: source.id)
@@ -203,6 +230,67 @@ final class BrowseStore: ObservableObject {
             if isCancellation(error) { return }
             lastError[source.id] = error.localizedDescription
             appLog("Browse: refresh of \"\(source.name)\" failed: \(error.localizedDescription)",
+                   level: .error, category: "Browse")
+        }
+    }
+
+    // MARK: - More
+
+    /// Pulls the **next page** of a source's listing — older uploads from a
+    /// channel, the next page of a feed, the next batch of a blog's articles —
+    /// and merges it in like a refresh. A refresh always re-reads the *newest*
+    /// page, so without this the older half of a source is unreachable.
+    ///
+    /// The cursor each fetcher hands back is stored on the source, so the next
+    /// "More" resumes where this one stopped; a page that returns no cursor (or
+    /// nothing new) marks the source exhausted and retires the button.
+    func loadMore(_ source: BrowseSource) async {
+        guard !loadingMore.contains(source.id), !refreshing.contains(source.id) else { return }
+        loadingMore.insert(source.id)
+        defer { loadingMore.remove(source.id) }
+
+        appLog("Browse: loading more from \"\(source.name)\"…", category: "Browse")
+        do {
+            let page: BrowseMorePage
+            switch source.kind {
+            case .youtubeChannel:
+                page = try await YouTubeBrowseFeed.fetchMore(source: source, cursor: source.moreCursor)
+            case .rssFeed:
+                page = try await RSSBrowseFeed.fetchMore(source: source, cursor: source.moreCursor)
+            case .blogAgent:
+                let known = Set(posts.filter { $0.sourceID == source.id }.compactMap(\.url))
+                page = try await BlogAgent.fetchMore(source: source,
+                                                     settings: aiSettings,
+                                                     cursor: source.moreCursor,
+                                                     knownArticleURLs: known)
+            default:
+                return
+            }
+
+            if !page.posts.isEmpty { mergePosts(page.posts, into: source.id) }
+            let added = merge(page.items, into: source.id)
+
+            if let index = sources.firstIndex(where: { $0.id == source.id }) {
+                sources[index].moreCursor = page.cursor
+                // The cursor alone decides: a page of items we already knew
+                // still has a page after it (the first page of a channel's
+                // videos overlaps its feed by design), so only running out of
+                // cursor means there's no further back to go.
+                sources[index].moreExhausted = page.cursor == nil
+            }
+            lastError[source.id] = nil
+            save()
+            if added == 0 && page.posts.isEmpty {
+                appLog("Browse: \"\(source.name)\" has nothing older to show.",
+                       level: .warning, category: "Browse")
+            } else {
+                appLog("Browse: \"\(source.name)\" — \(added) older item(s) added.",
+                       level: .success, category: "Browse")
+            }
+        } catch {
+            if isCancellation(error) { return }
+            lastError[source.id] = error.localizedDescription
+            appLog("Browse: loading more from \"\(source.name)\" failed: \(error.localizedDescription)",
                    level: .error, category: "Browse")
         }
     }
@@ -287,9 +375,27 @@ final class BrowseStore: ObservableObject {
             sources = index.sources
             items = index.items
             posts = index.posts ?? []
+            migrateDiscographySources()
         } catch {
             print("[BrowseStore] failed to decode index: \(error)")
         }
+    }
+
+    /// Folds the retired `.discography` kind into `.artist` + the Discography
+    /// mode. Artist Top 10 and Artist Discography are one source type with two
+    /// depths now; this keeps sources created before that merge working (and
+    /// listed under "Artists") without touching their items or curation state.
+    private func migrateDiscographySources() {
+        var migrated = 0
+        for index in sources.indices where sources[index].kind == .discography {
+            sources[index].kind = .artist
+            sources[index].artistMode = ArtistSourceMode.discography.rawValue
+            migrated += 1
+        }
+        guard migrated > 0 else { return }
+        save()
+        appLog("Browse: migrated \(migrated) Artist Discography source(s) to the merged Artist type.",
+               category: "Browse")
     }
 
     private func save() {

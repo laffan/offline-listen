@@ -16,7 +16,8 @@ Five screens (tabs):
    http(s) link is queued and the rest of a pasted blob is skipped), choose
    **Audio** or **Video** (default Audio), watch the queue. Links from **any site
    yt-dlp supports** work — YouTube, Vimeo, SoundCloud and ~hundreds more — not
-   just YouTube. Swipe a row for **Cancel** (active/queued), **Restart**, or
+   just YouTube — plus **Spotify** links, which take a different route (see
+   **Spotify links** below). Swipe a row for **Cancel** (active/queued), **Restart**, or
    **Clear**; tap a finished row to play it. Each finished row shows the track's
    **title and artist** (kept in step with the Library, so an AI-cleaned name
    shows here too). The queue is a **running history** — it persists across
@@ -52,13 +53,43 @@ Five screens (tabs):
    **Watch Later** / **Liked** lists are treated as ordinary single-video links,
    not playlists. Resolving the entry list uses the on-device yt-dlp module, so —
    like chapter capture — it works only once that module has been fetched by a
-   prior download.
+   prior download. The same selection popup also serves **Spotify** albums,
+   playlists and artists.
+
+   **Spotify links.** Paste a Spotify **track**, **album**, **playlist** or
+   **artist** — the `open.spotify.com/…` link (localized `intl-xx` share links
+   and `?si=…` share tokens included), the `spotify:track:…` URI, or a
+   `spotify.link` short link — and the app reads its metadata from Spotify,
+   matches **each track to a YouTube video**, and sends the results through the
+   ordinary download pipeline. A single track queues one download, like pasting
+   one YouTube link; an album, playlist or artist gets the **same selection
+   popup** a YouTube playlist does and lands in a **folder named after the
+   album/playlist/artist** (re-pasting reuses that folder rather than making a
+   second one). The queue row counts the matching off — *Resolving 42 of 137…* —
+   since every track costs a YouTube search; one paste resolves at most **200**
+   tracks, and anything past that is dropped and logged.
+
+   Matching is ISRC-first: an ISRC names a specific *recording*, so a hit is
+   almost always the right master rather than a live take or a lyric-video
+   re-upload. Failing that it searches `"artist - title"` and rejects any result
+   whose length differs from Spotify's by more than 15 seconds. A track nothing
+   matches is skipped with a warning — the rest of the playlist still comes
+   through — and the **Log** records every resolution (which query matched, and
+   the video it chose), which is where to look if a wrong track lands.
+
+   This is **not** a Spotify player: nothing is downloaded *from* Spotify, which
+   only supplies the track list. It needs free developer credentials (Settings ▸
+   **Spotify**, below) and reads **public** metadata only,
+   so your saved songs and private playlists aren't visible to it. Podcast
+   episodes and audiobooks aren't supported, and a playlist's local files and
+   episodes are skipped (each noted in the Log). Unlike the YouTube playlist
+   path, none of this touches the on-device yt-dlp module, so Spotify links work
+   on a fresh install — only the downloads they spawn need the extractor.
 2. **Browse** — keeps tabs on and curates different audio **sources** (see
    [Browse: keeping tabs on audio sources](#browse-keeping-tabs-on-audio-sources)).
    Add YouTube channels/playlists, RSS feeds, a **Blog Agent** for blogs
-   without a feed, an **Artist Discography** agent that lays out an artist's
-   whole catalogue as a nested list of albums, or AI-curated **Artist Top 10**
-   / Genre / Country
+   without a feed, an **Artist** source (following either their **Top 10** or
+   their whole **Discography**), or AI-curated Genre / Country
    lists; each refresh surfaces YouTube links, shown as compact
    name-over-artist rows, and
    every item offers **Download** (sends it to the download queue) and
@@ -67,7 +98,13 @@ Five screens (tabs):
    batch of items and download them all in one tap. An
    **Audio/Video toggle** beneath the Browse title — the same one the Download
    tab has — sets which mode both buttons (and the bulk download) act in.
-3. **Library** — downloaded tracks; tap to play. A **filter** (All / Music /
+3. **Library** — downloaded tracks; tap to play. A **search** field sits under
+   the title: type anything and the list becomes results — matching **folders**
+   first, then every track whose **title or artist** matches, *including tracks
+   inside folders* (the normal list shows only unfiled ones, but "where did I
+   put that track" is the question search exists to answer). Matching ignores
+   case and accents, so "beyonce" finds "Beyoncé", and the media-type filter
+   still applies. A **filter** (All / Music /
    Podcasts / Video) sits directly beneath the **Tracks** header. Swipe **left**
    for Delete/Share/Archive (and bulk versions via **Select**); swipe **right**
    on an audio track to classify it **Song** or **Podcast**. Songs start from the
@@ -86,6 +123,16 @@ Five screens (tabs):
    curated playlist**, though, so it **plays straight through in list order**
    regardless of type — tap any track and the whole folder plays in sequence.
 
+   **Recent.** A virtual folder — the mirror image of the Inbox — listing what
+   you've **played**, most recent first, with each row showing when. A track
+   joins it the moment playback *starts*; it doesn't have to finish. It's a
+   **log, not a set**: the same track appears once per listen, so a track you
+   keep coming back to shows up repeatedly — only *consecutive* repeats are
+   collapsed, since restarting the track you're already on isn't a new listen.
+   Nothing lives there (the tracks stay wherever they are), so removing a row —
+   or **Clear** — only forgets the listen. The log keeps the last 200 plays in
+   `Documents/recents.json`.
+
    **Chapters.** Tracks that carry YouTube chapter markers show an **arrow**
    after the title, set off by a left border so it reads as a button distinct
    from the row: tapping the **title** plays the track normally, tapping the
@@ -98,7 +145,8 @@ Five screens (tabs):
    **Folders** organize the library, under a **Folders** header (mirroring the
    Tracks one): an **Inbox** pinned to the top collects every track you haven't
    listened to yet (starting playback — or a **Mark Played** swipe — clears it
-   from the Inbox), user folders sit below it, and the **Archive** is pinned to
+   from the Inbox), **Recent** and **Watch** sit beneath it, user folders below
+   those, and the **Archive** is pinned to
    the bottom. Create folders with the toolbar's folder button; move tracks in
    via touch-and-hold → **Move to Folder** (or the bulk Select menu). The Inbox
    is itself a move target — moving a track there returns it to unlistened.
@@ -144,7 +192,8 @@ Five screens (tabs):
    Control Center. For a chaptered track, small **dots** sit along the scrubber
    at each chapter's start and the **current chapter title** shows on its own
    line beneath the title/artist, updating as playback crosses a marker.
-5. **Settings** — AI configuration on top, a **Local Sync** section, a
+5. **Settings** — AI configuration on top, then **Spotify** credentials, a
+   **Local Sync** section, a
    **Blog Agent** section (posts per
    refresh / songs per post limits for the Browse tab's Blog Agent sources),
    and the **Log** as a section beneath them.
@@ -160,6 +209,15 @@ Five screens (tabs):
      checked against the API and, on success, stored in the device **Keychain**
      so it persists between sessions. Once a key is saved, an **AI assist with
      organization** toggle appears.
+   - **Spotify credentials.** A **client ID** and **client secret** from a free
+     app at [developer.spotify.com](https://developer.spotify.com), then
+     **Verify & Save** — checked against Spotify and, on success, stored in the
+     **Keychain**, exactly like the AI key. They're what makes pasted Spotify
+     links work. Authorization is the **Client Credentials** flow: the app signs
+     in as *itself*, not as you, so it reads **public** metadata only — no liked
+     songs, no private or collaborative playlists, no user library. A private
+     playlist's link fails with a message saying so rather than silently
+     returning nothing.
    - **Log** — a row that opens the timestamped, copyable stream of every
      pipeline step (queue, yt-dlp, conversion, AI) with light colour coding, for
      diagnosing downloads.
@@ -199,7 +257,9 @@ beneath the Browse title:
   after the source** (a "Brian Eno" Discography lands in a "Brian Eno"
   folder), so everything from one source stays together; those tracks, being
   unlistened, still surface in the **Inbox** until you play them.
-- **Preview** — opens a modal that downloads the audio — or, in Video mode,
+- **Preview** — its icon **fills in** once you've opened it, so a long list
+  shows at a glance what you've already auditioned (the button keeps working —
+  it's a breadcrumb, not a decision). It opens a modal that downloads the audio — or, in Video mode,
   the video, its picture spanning the full width of the pane — and plays it in
   its own
   **mini player** (scrubber, play/pause — separate from the main Player, which
@@ -226,6 +286,20 @@ beneath the Browse title:
   the modal without deciding deletes the temp file and leaves the item
   untouched.
 
+**More.** A **YouTube Channel**, **RSS Feed** or **Blog Agent** list ends with a
+**More** button that pulls the *next page* of what the source lists — a refresh
+only ever re-reads the newest page, so this is the only way further back. Each
+kind pages the way it can: a channel leaves the RSS feed behind (it carries only
+the latest 15 entries and doesn't paginate) and reads the channel's own videos
+page, then follows YouTube's continuation tokens the way the site does when you
+scroll; a feed follows its `rel="next"` link, or `?paged=N`; a Blog Agent
+re-triages the homepage and reads the articles it hasn't read yet. Older items
+merge in like any refresh — already-curated rows keep their state — and when a
+source has nothing further the button retires to "Nothing older to load".
+
+The **Audio/Video toggle** appears on a source's own screen too, not just the
+Browse root, so the mode can be changed where the Download/Preview buttons are.
+
 **Bulk download.** A **Select** button at the top of a source's list turns on
 multi-select (the same edit-mode selection the Library uses): the per-row
 Download/Preview buttons give way to selection circles, you tick as many items
@@ -233,35 +307,35 @@ as you like — across albums or posts in a grouped list — and a **Download (N
 button queues the whole set at once, in the current Audio/Video mode. Picks that
 were already sent or saved are skipped, and **Done** leaves select mode.
 
-Eight **source types**, in two families:
+Seven **source types**, in two families:
 
 | Type | How it works |
 |------|--------------|
 | **YouTube Channel** | Scrape/RSS: watches the channel's upload feed (`/feeds/videos.xml`). Accepts a channel URL, `@handle`, bare `UC…` id, or plain channel name — see [Resolving a channel](#resolving-a-channel). |
 | **YouTube Playlist** | Scrape/RSS: watches the playlist's feed. Accepts a playlist URL (anything with `list=`) or a bare playlist id. |
 | **RSS Feed** | RSS reader: parses any RSS/Atom feed and keeps **only the posts that contain YouTube links** (a music blog's roundups, a newsletter's song-of-the-day). A post with several links yields one item per video. |
-| **Blog Agent** | AI agent: RSS-reader behaviour for blogs **without a feed**. The agent fetches the homepage, asks the model which of the page's links are individual recent articles (telling posts apart from nav/category/about links is exactly the judgement call heuristics get wrong — and the model may only *pick from* the links found on the page, never invent one), then reads the most recent ones. Each article becomes a **post** — a section headed by its title + date, with three parts: a one-or-two-sentence **summary**, the **YouTube tracks** actually linked in the article (Download/Preview like any Browse item), and a list of the **artists it names**. Tapping an artist opens a popup to spin up a new **Artist Top 10** or **Artist Discography** source for that name on the spot — so a text-only write-up with no embedded videos still turns into something to follow. (This replaces the earlier "guess the songs and search YouTube for each" step, which resolved unreliably.) **Settings ▸ Blog Agent** caps how many **posts per refresh** are read and how many **songs per post** are taken (defaults 5 and 5), so a link-heavy blog can't flood the list. |
-| **Artist Discography** | AI agent (blog-agent style): given an **artist**, the model lays out their discography — a short **Highlights** list of essential songs, then the studio **albums** each with its year and tracklist. The list is **grouped by album** (a nested list of sections, newest album first) with the **Highlights** section pinned on top; the same signature song can appear both in Highlights and on its album. As everywhere in Browse, the model supplies only album/song **names** — every track is resolved to a real video via the search scraper, never a model-supplied link. Each track costs a YouTube search, so a refresh is **capped** (12 highlights, up to 20 albums × 16 tracks, 120 lookups total); anything past the ceiling is dropped and logged. |
-| **Artist Top 10** | AI: the model lists the artist's **top 10 most popular tracks**, ranked; each is resolved to a real video via the search scraper. |
+| **Blog Agent** | AI agent: RSS-reader behaviour for blogs **without a feed**. The agent fetches the homepage, asks the model which of the page's links are individual recent articles (telling posts apart from nav/category/about links is exactly the judgement call heuristics get wrong — and the model may only *pick from* the links found on the page, never invent one), then reads the most recent ones. Each article becomes a **post** — a section headed by its title + date, with three parts: a one-or-two-sentence **summary**, the **YouTube tracks** actually linked in the article (Download/Preview like any Browse item), and a list of the **artists it names**. Tapping an artist opens a popup to spin up a new **Artist** source — Top 10 or Discography — for that name on the spot — so a text-only write-up with no embedded videos still turns into something to follow. (This replaces the earlier "guess the songs and search YouTube for each" step, which resolved unreliably.) **Settings ▸ Blog Agent** caps how many **posts per refresh** are read and how many **songs per post** are taken (defaults 5 and 5), so a link-heavy blog can't flood the list. |
+| **Artist** | AI, in one of two **modes** picked when the source is added. **Top 10**: the model lists the artist's **top 10 most popular tracks**, ranked, digging deeper on each refresh. **Discography** (blog-agent style): the model lays out their whole catalogue — a short **Highlights** list of essential songs, then the studio **albums** each with its year and tracklist. The list is **grouped by album** (a nested list of sections, newest album first) with the **Highlights** section pinned on top; the same signature song can appear both in Highlights and on its album. As everywhere in Browse, the model supplies only album/song **names** — every track is resolved to a real video via the search scraper, never a model-supplied link. Each track costs a YouTube search, so a refresh is **capped** (12 highlights, up to 20 albums × 16 tracks, 120 lookups total); anything past the ceiling is dropped and logged. (These were two separate source types once; sources created back then keep working and appear as Artist sources in Discography mode.) |
 | **Genre** | AI: popular songs in a genre, across artists. |
 | **Country** | AI: popular songs from a country (by artists from that country). The country field has a **globe button** that opens a searchable modal of every country (built from the system's localized ISO region list) in case the right name isn't obvious. |
 
-All three AI music types can be scoped to an **era**: the add sheet offers an
+The AI music types can be scoped to an **era** (Artist only in Top 10 mode — a
+discography spans the whole catalogue by definition): the add sheet offers an
 **Era** picker (Any era, or a decade from 1950s–2020s), the chosen decade
 steers the suggestions — early Dylan, 1980s synth-pop, 1970s Mali — and a
 blank name auto-fills with the era folded in, e.g. "Mali (1970s)", so two
 eras of the same subject read apart in the source list.
 
 The AI types use the **Anthropic key from Settings** (they're unavailable until
-one is saved). For Artist Top 10 / Genre / Country (and Artist Discography) the model is asked for
+one is saved). For Artist / Genre / Country the model is asked for
 real, well-known songs — title and artist —
 and is deliberately **never trusted to produce YouTube links** (it hallucinates
 video ids); each suggestion is instead resolved to a real video by scraping the
-top result of a YouTube search. For Artist Top 10 / Genre / Country, on a refresh
-the model is told what it already suggested so it digs deeper instead of
-repeating itself (so refreshing an Artist Top 10 keeps surfacing the next-most-
-popular tracks); an Artist Discography refresh re-lays the catalogue and merges
-it in, so re-confirmed tracks stay put and only genuinely new ones are added.
+top result of a YouTube search. For Artist (Top 10) / Genre / Country, on a
+refresh the model is told what it already suggested so it digs deeper instead of
+repeating itself (so refreshing keeps surfacing the next-most-popular tracks); a
+Discography refresh re-lays the catalogue and merges it in, so re-confirmed
+tracks stay put and only genuinely new ones are added.
 
 **Agent blockers.** Sites behind bot protection refuse automated readers —
 a 403/429 for non-browser clients, or a Cloudflare-style challenge
@@ -394,6 +468,8 @@ in-app style edit.
 URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──►  Documents/  ──►  AVPlayer
          best audio-only or muxed mp4       (+ audio extract       local file       audio/video
                                              for audio mode)                         playback
+                                       └──►  HLS segments joined (fMP4)
+                                             when only a playlist is offered
 ```
 
 ### Source layout (`OfflineListen/`)
@@ -408,6 +484,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `PythonGate.swift` | App-wide async mutex serializing every embedded-Python call, so the two-slot pipeline never runs concurrent interpreter work. |
 | `YouTubeExtractor.swift` | `MediaExtractor` protocol + YoutubeDL-iOS impl + a mock. |
 | `YouTubeKitExtractor.swift` | Native-Swift (b5i/YouTubeKit) primary extractor. |
+| `VimeoExtractor.swift` | Native-Swift Vimeo extractor: finds the (signed) player config for the title, progressive MP4s and HLS playlist — no Python. |
 | `CompositeExtractor.swift` | Tries the native extractor, falls back to yt-dlp. |
 | `JSChallengeSolver.swift` | Solves YouTube's `n`/`sig` challenges by running the `yt-dlp-ejs` scripts in JavaScriptCore. |
 | `POTokenMinter.swift` | Mints PO tokens via BotGuard in a hidden WKWebView (needs vendored `botguard.js`). |
@@ -415,6 +492,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `ytdlp/` | Bundled (folder reference): the `yt-dlp-ejs` solver scripts + the `yt_dlp_plugins` provider package. |
 | `AudioStreamDownloader.swift` | Shared chunked byte-range stream downloader. |
 | `VideoAudioExtractor.swift` | Extracts audio from a muxed video via AVFoundation. |
+| `HLSDownloader.swift` | Saves an HLS (`.m3u8`) stream by fetching and joining its fMP4 segments — the fallback that makes Vimeo (progressive-free) work, with no FFmpeg. |
 | `ChapterFetcher.swift` | Best-effort capture of YouTube chapter markers via the on-device yt-dlp module. |
 | `PlaylistResolver.swift` | Detects playlist links and flat-resolves their entries (on-device yt-dlp) so a playlist downloads into a folder. |
 | `ChapterSplitter.swift` | Exports one file per chapter (AVFoundation) for "Break Chapters into Playlist". |
@@ -423,6 +501,10 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `Logger.swift` | `LogStore` — thread-safe, app-wide log sink. |
 | `AISettings.swift` | `AISettingsStore` (model/key/assist, Keychain-backed), `AIModel`, `Keychain` helper. |
 | `AnthropicClient.swift` | Minimal Anthropic Messages API client (verify + single-shot completion) over URLSession. |
+| `SpotifyRef.swift` | Parses `spotify:` URIs / `open.spotify.com` links into a (kind, id) pair; resolves `spotify.link` short links by redirect. |
+| `SpotifyClient.swift` | Spotify Web API client: Client Credentials token (cached, 401-refreshing) + the track/album/playlist/artist metadata reads, paginated. |
+| `SpotifySettings.swift` | `SpotifySettingsStore` — the Keychain-backed client id/secret (mirrors `AISettingsStore`). |
+| `SpotifyResolver.swift` | Spotify metadata → `ResolvedPlaylist`: ISRC-first YouTube matching with a duration gate, bounded and concurrent. |
 | `AIOrganizer.swift` | Builds the prompt, calls the API, writes music/podcast + clean metadata back to the library. |
 | `BrowseModels.swift` | `BrowseSourceKind`, `BrowseSource`, `BrowseItem` + status — the Browse tab's data model. |
 | `BrowseStore.swift` | Persists sources/items to `Documents/browse.json`; orchestrates refreshes and the new/downloaded/saved/discarded lifecycle. |
@@ -557,6 +639,9 @@ app, etc. into Offline Listen:
    app via the `offlinelisten://` URL scheme.
 3. On launch/foreground the app drains the shared URLs and auto-enqueues them as
    M4A downloads (see `SharedInbox` + `importShared()` in `OfflineListenApp`).
+   A shared *list* — a YouTube playlist, or an album/playlist shared from the
+   Spotify app — takes the same route a pasted one does: the selection popup and
+   its own folder.
 
 The extension does no downloading itself (extensions have a tight memory budget);
 it just hands the URL to the app.
@@ -679,15 +764,36 @@ whose controls call `next()` / `previous()` / `skipForward()` directly.
   every client still yields nothing decodable does the download fail with a clear
   `unplayableVideoCodec` message.
 
-## Extraction: native primary + yt-dlp fallback
+## Extraction: native primaries + yt-dlp fallback
 
 Extraction sits behind the `MediaExtractor` protocol, and `CompositeExtractor`
 tries a primary then a fallback (cancellation is never treated as a failure, so
 Cancel doesn't trigger the fallback). Each extractor advertises which URLs it can
 handle via `canHandle(_:)`, so the composite **skips** a primary that doesn't
-apply (the YouTube-only native extractor on a Vimeo/SoundCloud link) and goes
-straight to yt-dlp, instead of logging a guaranteed failure:
+apply (the YouTube-only native extractor on a SoundCloud link) and goes
+straight to the next one, instead of logging a guaranteed failure. They nest —
+Vimeo, then YouTubeKit, then yt-dlp — so each site takes the fastest route that
+knows it:
 
+0. **`VimeoExtractor` (primary, Vimeo only)** — Vimeo's web player runs off a
+   JSON **player config** listing the title, duration, any **progressive** MP4s
+   and the **HLS** master playlist. Plain HTTPS and `Codable` — no Python, no
+   interpreter gate, no 90-second window. Progressive files are downloaded
+   directly when Vimeo still offers them (for audio: the smallest rendition,
+   then AVFoundation extracts its audio track, since Vimeo publishes no
+   audio-only stream); otherwise the playlist goes to `HLSDownloader`.
+
+   Getting the config is the fiddly part, because **Vimeo signs the config
+   URL**: requesting `player.vimeo.com/video/{id}/config` directly returns
+   **403 even for a public video**. The signature lives on the `config_url`
+   printed into the player's own page, so the extractor reads pages first —
+   the player page (`player.vimeo.com/video/{id}`), which usually inlines the
+   whole config as `window.playerConfig`, then the watch page — and only falls
+   back to the unsigned endpoint, which still serves videos whose owner allows
+   unrestricted embedding. Unlisted links (`vimeo.com/{id}/{hash}`) carry their
+   hash through. Anything it can't read — an album, an embed shape it doesn't
+   know, a password-protected or embed-restricted video — throws, and the
+   composite falls through to yt-dlp as before.
 1. **`YouTubeKitExtractor` (primary, YouTube only)** — b5i/YouTubeKit resolves
    the audio-only stream URL natively in Swift (no Python, no engine download,
    fast). Pure `VideoInfosWithDownloadFormatsResponse.sendThrowingRequest` → best
@@ -770,19 +876,48 @@ YouTube's token checks shift mid-download:
   the forced-client loop itself, one client's download failure moves to the
   next client rather than sinking the whole recovery.
 
-### Any yt-dlp site (Vimeo, SoundCloud, …) — progressive only
+### Any yt-dlp site (Vimeo, SoundCloud, …)
 
 The yt-dlp path isn't YouTube-specific: it resolves whatever URL it's given, so
 Vimeo, SoundCloud and the rest of yt-dlp's catalogue work. Two constraints shape
 which formats we pick:
 
-- **Progressive only.** `AudioStreamDownloader` fetches a single file over byte
-  ranges; it can't assemble an **HLS** playlist or **segmented DASH**. So
-  `isProgressiveDownloadable` (and, on the Python path, yt-dlp's `protocol`
-  field) filters those out, keeping only single-URL streams — including
-  YouTube's DASH renditions, which *are* direct URLs. A link that offers
-  **only** HLS fails fast with the clear `hlsOnly` message rather than
-  downloading an unplayable playlist.
+- **Progressive first, HLS as a fallback.** `AudioStreamDownloader` fetches a
+  single file over byte ranges; it can't assemble an **HLS** playlist or
+  **segmented DASH**. So `isProgressiveDownloadable` (and, on the Python path,
+  yt-dlp's `protocol` field) picks single-URL streams first — including
+  YouTube's DASH renditions, which *are* direct URLs. When a site offers
+  **nothing but HLS**, the playlist goes to `HLSDownloader`, which reads the
+  playlist itself: it picks a variant (by resolution, restricted to
+  device-decodable codecs), fetches the `EXT-X-MAP` init segment and every media
+  segment, and appends them into one file. Modern HLS — Vimeo's included — is
+  **fMP4**, and those segments concatenated *are* a valid fragmented MP4 that
+  AVFoundation reads natively. No FFmpeg. Only if there's no readable HLS either
+  does the download fail with the `hlsOnly` message. Segmented DASH remains
+  unsupported, as do **MPEG-TS** segments (joining those doesn't produce
+  anything AVFoundation can open — it's detected and reported rather than saved)
+  and encrypted streams.
+
+  Audio mode takes the master's **audio-only rendition** when there is one — a
+  fraction of the bytes, and no extraction step. A video variant that carries no
+  sound of its own (it names an `AUDIO` group instead) has that rendition
+  fetched too and muxed back in by `VideoMerger`, exactly as the YouTube DASH
+  path already does. A **live** stream is the one inherent limit: it has no end,
+  so only VOD can be saved.
+
+  This is the second half of what makes **Vimeo** work (the first is
+  `VimeoExtractor`, which reaches the same playlist without Python at all).
+  Vimeo retired progressive files for most accounts, so an ordinary Vimeo link
+  offers HLS and nothing else, and the download used to fail before it started.
+
+  > The first cut of this handed the playlist to `AVAssetExportSession`
+  > instead. That was wrong twice over: a remote HLS `AVURLAsset` exposes **no
+  > `AVAssetTrack`s at all** (they only materialize through an `AVPlayerItem`),
+  > so the "does this carry video?" precheck rejected every stream it was given;
+  > and an HLS asset reports itself non-exportable anyway. Apple's supported
+  > offline-HLS route, `AVAssetDownloadTask`, produces a `.movpkg` bundle — not
+  > a file this app can move into the library, play by path, share, or send to
+  > the watch.
 - **Playable containers.** Audio is saved raw only when it's a container
   AVFoundation can decode (`m4a`/`mp3`/`aac`/`wav`/`aiff` — so SoundCloud's
   progressive **mp3** saves directly, while an opus/webm-only stream routes to
@@ -821,6 +956,18 @@ as possible rather than collapsing to one opaque line:
   bot", "missing a PO token", "Some formats may be missing", signature/nsig
   failures — appear in the log tagged `yt-dlp(<client>):`, instead of being
   swallowed.
+- **Non-YouTube failures get a diagnostic probe.** The default path goes through
+  YoutubeDL-iOS's structured `extractInfo`, which takes no options — so there's
+  nowhere to hang a `logger`, and on a non-YouTube link (whose failure the
+  YouTube-only forced-client sweep can't help with anyway) a timeout used to
+  read as 90 blank seconds. Now the sweep is skipped for those links, and a
+  **metadata-only probe** re-runs the extraction the one way that *can* be
+  logged — driving Python directly with a capture logger and
+  `download=False, process=False` — purely so yt-dlp says where it got stuck
+  (`yt-dlp(probe): [vimeo] …: Downloading webpage`). Its result is discarded;
+  the job still fails with the original error. A probe that *succeeds* says the
+  extraction works but overran its window — slow on device, not broken — and
+  says so.
 - **Plain-language hints.** `diagnosticHint(for:)` maps common signatures (bot
   check, PO token, private/members-only/age-restricted, unavailable, stale nsig
   engine, network) to a `Hint:` line suggesting the likely cause and next step.
@@ -901,7 +1048,17 @@ YouTube chapter markers are captured after a download as a best-effort step
 `Track`. It runs only when the on-device yt-dlp Python module is **already
 present**, so capturing chapters never triggers the tens-of-MB module download
 on its own; without PythonKit/the module, tracks simply carry no chapters and
-everything else is unchanged. Chapters persist in `library.json` (older
+everything else is unchanged.
+
+It also starts the embedded interpreter first if nothing else has this session
+(`PythonBridge.ensurePythonRunning()`), and skips itself entirely if it can't.
+That isn't defensive tidiness: a download served by the **native** Vimeo or
+YouTubeKit extractors never runs a yt-dlp extraction, so chapter capture becomes
+the first thing to touch Python — and touching it uninitialized doesn't throw,
+it kills the process (`ModuleNotFoundError: No module named 'encodings'`), which
+took the app down right after an otherwise perfect download. `PlaylistResolver`
+takes the same guard, since resolving a pasted playlist is often the first thing
+a launch does. Chapters persist in `library.json` (older
 libraries decode with an empty list).
 
 Chapters surface three ways: a jump-to list behind the library row's arrow, dots

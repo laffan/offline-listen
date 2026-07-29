@@ -342,6 +342,17 @@ final class YoutubeDLExtractor: MediaExtractor {
         return true
     }
 
+    /// Whether a format is an **HLS** playlist specifically (as opposed to
+    /// segmented DASH, which nothing here can read). These are the ones
+    /// `HLSDownloader` can still save via AVFoundation, so a site that offers
+    /// only HLS — Vimeo, since it retired progressive files — downloads instead
+    /// of failing with `hlsOnly`.
+    static func isHLSPlaylist(formatID: String, ext: String, url: String) -> Bool {
+        ext.lowercased() == "m3u8"
+            || url.lowercased().contains(".m3u8")
+            || formatID.lowercased().contains("hls")
+    }
+
     /// Returns whether the fresh module actually landed, so the automatic
     /// retry path only re-runs extraction (and only spends its once-per-session
     /// budget) when the refresh succeeded.
@@ -422,8 +433,15 @@ final class YoutubeDLExtractor: MediaExtractor {
             timer.setEventHandler { [weak self] in
                 _ = finish {
                     extraction.cancel()
+                    // Phrase the timeout for the site it happened on: the
+                    // "refresh the engine" advice is YouTube-specific, and
+                    // reading it after a Vimeo/SoundCloud timeout sends you
+                    // chasing the wrong thing.
+                    let advice = Self.isYouTubeURL(url)
+                        ? "YouTube may have changed — try the ⋯ menu → Refresh yt-dlp engine, or a different video."
+                        : "\(url.host ?? "The site") took too long to resolve on device. The log lines that follow are yt-dlp's own account of how far it got."
                     continuation.resume(throwing: ExtractorError.downloadFailed(
-                        "Timed out after \(Int(timeout))s extracting info. YouTube may have changed — try the ⋯ menu → Refresh yt-dlp engine, or a different video."))
+                        "Timed out after \(Int(timeout))s extracting info. \(advice)"))
                 }
                 timer.cancel()
 
@@ -553,6 +571,57 @@ final class YoutubeDLExtractor: MediaExtractor {
             Self.isProgressiveDownloadable(formatID: f.format_id, ext: f.ext, url: f.url)
         }
 
+        /// Last resort for a site that offers **only HLS** — Vimeo since it
+        /// retired progressive files, and most embedded players. The chunked
+        /// downloader can't fetch a playlist of segments, but AVFoundation can
+        /// read one natively, so the playlist goes to `HLSDownloader` instead
+        /// of the job failing with `hlsOnly`. Returns nil when there's no HLS
+        /// on offer either, leaving the caller to throw as before.
+        func hlsMedia() async throws -> ExtractedMedia? {
+            let playlists = formats.filter {
+                !progressive($0) && Self.isHLSPlaylist(formatID: $0.format_id, ext: $0.ext, url: $0.url)
+            }
+            guard !playlists.isEmpty else { return nil }
+
+            let pick: Format?
+            if mode == .video {
+                let withPicture = playlists.filter { !$0.isAudioOnly }
+                pick = quality.pick(from: withPicture, height: { $0.height ?? 0 }) ?? playlists.first
+            } else {
+                // A real audio rendition when the stream has one (Vimeo's HLS
+                // does); otherwise the smallest variant that carries sound —
+                // the AppleM4A preset keeps only its audio either way.
+                pick = playlists.filter { $0.isAudioOnly }
+                    .max(by: { ($0.abr ?? $0.tbr ?? 0) < ($1.abr ?? $1.tbr ?? 0) })
+                    ?? playlists.filter { !$0.isVideoOnly }.min(by: { ($0.height ?? .max) < ($1.height ?? .max) })
+                    ?? playlists.first
+            }
+            guard let format = pick, let playlist = URL(string: format.url) else { return nil }
+
+            appLog("No progressive stream on offer — saving the HLS playlist \(format.format_id) via AVFoundation.",
+                   level: .warning, category: category)
+            let ext = mode == .video ? "mp4" : "m4a"
+            let scratch = AppPaths.work.appendingPathComponent("\(UUID().uuidString).\(ext)")
+            onDownloadStart()
+            // A muxed or audio-extracted result is a new file, so take the one
+            // the downloader hands back rather than the one it was given.
+            let dest = try await HLSDownloader.download(playlist: playlist,
+                                                        headers: format.http_headers,
+                                                        mode: mode,
+                                                        quality: quality,
+                                                        to: scratch,
+                                                        category: category,
+                                                        onProgress: onProgress)
+            let verifiedDuration = try await MediaVerifier.verify(dest, isVideo: mode == .video, category: category)
+            appLog("HLS download finished: \(dest.lastPathComponent)", level: .success, category: category)
+            return ExtractedMedia(
+                fileURL: dest,
+                title: info.title.isEmpty ? url.absoluteString : info.title,
+                duration: info.duration ?? verifiedDuration,
+                isVideo: mode == .video
+            )
+        }
+
         // Best audio-only (m4a preferred), restricted to containers
         // AVFoundation can play directly — so an opus/webm-only stream isn't
         // saved raw but routes to the muxed + extraction fallback below. Used
@@ -584,7 +653,8 @@ final class YoutubeDLExtractor: MediaExtractor {
                 let hadAnyVideo = formats.contains { !$0.isAudioOnly && ($0.vcodec ?? "none") != "none" }
                 let hadProgressiveVideo = formats.contains { !$0.isAudioOnly && progressive($0) }
                 if hadAnyVideo && !hadProgressiveVideo {
-                    appLog("Only HLS/streaming video formats offered — none progressively downloadable.",
+                    if let media = try await hlsMedia() { return media }
+                    appLog("Only HLS/streaming video formats offered — none progressively downloadable, and none readable as HLS.",
                            level: .error, category: category)
                     throw ExtractorError.hlsOnly
                 }
@@ -627,11 +697,15 @@ final class YoutubeDLExtractor: MediaExtractor {
             // progressive muxed MP4 and extract its audio.
             let muxedMP4 = formats.filter { !$0.isAudioOnly && !$0.isVideoOnly && $0.ext == "mp4" && progressive($0) }
             guard let video = muxedMP4.min(by: { ($0.height ?? .max) < ($1.height ?? .max) }) else {
+                // Nothing progressive to extract audio from. An HLS playlist
+                // still saves via AVFoundation; only if there isn't one either
+                // is this a real dead end.
+                if let media = try await hlsMedia() { return media }
                 // If the site offered formats but none were progressive, the
                 // blocker is HLS, not a missing audio track — say which.
                 let hadProgressive = formats.contains { progressive($0) }
                 if !formats.isEmpty && !hadProgressive {
-                    appLog("Only HLS/streaming formats offered — none progressively downloadable.",
+                    appLog("Only HLS/streaming formats offered — none progressively downloadable, and none readable as HLS.",
                            level: .error, category: category)
                     throw ExtractorError.hlsOnly
                 }
@@ -863,6 +937,75 @@ final class YoutubeDLExtractor: MediaExtractor {
         appLog("Forced-client extract: no player client produced a usable \(mode == .video ? "video" : "audio") stream.",
                level: .error, category: category)
         return nil
+    }
+
+    /// Asks yt-dlp to describe an extraction it just failed at, and mirrors its
+    /// own log into ours.
+    ///
+    /// This exists because of a real blind spot: the default path goes through
+    /// YoutubeDL-iOS's structured `extractInfo`, which accepts no options — so
+    /// there's nowhere to hang a `logger`, and yt-dlp's running commentary
+    /// ("[vimeo] 953003096: Downloading webpage", "Unable to download JSON
+    /// metadata", a redirect loop, a 403) never reaches the Log. A 90-second
+    /// timeout then reads as 90 blank seconds with no indication of which step
+    /// was slow.
+    ///
+    /// The probe re-runs the extraction the one way that *can* be logged —
+    /// driving Python directly with a capture logger — and metadata-only
+    /// (`download=False, process=False`), so it skips format processing and
+    /// costs a fraction of the real attempt. Its result is discarded: the
+    /// caller still throws the original error. Purely diagnostic, and entirely
+    /// best-effort — it never turns a failed download into a different failure.
+    private func logExtractionDiagnostics(url: URL, category: String) async {
+        // Never start new interpreter work while the timed-out extraction is
+        // still executing in it — the concurrent-Python fault that crashes the
+        // app doesn't care that this call is only for diagnostics.
+        guard await waitForOrphanedExtraction(category: category, cap: 30) else {
+            appLog("Skipping the diagnostic probe — the timed-out extraction is still running in the interpreter.",
+                   level: .warning, category: category)
+            return
+        }
+        appLog("Probing \(url.host ?? "the site") for yt-dlp's own diagnosis (metadata only)…",
+               category: category)
+        do {
+            try await withTimeout("Diagnostic probe", category: category, seconds: 60) {
+                try await PythonGate.shared.run { [self] in
+                    let logger = makeCaptureLogger()
+                    do {
+                        let ytdlpModule = Python.import("yt_dlp")
+                        let options: PythonObject = [
+                            "quiet": true,
+                            "noplaylist": true,
+                            "nocheckcertificate": true,
+                            "logger": logger ?? Python.None,
+                        ]
+                        let ytdlp = ytdlpModule.YoutubeDL(options)
+                        appLog("Running metadata-only extract_info…", level: .debug, category: category)
+                        let info = try ytdlp.extract_info.throwing.dynamicallyCall(withKeywordArguments: [
+                            "": url.absoluteString, "download": false, "process": false,
+                        ])
+                        if let logger { drainCaptureLogger(logger, client: "probe", category: category) }
+                        // A probe that succeeds where the real attempt timed out
+                        // says the extraction works but is *slow* on device —
+                        // a different problem from one that can't resolve at all.
+                        let title = String(info.get("title")) ?? ""
+                        appLog("Probe resolved metadata\(title.isEmpty ? "" : " for \"\(title)\"") — the extraction works but overran its window. The site is slow on device rather than broken.",
+                               level: .warning, category: category)
+                    } catch {
+                        if let logger { drainCaptureLogger(logger, client: "probe", category: category) }
+                        throw error
+                    }
+                }
+            }
+        } catch {
+            if isCancellation(error) { return }
+            appLog("Probe failed too: \(error.localizedDescription)", level: .error, category: category)
+            let detail = String(describing: error)
+            appLog("Probe detail: \(detail)", level: .debug, category: category)
+            if let hint = Self.diagnosticHint(for: "\(error.localizedDescription) \(detail)") {
+                appLog("Hint: \(hint)", level: .warning, category: category)
+            }
+        }
     }
 
     /// Runs one forced-client `extract_info` and returns the resolved info
@@ -1279,6 +1422,7 @@ final class YoutubeDLExtractor: MediaExtractor {
                 (formats, info) = try await resolveInfo(youtubeDL, url: url, category: category, timeout: infoTimeout)
                 // extract_info ran, so Python is bootstrapped for the session.
                 Self.pythonBootstrapped = true
+                PythonBridge.markPythonRunning()
             } catch {
                 // The default extraction stalled (the on-device web client needs
                 // nsig descrambling via the slow pure-Python JS interpreter, which
@@ -1291,8 +1435,24 @@ final class YoutubeDLExtractor: MediaExtractor {
                 // extract_info ran (even though it threw/timed out), so Python is
                 // bootstrapped — a later job can safely wire the JS runtime.
                 Self.pythonBootstrapped = true
+                PythonBridge.markPythonRunning()
                 if isCancellation(error) { throw error }
                 #if canImport(PythonKit)
+                // The forced-client sweep only means anything for YouTube:
+                // `extractor_args: {"youtube": …}` is ignored by every other
+                // extractor, so on a Vimeo/SoundCloud link it re-runs the exact
+                // extraction that just failed, one client name at a time, for
+                // several more minutes. Non-YouTube failures instead get a
+                // metadata-only probe whose *only* job is to make yt-dlp say
+                // where it got stuck — the structured `extractInfo` API above
+                // takes no `logger`, so its own diagnostics are otherwise
+                // swallowed and the failure reads as 90 blank seconds.
+                guard Self.isYouTubeURL(url) else {
+                    appLog("Default extraction failed (\(error.localizedDescription)). Forced player clients are a YouTube-only recovery, so they're skipped here — probing for yt-dlp's own diagnosis instead…",
+                           level: .warning, category: category)
+                    await logExtractionDiagnostics(url: url, category: category)
+                    throw error
+                }
                 appLog("Default extraction failed (\(error.localizedDescription)) — retrying with forced fast player clients…",
                        level: .warning, category: category)
                 // The forced clients drive Python directly. Running a second

@@ -42,6 +42,64 @@ enum PythonBridge {
     /// Whether we've started the embedded Python interpreter ourselves.
     private(set) static var didBootstrapPython = false
 
+    /// Whether the embedded interpreter is actually **running** in this
+    /// process — started either by our own bootstrap or by a yt-dlp extraction.
+    private(set) static var isPythonRunning = false
+
+    /// Called by the yt-dlp extractor once its `extractInfo` has run, since
+    /// that's the other thing that starts the interpreter.
+    static func markPythonRunning() { isPythonRunning = true }
+
+    /// Makes sure the interpreter is running before anything touches PythonKit,
+    /// and reports whether it now is.
+    ///
+    /// This exists because of a crash with a very misleading signature.
+    /// Instantiating `YoutubeDL()` does **not** start Python —
+    /// `PythonSupport.initialize()` does, and YoutubeDL-iOS only calls it inside
+    /// its own extraction. So any path that reaches Python without a prior
+    /// yt-dlp extraction *in the same process* — chapter capture after a
+    /// download the native Vimeo/YouTubeKit extractors served, or a playlist
+    /// resolve as the first action after launch — met an uninitialized
+    /// interpreter. CPython answers a failed `init_fs_encoding` by killing the
+    /// process (`ModuleNotFoundError: No module named 'encodings'`), so it
+    /// arrives as a hard crash with no Swift error to catch and nothing in the
+    /// app's own log.
+    ///
+    /// Returns **false** when Python isn't running and can't be started;
+    /// callers must then skip their Python work entirely rather than chance it.
+    /// Callers are responsible for holding the `PythonGate` and for checking the
+    /// yt-dlp module is on disk.
+    @discardableResult
+    static func ensurePythonRunning() -> Bool {
+        if isPythonRunning { return true }
+        #if canImport(PythonKit) && canImport(YoutubeDL) && canImport(PythonSupport)
+        let category = "yt-dlp"
+        appLog("Starting the embedded Python interpreter (nothing has yet this session)…",
+               level: .debug, category: category)
+        PythonSupport.initialize()
+        didBootstrapPython = true
+        isPythonRunning = true
+        do {
+            // Same sequence the wrapper's first extraction performs: the fake
+            // Popen shim before anything can spawn, then the module path.
+            let sys = try Python.attemptImport("sys")
+            let modulePath = YoutubeDL.pythonModuleURL.path
+            let paths = (Array(sys.path) ?? []).compactMap { String($0) }
+            if !paths.contains(modulePath) {
+                installFakePopen()
+                sys.path.insert(1, PythonObject(modulePath))
+            }
+            appLog("Embedded Python interpreter started.", level: .debug, category: category)
+        } catch {
+            appLog("Started Python but couldn't prepare its module path: \(error.localizedDescription)",
+                   level: .warning, category: category)
+        }
+        return true
+        #else
+        return false
+        #endif
+    }
+
     /// Starts the embedded Python interpreter **without** running an extraction,
     /// then registers the providers — so the very first web extraction can solve
     /// nsig on device instead of grinding the pure-Python path (which hangs on
@@ -73,6 +131,7 @@ enum PythonBridge {
                 PythonSupport.initialize()
                 didBootstrapPython = true
             }
+            isPythonRunning = true
             appLog("Early bootstrap: import sys…", level: .debug, category: category)
             let sys = try Python.attemptImport("sys")
             let modulePath = YoutubeDL.pythonModuleURL.path

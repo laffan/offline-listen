@@ -81,7 +81,16 @@ enum PlaylistResolver {
             // the entry parse — runs under the app-wide gate so it can't
             // overlap another pipeline slot's interpreter work.
             let resolved: (title: String, entries: [PlaylistEntry])? = try await PythonGate.shared.run {
-                // Instantiating YoutubeDL configures PythonKit's module search path so
+                // Start the interpreter if nothing has yet this session —
+                // resolving a playlist is very often the *first* thing a launch
+                // does, and touching Python uninitialized kills the process
+                // outright rather than throwing (mirrors ChapterFetcher).
+                guard PythonBridge.ensurePythonRunning() else {
+                    appLog("Embedded Python isn't running and can't be started — can't resolve the playlist.",
+                           level: .warning, category: category)
+                    return nil
+                }
+                // Instantiating YoutubeDL configures the wrapper's own state so
                 // `import yt_dlp` resolves (mirrors ChapterFetcher).
                 _ = YoutubeDL()
                 let ytdlpModule = Python.import("yt_dlp")
