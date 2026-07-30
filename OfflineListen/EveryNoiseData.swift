@@ -57,6 +57,48 @@ private struct ENShard: Codable {
     let artists: [ENArtist]
 }
 
+/// What a history row points back to.
+enum ENVisitKind: String, Codable {
+    case genre
+    case artist
+}
+
+/// One "you opened this" record — a tapped genre, or a tapped artist (kept
+/// with the genre it was tapped in, so the row can lead back there). Like the
+/// Library's Recent, history is a **log, not a set**: revisits re-append,
+/// with only consecutive repeats collapsed.
+struct ENHistoryEntry: Codable, Identifiable, Hashable {
+    let id: UUID
+    let kind: ENVisitKind
+    /// The genre's key — for an artist, the genre they were tapped inside.
+    let genreKey: String
+    /// The artist's id within that genre's shard; nil for a genre visit.
+    let artistID: String?
+    let name: String
+    let color: String
+    /// For an artist row: the containing genre's display name.
+    let detail: String?
+    var date: Date
+
+    init(kind: ENVisitKind, genreKey: String, artistID: String? = nil,
+         name: String, color: String, detail: String? = nil, date: Date = Date()) {
+        self.id = UUID()
+        self.kind = kind
+        self.genreKey = genreKey
+        self.artistID = artistID
+        self.name = name
+        self.color = color
+        self.detail = detail
+        self.date = date
+    }
+}
+
+extension AppPaths {
+    static var everyNoiseHistory: URL {
+        documents.appendingPathComponent("everynoise-history.json")
+    }
+}
+
 // MARK: - Store
 
 /// Loads the bundled dataset lazily and caches decoded shards (LRU).
@@ -75,6 +117,12 @@ final class EveryNoiseStore: ObservableObject {
     @Published private(set) var state: State = .idle
     /// The full genre index in the site's map order — also the scan order.
     @Published private(set) var genres: [ENGenre] = []
+    /// The visit log behind the History mode, newest first. Persisted to
+    /// `Documents/everynoise-history.json`, capped like the Library's Recent.
+    @Published private(set) var history: [ENHistoryEntry] = []
+
+    private var historyLoaded = false
+    private static let maxHistory = 200
 
     /// Decoded shards, newest-used last (a tiny LRU: each shard is a few
     /// hundred KB decoded, and a dozen covers any realistic backtracking).
@@ -87,6 +135,7 @@ final class EveryNoiseStore: ObservableObject {
     func loadIfNeeded() {
         guard state == .idle else { return }
         state = .loading
+        loadHistoryIfNeeded()
         Task.detached(priority: .userInitiated) {
             let loaded: [ENGenre]
             if let url = Bundle.main.url(forResource: "genres", withExtension: "json",
@@ -133,6 +182,57 @@ final class EveryNoiseStore: ObservableObject {
             shardCache.removeFirst(shardCache.count - shardCacheLimit)
         }
         return artists
+    }
+
+    // MARK: History
+
+    func recordVisit(genre: ENGenre) {
+        record(ENHistoryEntry(kind: .genre, genreKey: genre.key,
+                              name: genre.name, color: genre.color))
+    }
+
+    func recordVisit(artist: ENArtist, in genre: ENGenre) {
+        record(ENHistoryEntry(kind: .artist, genreKey: genre.key, artistID: artist.id,
+                              name: artist.name, color: artist.color, detail: genre.name))
+    }
+
+    func removeHistory(_ entry: ENHistoryEntry) {
+        history.removeAll { $0.id == entry.id }
+        saveHistory()
+    }
+
+    func clearHistory() {
+        history.removeAll()
+        saveHistory()
+    }
+
+    /// Appends a visit, collapsing a consecutive repeat (re-tapping what's
+    /// already on top updates its time instead of stuttering the log).
+    private func record(_ entry: ENHistoryEntry) {
+        loadHistoryIfNeeded()
+        if let top = history.first, top.kind == entry.kind,
+           top.genreKey == entry.genreKey, top.artistID == entry.artistID {
+            history[0].date = entry.date
+        } else {
+            history.insert(entry, at: 0)
+            if history.count > Self.maxHistory {
+                history.removeLast(history.count - Self.maxHistory)
+            }
+        }
+        saveHistory()
+    }
+
+    private func loadHistoryIfNeeded() {
+        guard !historyLoaded else { return }
+        historyLoaded = true
+        guard let data = try? Data(contentsOf: AppPaths.everyNoiseHistory),
+              let decoded = try? JSONDecoder().decode([ENHistoryEntry].self, from: data) else { return }
+        history = decoded
+    }
+
+    private func saveHistory() {
+        guard let data = try? JSONEncoder().encode(history) else { return }
+        try? data.write(to: AppPaths.everyNoiseHistory, options: .atomic)
     }
 }
 

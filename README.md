@@ -400,6 +400,15 @@ a **Find** field — at both levels:
   genre level, and skips entries with no preview.
 - **Find** filters: in list mode it narrows the list; over a map it drops down
   the matches and tapping one flies the map there.
+- **History** (root level, an addition of ours) is the visit log, newest
+  first: every genre you've opened (guitars icon) and every artist you've
+  tapped (mic icon, with their genre beneath), each in its map color with a
+  relative timestamp. Tapping a genre re-opens its artists; tapping an artist
+  re-opens their genre with that artist selected, centered, and previewing.
+  Like the Library's Recent it's a log, not a set — revisits re-append, only
+  consecutive repeats collapse — capped at 200, filtered by Find, rows swipe
+  to delete, with a Clear History button at the bottom
+  (`Documents/everynoise-history.json`).
 
 Tapping an **artist** plays a **30-second preview of their top song** (the
 snippet URL is embedded in the scraped data — no Spotify account or API key is

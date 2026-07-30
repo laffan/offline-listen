@@ -20,6 +20,9 @@ struct EveryNoiseView: View {
     /// The genre being opened (map taps, list rows) — pushed onto Browse's
     /// own navigation stack, so the tab bar stays put throughout.
     @State private var pushedGenre: ENGenre?
+    /// Set alongside `pushedGenre` when a History artist row is opened: the
+    /// genre view selects (and centers on) this artist once its shard loads.
+    @State private var pushedArtistID: String?
     /// Where scan left off, so reopening resumes mid-map.
     @AppStorage("everyNoiseScanIndex") private var scanIndex = 0
     @State private var centerRequest: NoiseMapCenter?
@@ -42,7 +45,7 @@ struct EveryNoiseView: View {
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(isPresented: genreIsPushed) {
             if let pushedGenre {
-                ENGenreView(genre: pushedGenre)
+                ENGenreView(genre: pushedGenre, initialArtistID: pushedArtistID)
             }
         }
         .environmentObject(store)
@@ -53,7 +56,29 @@ struct EveryNoiseView: View {
 
     private var genreIsPushed: Binding<Bool> {
         Binding(get: { pushedGenre != nil },
-                set: { if !$0 { pushedGenre = nil } })
+                set: { if !$0 {
+                    pushedGenre = nil
+                    pushedArtistID = nil
+                } })
+    }
+
+    /// Opens a genre's artists, logging the visit in History.
+    private func push(_ genre: ENGenre) {
+        pushedArtistID = nil
+        pushedGenre = genre
+        store.recordVisit(genre: genre)
+    }
+
+    /// A History row: a genre re-opens directly; an artist re-opens their
+    /// genre with that artist selected (their own tap re-logs the visit).
+    private func open(_ entry: ENHistoryEntry) {
+        guard let genre = store.genres.first(where: { $0.key == entry.genreKey }) else { return }
+        if entry.kind == .genre {
+            push(genre)
+        } else {
+            pushedArtistID = entry.artistID
+            pushedGenre = genre
+        }
     }
 
     private var missingData: some View {
@@ -74,10 +99,14 @@ struct EveryNoiseView: View {
                 case .list:
                     ENGenreListView(genres: store.genres, query: query,
                                     sort: listSort, anchorKey: $listAnchor) { genre in
-                        pushedGenre = genre
+                        push(genre)
+                    }
+                case .history:
+                    ENHistoryView(query: query) { entry in
+                        open(entry)
                     }
                 }
-                if mode != .list, !query.isEmpty {
+                if mode == .map || mode == .scan, !query.isEmpty {
                     ENFindResults(entries: matches) { entry in
                         jump(to: entry)
                     }
@@ -115,7 +144,7 @@ struct EveryNoiseView: View {
                 // Scanning: a tap retunes the scan there instead of leaving.
                 if let i = store.genres.firstIndex(of: genre) { scanIndex = i }
             } else {
-                pushedGenre = genre
+                push(genre)
             }
         }
         .ignoresSafeArea(edges: .bottom)
@@ -149,13 +178,14 @@ struct EveryNoiseView: View {
 // MARK: - Modes, find bar, list
 
 enum ENBrowseMode: String, CaseIterable, Identifiable {
-    case map, list, scan
+    case map, list, scan, history
     var id: String { rawValue }
     var displayName: String {
         switch self {
         case .map: return "Map"
         case .list: return "List"
         case .scan: return "Scan"
+        case .history: return "History"
         }
     }
 }
@@ -182,11 +212,13 @@ struct ENModeBar: View {
     @Binding var query: String
     /// The list sort, shown only in list mode (map/scan don't sort).
     var sort: Binding<ENListSort>? = nil
+    /// Which modes this level offers (History exists at the root only).
+    var modes: [ENBrowseMode] = ENBrowseMode.allCases
 
     var body: some View {
         VStack(spacing: 8) {
             Picker("Mode", selection: $mode) {
-                ForEach(ENBrowseMode.allCases) { m in
+                ForEach(modes) { m in
                     Text(m.displayName).tag(m)
                 }
             }
@@ -377,6 +409,83 @@ struct ENGenreListView: View {
     }
 }
 
+/// History mode: the visit log, newest first — every genre you've opened and
+/// every artist you've tapped, distinguished by icon (guitars vs. mic, the
+/// same glyphs the Browse source kinds use). Tapping a genre re-opens its
+/// artists; tapping an artist re-opens their genre with the artist selected
+/// and centered. The Find field filters it; rows swipe to delete.
+struct ENHistoryView: View {
+    @EnvironmentObject private var store: EveryNoiseStore
+
+    let query: String
+    let onOpen: (ENHistoryEntry) -> Void
+
+    private var shown: [ENHistoryEntry] {
+        query.isEmpty
+            ? store.history
+            : store.history.filter { $0.name.localizedStandardContains(query) }
+    }
+
+    var body: some View {
+        if store.history.isEmpty {
+            ContentUnavailableViewCompat(
+                title: "No history yet",
+                systemImage: "clock",
+                description: "Genres and artists you open land here, newest first."
+            )
+            .frame(maxHeight: .infinity)
+        } else {
+            List {
+                ForEach(shown) { entry in
+                    Button {
+                        onOpen(entry)
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: entry.kind == .genre ? "guitars" : "music.mic")
+                                .foregroundStyle(.secondary)
+                                .frame(width: 26)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entry.name)
+                                    .foregroundStyle(Color(UIColor(noiseHex: entry.color)))
+                                    .lineLimit(1)
+                                if let detail = entry.detail {
+                                    Text("in \(detail)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                            }
+                            Spacer(minLength: 8)
+                            Text(entry.date.formatted(.relative(presentation: .named)))
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            store.removeHistory(entry)
+                        } label: {
+                            Label("Remove", systemImage: "trash")
+                        }
+                    }
+                }
+
+                Section {
+                    Button(role: .destructive) {
+                        store.clearHistory()
+                    } label: {
+                        Text("Clear History")
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+            }
+            .listStyle(.plain)
+        }
+    }
+}
+
 // MARK: - Scan
 
 struct ENScanEntry {
@@ -496,6 +605,9 @@ struct ENScanBar: View {
 /// that creates an Artist source in Browse.
 struct ENGenreView: View {
     let genre: ENGenre
+    /// When set (a History artist row), this artist is selected — action bar,
+    /// preview, map centering — as soon as the shard loads.
+    var initialArtistID: String? = nil
 
     @EnvironmentObject private var store: EveryNoiseStore
     @EnvironmentObject private var player: ENPreviewPlayer
@@ -560,7 +672,13 @@ struct ENGenreView: View {
             }
         }
         .task(id: genre.key) {
-            artists = await store.artists(for: genre)
+            let loaded = await store.artists(for: genre)
+            artists = loaded
+            if let initialArtistID,
+               let target = loaded.first(where: { $0.id == initialArtistID }) {
+                select(target)
+                centerRequest = NoiseMapCenter(id: target.id, token: UUID())
+            }
         }
         .onDisappear {
             // Covered or popped, this genre's previews stop (the discography
@@ -571,10 +689,11 @@ struct ENGenreView: View {
 
     private func content(_ artists: [ENArtist]) -> some View {
         VStack(spacing: 0) {
-            ENModeBar(mode: $mode, query: $query, sort: $listSort)
+            ENModeBar(mode: $mode, query: $query, sort: $listSort,
+                      modes: [.map, .list, .scan])
             ZStack(alignment: .top) {
                 switch mode {
-                case .map, .scan:
+                case .map, .scan, .history:
                     artistMap(artists)
                 case .list:
                     artistList(artists)
@@ -694,10 +813,11 @@ struct ENGenreView: View {
         }
     }
 
-    /// Tap an artist: the preview starts right away and the action bar (with
-    /// the **+**) appears.
+    /// Tap an artist: the preview starts right away, the action bar (with
+    /// the **+**) appears, and the visit lands in History.
     private func select(_ artist: ENArtist) {
         selected = artist
+        store.recordVisit(artist: artist, in: genre)
         if let preview = artist.preview {
             player.play(preview, id: artist.id, mainPlayback: playback)
         } else {
