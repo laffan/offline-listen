@@ -87,13 +87,17 @@ struct NoiseMapView: UIViewRepresentable {
             x: (Coordinator.pillHitSize - Coordinator.pillSize) / 2,
             y: (Coordinator.pillHitSize - Coordinator.pillSize) / 2,
             width: Coordinator.pillSize, height: Coordinator.pillSize))
-        dot.backgroundColor = .white
+        // An open ring, not a filled dot: clear center, white 3pt outline.
+        // No shadowPath — CoreAnimation derives the shadow from the layer's
+        // alpha, so it hugs the ring (a path would shade the open center too)
+        // and keeps the white outline legible over a white map.
+        dot.backgroundColor = .clear
         dot.layer.cornerRadius = Coordinator.pillSize / 2
-        dot.layer.borderWidth = 0.5
-        dot.layer.borderColor = UIColor.separator.cgColor
+        dot.layer.borderWidth = 3
+        dot.layer.borderColor = UIColor.white.cgColor
         dot.layer.shadowColor = UIColor.black.cgColor
         dot.layer.shadowOpacity = 0.35
-        dot.layer.shadowRadius = 3
+        dot.layer.shadowRadius = 2
         dot.layer.shadowOffset = CGSize(width: 0, height: 1)
         dot.isUserInteractionEnabled = false
         pill.addSubview(dot)
@@ -158,9 +162,9 @@ struct NoiseMapView: UIViewRepresentable {
         private static let margin: CGFloat = 300
         private static let padding: CGFloat = 40
 
-        /// The visible scroll-pill dot, and the (larger) draggable area it
-        /// sits in — a 20pt dot alone is a fiddly drag target.
-        static let pillSize: CGFloat = 20
+        /// The visible scroll-pill ring, and the (larger) draggable area it
+        /// sits in — the ring alone is a fiddly drag target.
+        static let pillSize: CGFloat = 30
         static let pillHitSize: CGFloat = 44
         private static let pillMargin: CGFloat = 6
 

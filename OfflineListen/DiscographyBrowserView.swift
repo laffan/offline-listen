@@ -487,6 +487,7 @@ private struct DiscographyReleaseRow: View {
 
     @EnvironmentObject private var downloads: DownloadManager
     @EnvironmentObject private var browse: BrowseStore
+    @EnvironmentObject private var library: LibraryStore
 
     @State private var expanded = false
     @State private var tracks: [DiscographyTrackInfo]?
@@ -498,6 +499,8 @@ private struct DiscographyReleaseRow: View {
     @State private var matches: [String: String] = [:]
     /// Tracks already sent to the download queue from this row.
     @State private var sent: Set<String> = []
+    /// The tracklist fetch in flight, if any — see `loadTracks`.
+    @State private var loadTask: Task<Void, Never>?
 
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
@@ -531,7 +534,9 @@ private struct DiscographyReleaseRow: View {
             }
         }
         .onChange(of: expanded) { open in
-            guard open, tracks == nil, trackError == nil else { return }
+            // `!searching` matters: the Search button expands the row itself
+            // and runs its own load — reacting here too double-fetched.
+            guard open, tracks == nil, trackError == nil, !searching else { return }
             Task { await loadTracks() }
         }
     }
@@ -614,10 +619,11 @@ private struct DiscographyReleaseRow: View {
                 .lineLimit(2)
             Spacer(minLength: 8)
             if let url = matches[track.id] {
-                if sent.contains(track.id) {
+                if sent.contains(track.id) || library.track(forSourceURL: url) != nil {
                     // Becomes the shared green play button the moment the
-                    // download lands in the library — plays in the background,
-                    // list intact.
+                    // track is in the library — a download sent from here,
+                    // *or* a preview auditioned and saved (which never
+                    // touches `sent`, so the library is checked directly).
                     BrowseTrackStatusButton(sourceURL: url,
                                             pendingIcon: "checkmark.circle.fill",
                                             pendingLabel: "Sent to Downloads")
@@ -664,17 +670,33 @@ private struct DiscographyReleaseRow: View {
     }
 
     /// Fetches the tracklist (also triggered by plain expansion, so the
-    /// search never runs against a missing list). Main-actor: these methods
-    /// write `@State`, and a Task spawned in a nonisolated context wouldn't
-    /// come back to the main thread on its own.
+    /// search never runs against a missing list). **Single-flight**: Search
+    /// and the expansion it triggers used to fetch concurrently — two
+    /// identical model calls for the Top 10 row, and whichever finished last
+    /// was free to overwrite the list, or worse, *error over* one the first
+    /// had already delivered. A second caller now awaits the fetch already
+    /// in flight instead of starting its own. A failure also never clobbers
+    /// a loaded list, and a success clears any earlier error. Main-actor:
+    /// these methods write `@State`, and a Task spawned in a nonisolated
+    /// context wouldn't come back to the main thread on its own.
     @MainActor
     private func loadTracks() async {
-        do {
-            tracks = try await provider.tracks(for: release)
-        } catch {
-            if isCancellation(error) { return }
-            trackError = error.localizedDescription
+        if let inFlight = loadTask {
+            await inFlight.value
+            return
         }
+        let task = Task { @MainActor in
+            do {
+                tracks = try await provider.tracks(for: release)
+                trackError = nil
+            } catch {
+                if isCancellation(error) { return }
+                if tracks == nil { trackError = error.localizedDescription }
+            }
+        }
+        loadTask = task
+        await task.value
+        loadTask = nil
     }
 
     /// The search: resolve each track to a YouTube video via the provider

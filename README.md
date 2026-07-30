@@ -486,7 +486,7 @@ a **Find** field — at both levels:
   genre reveals its **constituent artists**, likewise positioned in rough
   relation to one another on the genre's own map. Both maps **open centered**
   on their canvas rather than at the top-left corner, and a **scroll pill** —
-  a draggable white dot hugging the right edge — maps onto the full vertical
+  a draggable white ring hugging the right edge — maps onto the full vertical
   scroll, so the ~15-screen-tall genre map can be traversed in one drag
   (the system scroll indicator can't be grabbed).
 - **List** is the same set alphabetically, each genre in its map color with a

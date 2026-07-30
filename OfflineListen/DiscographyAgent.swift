@@ -72,14 +72,14 @@ enum DiscographyAgent {
         let raw = try await client.complete(
             system: topTracksSystemPrompt,
             userText: "Artist: \(artist)",
-            maxTokens: 600
+            maxTokens: 1000
         )
         appLog("Top 10 response for \"\(artist)\":\n\(raw.prefix(600))",
                level: .debug, category: "Browse")
 
         let titles = parseTitles(raw)
         appLog("Top 10 for \"\(artist)\": model returned \(titles.count) track(s).",
-               category: "Browse")
+               level: titles.isEmpty ? .warning : .info, category: "Browse")
         guard !titles.isEmpty else {
             throw BrowseFetchError.badInput("The AI couldn't list top tracks for \"\(artist)\". Check the spelling and try again.")
         }
@@ -159,16 +159,45 @@ enum DiscographyAgent {
         return Discography(highlights: highlights, albums: albums)
     }
 
-    /// Parses a bare array of song titles (the Top 10 answer), tolerating
-    /// surrounding text by extracting the outermost `[ … ]` span.
+    /// Parses a bare array of song titles (the Top 10 answer). The straight
+    /// path is the requested JSON array (tolerating surrounding text by
+    /// extracting the outermost `[ … ]` span); an answer that sampled as
+    /// prose instead — a numbered list, quoted titles in running text, or a
+    /// token-capped array missing its `]` — is **salvaged** rather than
+    /// failed, because "couldn't parse the shape" must never read as
+    /// "doesn't know the artist".
     static func parseTitles(_ raw: String) -> [String] {
-        guard let start = raw.firstIndex(of: "["),
-              let end = raw.lastIndex(of: "]"), start < end,
-              let data = String(raw[start...end]).data(using: .utf8),
-              let array = try? JSONSerialization.jsonObject(with: data) else {
+        if let start = raw.firstIndex(of: "["),
+           let end = raw.lastIndex(of: "]"), start < end,
+           let data = String(raw[start...end]).data(using: .utf8),
+           let array = try? JSONSerialization.jsonObject(with: data) {
+            let titles = stringList(array)
+            if !titles.isEmpty { return titles }
+        }
+
+        // Salvage 1: numbered-list lines — `1. Song` / `2) "Song"`.
+        let numbered = raw.split(separator: "\n").compactMap { line -> String? in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard let match = trimmed.range(of: #"^\d{1,2}[.)]\s+"#, options: .regularExpression) else {
+                return nil
+            }
+            let title = trimmed[match.upperBound...]
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\"“”'").union(.whitespaces))
+            return title.isEmpty ? nil : title
+        }
+        if !numbered.isEmpty { return numbered }
+
+        // Salvage 2: double-quoted titles anywhere — running prose, or a
+        // truncated JSON array whose closing bracket the token cap ate.
+        guard let quoteFinder = try? NSRegularExpression(pattern: "\"([^\"\\n]{1,80})\"") else {
             return []
         }
-        return stringList(array)
+        let range = NSRange(raw.startIndex..., in: raw)
+        return quoteFinder.matches(in: raw, range: range).compactMap { match in
+            guard let titleRange = Range(match.range(at: 1), in: raw) else { return nil }
+            let title = raw[titleRange].trimmingCharacters(in: .whitespaces)
+            return title.isEmpty ? nil : title
+        }
     }
 
     /// Reads a list of song titles, accepting `"Song"` or `{"title": "Song"}`
