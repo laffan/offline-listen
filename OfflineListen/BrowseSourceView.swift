@@ -500,6 +500,92 @@ struct BrowseSourceView: View {
     }
 }
 
+/// The marker a browse row shows once its track has been dealt with — shared by
+/// every list that offers a download (a source's items, the Every Noise
+/// discography, the Download tab's search results).
+///
+/// Once the download has actually landed in the library the marker becomes a
+/// green **play** button: tapping it starts that track in the background and
+/// leaves you exactly where you are, so a list can be worked through and
+/// listened to at the same time. It falls back to `pendingIcon` while the
+/// library has nothing matching yet — a queued download has nothing to play.
+struct BrowseTrackStatusButton: View {
+    /// The link the row acts on, and how its library track is found.
+    let sourceURL: String
+    /// Shown while no library track matches: what the row's state means on its
+    /// own (sent to the queue, saved).
+    let pendingIcon: String
+    let pendingLabel: String
+    /// In a list's select mode the row belongs to the selection, so the button
+    /// steps back to being a plain marker.
+    var selecting: Bool = false
+    /// Set on roomier, non-icon-only rows (the Download tab's search results)
+    /// to spell out what the marker means beside it.
+    var showsCaption: Bool = false
+
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var playback: PlaybackManager
+
+    private var track: Track? { library.track(forSourceURL: sourceURL) }
+
+    var body: some View {
+        if let track = track, !selecting {
+            Button {
+                play(track)
+            } label: {
+                marker(icon: iconName(for: track),
+                       caption: isCurrent(track) && playback.isPlaying
+                           ? "Playing — tap to pause" : "Play from Library")
+            }
+            .buttonStyle(.borderless)
+            // Green is the "already dealt with" colour these rows use; the
+            // borderless style would otherwise tint the label with the accent.
+            .tint(.green)
+            .accessibilityLabel(isCurrent(track) && playback.isPlaying
+                                ? "Pause \(track.title)" : "Play \(track.title)")
+        } else {
+            marker(icon: pendingIcon, caption: pendingLabel)
+                .accessibilityLabel(pendingLabel)
+        }
+    }
+
+    private func marker(icon: String, caption: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+            if showsCaption {
+                Text(caption).font(.caption)
+            }
+        }
+        .foregroundStyle(.green)
+    }
+
+    private func isCurrent(_ track: Track) -> Bool {
+        playback.currentTrack?.id == track.id
+    }
+
+    private func iconName(for track: Track) -> String {
+        isCurrent(track) && playback.isPlaying ? "pause.circle.fill" : "play.circle.fill"
+    }
+
+    /// Starts the track without leaving the list. A filed track plays on
+    /// through its folder (a folder is a curated playlist); an unfiled one
+    /// plays alone, since the browse list it came from isn't a library queue.
+    private func play(_ track: Track) {
+        if isCurrent(track) {
+            playback.togglePlayPause()
+            return
+        }
+        if let folderID = track.folderID {
+            let siblings = library.tracks(in: folderID)
+            playback.play(track,
+                          in: siblings.isEmpty ? [track] : siblings,
+                          restrictToCategory: false)
+        } else {
+            playback.play(track, in: [track])
+        }
+    }
+}
+
 /// One discovered item, laid out like a Library row: track name on one line,
 /// artist beneath, and — on the trailing edge, in line with the title —
 /// icon-only Download/Preview buttons (or a green status icon once acted on).
@@ -570,15 +656,17 @@ private struct BrowseItemRow: View {
     private var trailingControls: some View {
         switch item.status {
         case .downloaded:
-            Image(systemName: "arrow.down.circle.fill")
+            BrowseTrackStatusButton(sourceURL: item.url,
+                                    pendingIcon: "arrow.down.circle.fill",
+                                    pendingLabel: "Sent to Downloads",
+                                    selecting: selecting)
                 .font(.title2)
-                .foregroundStyle(.green)
-                .accessibilityLabel("Sent to Downloads")
         case .saved:
-            Image(systemName: "checkmark.circle.fill")
+            BrowseTrackStatusButton(sourceURL: item.url,
+                                    pendingIcon: "checkmark.circle.fill",
+                                    pendingLabel: "Saved to Library",
+                                    selecting: selecting)
                 .font(.title2)
-                .foregroundStyle(.green)
-                .accessibilityLabel("Saved to Library")
         case .new, .discarded:
             // Hidden while selecting so a row tap toggles the selection.
             if !selecting {

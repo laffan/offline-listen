@@ -438,7 +438,7 @@ struct MixtapeCoverEditor: View {
     private var rowPreview: some View {
         GeometryReader { geo in
             MixtapeRowContent(title: folder.name, style: style, image: previewImage,
-                              count: library.tracks(in: folder.id).count,
+                              count: library.trackCount(in: folder.id),
                               showsSync: folder.isSynced)
                 .contentShape(Rectangle())
                 .gesture(panGesture(offsetX: rowOffsetXBinding, offsetY: rowOffsetYBinding,

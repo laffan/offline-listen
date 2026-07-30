@@ -491,9 +491,13 @@ private struct SearchResultRow: View {
             }
 
             if sent {
-                Label("Sent to Downloads", systemImage: "checkmark.circle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.green)
+                // Turns into a green play button once the download is in the
+                // library, so a search hit can be heard without leaving the
+                // results.
+                BrowseTrackStatusButton(sourceURL: result.url,
+                                        pendingIcon: "checkmark.circle.fill",
+                                        pendingLabel: "Sent to Downloads",
+                                        showsCaption: true)
             } else {
                 HStack(spacing: 10) {
                     Button(action: onDownload) {

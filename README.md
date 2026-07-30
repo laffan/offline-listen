@@ -108,7 +108,9 @@ Five screens (tabs):
    inside folders* (the normal list shows only unfiled ones, but "where did I
    put that track" is the question search exists to answer). Matching ignores
    case and accents, so "beyonce" finds "Beyoncé", and the media-type filter
-   still applies. A **filter** (All / Music /
+   still applies. Results come back **as you type** — see
+   [Why the library is fast](#why-the-library-is-fast) for what that costs.
+   A **filter** (All / Music /
    Podcasts / Video) sits directly beneath the **Tracks** header. Swipe **left**
    for Delete/Share/Archive (and bulk versions via **Select**); swipe **right**
    on an audio track to classify it **Song** or **Podcast**. Songs start from the
@@ -190,12 +192,28 @@ Five screens (tabs):
    title font. **Convert to Folder** turns it back. See
    [Mixtape folders](#mixtape-folders).
 4. **Player** — artwork, scrubber, play/pause, skip, next/previous — the same
-   control suite for audio and video. Video is edge-to-edge in portrait and
-   goes fullscreen automatically when the phone rotates to landscape (tap the
-   picture to toggle the floating controls). Drives the lock screen and
-   Control Center. For a chaptered track, small **dots** sit along the scrubber
-   at each chapter's start and the **current chapter title** shows on its own
-   line beneath the title/artist, updating as playback crosses a marker.
+   control suite for audio and video. **Tap anywhere on the scrub bar to jump
+   there**; dragging works as before, so you never have to drag the playhead
+   across a track just to skip ahead. Beneath the transport, the **previous
+   track** is named on the left and the **next track** on the right (labelled
+   as such, with artist under title) — tap either to go straight to it. Video
+   is edge-to-edge in portrait, and **tapping the picture hands it the whole
+   screen**: title, transport, nav and tab bars all step aside, and a tap
+   brings back the floating controls with a button to shrink it again. It also
+   goes fullscreen on its own when the phone rotates to landscape. Drives the
+   lock screen and Control Center. For a chaptered track, small **dots** sit
+   along the scrubber at each chapter's start and the **current chapter
+   title** shows on its own line beneath the title/artist, updating as playback
+   crosses a marker.
+
+   **The mini player.** Whenever a track is loaded — playing, paused, or the
+   one restored at launch — a low-profile bar rides just above the tab bar on
+   *every other screen*: a hairline progress line, what's playing, play/pause
+   and next — so you can keep browsing or searching without going back to the
+   Player. Tapping the title opens the Player. It's attached as a safe-area
+   inset, so lists scroll clear of it and anything else anchored to the bottom
+   of a screen (the Every Noise scan and artist-preview bars) stacks neatly
+   above it; with nothing loaded it takes up no room at all.
 5. **Settings** — AI configuration on top, then **Spotify** credentials, a
    **Local Sync** section, a
    **Blog Agent** section (posts per
@@ -247,6 +265,32 @@ Original Title** still restores the download title. AI work is best-effort and r
 download queue — failures are logged, never fatal. No key, no AI: everything else
 is unchanged.
 
+### Why the library is fast
+
+The Library screen asks the same few questions over and over — is this track's
+folder archived, how many tracks does that folder hold, which tracks match what
+I've typed — and it asks them once per row, per redraw. Answered from scratch
+each time, those questions are quadratic in the size of the library, and on a
+few hundred tracks that was enough to stall search for seconds before the first
+result appeared. Three things keep it quick, and they're worth preserving:
+
+- **`LibraryStore` memoizes its derived state.** The set of archived folder ids
+  (the closure of `isArchived` over the parent links), the active-track list,
+  a track-id index, per-folder track counts, and the search index are each
+  computed once and cached. Every cache is dropped by a `didSet` on `tracks` /
+  `folders`, so nothing can go stale — mutate the arrays as usual and the
+  answers rebuild on next read.
+- **Search matches on folded text, not collated text.**
+  `localizedStandardContains` re-derives its case/diacritic collation on *every*
+  comparison. Both sides are folded once instead (`searchKey`), and the
+  comparison is a plain literal substring search — same "beyonce finds Beyoncé"
+  behaviour, a fraction of the work.
+- **The views resolve a result list once per redraw.** `row(for:in:)` takes the
+  whole list as the playback queue, so passing a computed property directly made
+  each row recompute the entire search. `searchList` / `libraryList` bind it to
+  a local first. Typing is debounced by 150 ms on top, so a burst of keystrokes
+  rebuilds the list once rather than once per letter.
+
 ## Browse: keeping tabs on audio sources
 
 The **Browse** tab watches a set of user-configured **sources** and turns what
@@ -260,7 +304,13 @@ beneath the Browse title:
   toggle's mode. Browse downloads are filed into a **library folder named
   after the source** (a "Brian Eno" Discography lands in a "Brian Eno"
   folder), so everything from one source stays together; those tracks, being
-  unlistened, still surface in the **Inbox** until you play them.
+  unlistened, still surface in the **Inbox** until you play them. Once the
+  download **lands in the library**, the row's button becomes a **green play
+  button**: tapping it starts that track *in the background*, leaving you on
+  the list you were working through (tap again to pause). Until then it's the
+  plain green marker — a queued download has nothing to play yet. This is the
+  same control everywhere a list offers a download: a source's items, the Every
+  Noise discography, and the Download tab's search results.
 - **Preview** — its icon **fills in** once you've opened it, so a long list
   shows at a glance what you've already auditioned (the button keeps working —
   it's a breadcrumb, not a decision). It opens a modal that downloads the audio — or, in Video mode,
@@ -587,7 +637,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `PlaylistResolver.swift` | Detects playlist links and flat-resolves their entries (on-device yt-dlp) so a playlist downloads into a folder. |
 | `ChapterSplitter.swift` | Exports one file per chapter (AVFoundation) for "Break Chapters into Playlist". |
 | `VideoMerger.swift` | Muxes a video-only + audio-only stream into one MP4. |
-| `PlaybackManager.swift` | `AVPlayer` engine (audio + video), audio session, lock screen. |
+| `PlaybackManager.swift` | `AVPlayer` engine (audio + video), audio session, lock screen; exposes the queue's next/previous entries for the Player's neighbour labels. |
 | `Logger.swift` | `LogStore` — thread-safe, app-wide log sink. |
 | `AISettings.swift` | `AISettingsStore` (model/key/assist, Keychain-backed), `AIModel`, `Keychain` helper. |
 | `AnthropicClient.swift` | Minimal Anthropic Messages API client (verify + single-shot completion) over URLSession. |
@@ -608,9 +658,9 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `NoiseMapView.swift` | The virtualized `UIScrollView` scatter map (spatial grid + recycled labels) both noise maps render through. |
 | `EveryNoiseView.swift` | The Every Noise browser: Map/List/Scan modes + Find at both levels, the scan transport, and the artist bar whose "+" creates Artist sources. |
 | `EveryNoiseData/` | Bundled (folder reference): `genres.json` index + per-genre artist shards, written by the one-time `tools/everynoise/scrape.py`. |
-| `BrowseSourceView.swift` | One source's items with per-row Download/Preview/Discard, plus a **Select** mode for bulk download. |
+| `BrowseSourceView.swift` | One source's items with per-row Download/Preview/Discard, plus a **Select** mode for bulk download; also `BrowseTrackStatusButton`, the green play button every browse list shows once a download is in the library. |
 | `BrowsePreviewView.swift` | The preview modal: pipeline download, mini player, Save/Discard. |
-| `*View.swift` | The five SwiftUI screens (Download, Browse, Library, Player, Settings — which embeds the Log). |
+| `*View.swift` | The five SwiftUI screens (Download, Browse, Library, Player, Settings — which embeds the Log). `PlayerView.swift` also holds the tap-to-seek scrubber and the `MiniPlayerBar` the other tabs inset above the tab bar. |
 | `FolderView.swift` | Folder detail (tap-to-play, reorder, subfolders, mixtape header/Edit Cover) and Inbox screens. |
 | `MixtapeViews.swift` | Mixtape banner rendering (non-destructive crop), the shared folder-row label, and the Edit Cover sheet (PhotosPicker + drag/pinch + font picker). |
 | `WatchFolderView.swift` | The phone's **Watch** virtual-folder screen (manage what's been sent to the watch). |

@@ -92,11 +92,33 @@ final class PlaybackManager: NSObject, ObservableObject {
         if isPlaying { pause() } else { resume() }
     }
 
+    /// What `next()` would play, or nil at the end of the queue — the Player
+    /// screen labels its next/previous buttons with these.
+    var nextTrack: Track? {
+        queue.indices.contains(index + 1) ? queue[index + 1] : nil
+    }
+
+    /// The queue entry before the current one, or nil at the start. Note this
+    /// is *not* what `previous()` always does: that restarts the current track
+    /// when you're more than three seconds in.
+    var previousTrack: Track? {
+        queue.indices.contains(index - 1) ? queue[index - 1] : nil
+    }
+
     func next() {
         // Advance within the (already category-filtered) queue; stop at the end
         // rather than wrapping, so a list plays through once.
         guard !queue.isEmpty, index + 1 < queue.count else { return }
         index += 1
+        loadCurrent(autoPlay: true, startAt: startPosition(for: queue[index]))
+    }
+
+    /// Goes straight to the previous queue entry — what tapping a row that
+    /// *names* the previous track should do, where `previous()`'s "restart the
+    /// current track" behaviour would read as a dead tap.
+    func playPreviousTrack() {
+        guard queue.indices.contains(index - 1) else { return }
+        index -= 1
         loadCurrent(autoPlay: true, startAt: startPosition(for: queue[index]))
     }
 

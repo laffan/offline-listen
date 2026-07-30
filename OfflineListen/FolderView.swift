@@ -148,7 +148,7 @@ struct FolderDetailView: View {
     private func subfolderRow(_ subfolder: Folder) -> some View {
         NavigationLink(value: LibraryRoute.folder(subfolder.id)) {
             FolderRowLabel(folder: subfolder,
-                           count: library.tracks(in: subfolder.id).count,
+                           count: library.trackCount(in: subfolder.id),
                            playingHere: isPlaying(in: subfolder))
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
@@ -178,7 +178,7 @@ struct FolderDetailView: View {
 
     private func isPlaying(in subfolder: Folder) -> Bool {
         guard let id = playback.currentTrack?.id else { return false }
-        return library.tracks(in: subfolder.id).contains { $0.id == id }
+        return library.folder(subfolder.id, contains: id)
     }
 
     @ViewBuilder

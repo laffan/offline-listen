@@ -1136,8 +1136,11 @@ private struct ENAlbumRow: View {
             Spacer(minLength: 8)
             if let url = matches[track.id] {
                 if sent.contains(track.id) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
+                    // Becomes a green play button the moment the download lands
+                    // in the library — plays in the background, list intact.
+                    BrowseTrackStatusButton(sourceURL: url,
+                                            pendingIcon: "checkmark.circle.fill",
+                                            pendingLabel: "Sent to Downloads")
                 } else {
                     Button {
                         // A single-track pick, so no album folder: it lands in

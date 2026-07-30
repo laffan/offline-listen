@@ -169,24 +169,29 @@ struct LibraryView: View {
     @State private var chapterContext: ChapterContext?
     @State private var splittingTrack: Track?
 
+    /// What's in the search field.
     @State private var searchText = ""
+    /// What the list is actually showing results for — `searchText` after a
+    /// short debounce, so a burst of typing rebuilds the list once instead of
+    /// once per keystroke.
+    @State private var query = ""
 
     private var filteredTracks: [Track] {
         library.unfiledActiveTracks.filter { filter.matches($0) }
     }
 
     private var isSearching: Bool {
-        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Search results honour the media-type filter, so a search inside
     /// "Podcasts" stays inside podcasts.
     private var trackResults: [Track] {
-        library.searchTracks(matching: searchText).filter { filter.matches($0) }
+        library.searchTracks(matching: query).filter { filter.matches($0) }
     }
 
     private var folderResults: [Folder] {
-        library.searchFolders(matching: searchText)
+        library.searchFolders(matching: query)
     }
 
     /// Wraps `path` to reject a consecutive-duplicate push synchronously, before
@@ -226,6 +231,16 @@ struct LibraryView: View {
             .searchable(text: $searchText,
                         placement: .navigationBarDrawer(displayMode: .automatic),
                         prompt: "Search titles and artists")
+            // Debounce: each keystroke cancels the pending pass, so the list is
+            // rebuilt once the typing pauses rather than mid-word. Clearing the
+            // field takes effect at once — there's nothing to wait for.
+            .task(id: searchText) {
+                if !searchText.isEmpty {
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                    guard !Task.isCancelled else { return }
+                }
+                query = searchText
+            }
             .toolbar { toolbarContent }
             .environment(\.editMode, $editMode)
             .sheet(item: $share) { payload in
@@ -279,10 +294,15 @@ struct LibraryView: View {
     /// normal list shows only *unfiled* tracks, but the question search answers
     /// ("where is that track?") is usually about one that's already in a folder.
     private var searchList: some View {
-        List(selection: $selection) {
-            if !folderResults.isEmpty && !editMode.isEditing {
+        // Resolved once per render pass, not once per row: `row(for:in:)` takes
+        // the whole result list as the playback queue, and recomputing the
+        // search for every row it built made the list quadratic in its own size.
+        let matchedTracks = trackResults
+        let matchedFolders = folderResults
+        return List(selection: $selection) {
+            if !matchedFolders.isEmpty && !editMode.isEditing {
                 Section {
-                    ForEach(folderResults) { folder in
+                    ForEach(matchedFolders) { folder in
                         folderRow(folder)
                     }
                 } header: {
@@ -290,11 +310,11 @@ struct LibraryView: View {
                 }
             }
             Section {
-                ForEach(trackResults) { track in
-                    row(for: track, in: trackResults)
+                ForEach(matchedTracks) { track in
+                    row(for: track, in: matchedTracks)
                 }
-                if trackResults.isEmpty {
-                    Text("No tracks match “\(searchText)”")
+                if matchedTracks.isEmpty {
+                    Text("No tracks match “\(query)”")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -306,7 +326,9 @@ struct LibraryView: View {
     }
 
     private var libraryList: some View {
-        List(selection: $selection) {
+        // Same reason as `searchList`: one evaluation, shared by every row.
+        let listed = filteredTracks
+        return List(selection: $selection) {
             // Folders are hidden while selecting tracks for bulk actions.
             if !editMode.isEditing {
                 Section {
@@ -346,10 +368,10 @@ struct LibraryView: View {
             }
 
             Section {
-                ForEach(filteredTracks) { track in
-                    row(for: track, in: filteredTracks)
+                ForEach(listed) { track in
+                    row(for: track, in: listed)
                 }
-                if filteredTracks.isEmpty && !library.unfiledActiveTracks.isEmpty {
+                if listed.isEmpty && !library.unfiledActiveTracks.isEmpty {
                     Text("Nothing in \(filter.displayName)")
                         .font(.callout)
                         .foregroundStyle(.secondary)
@@ -513,13 +535,13 @@ struct LibraryView: View {
     /// can light up red like the playing track itself.
     private func isPlaying(in folder: Folder) -> Bool {
         guard let id = playback.currentTrack?.id else { return false }
-        return library.tracks(in: folder.id).contains { $0.id == id }
+        return library.folder(folder.id, contains: id)
     }
 
     private func folderRow(_ folder: Folder) -> some View {
         NavigationLink(value: LibraryRoute.folder(folder.id)) {
             FolderRowLabel(folder: folder,
-                           count: library.tracks(in: folder.id).count,
+                           count: library.trackCount(in: folder.id),
                            playingHere: isPlaying(in: folder))
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
@@ -803,13 +825,13 @@ struct SyncedFoldersView: View {
 
     private func isPlaying(in folder: Folder) -> Bool {
         guard let id = playback.currentTrack?.id else { return false }
-        return library.tracks(in: folder.id).contains { $0.id == id }
+        return library.folder(folder.id, contains: id)
     }
 
     private func folderRow(_ folder: Folder) -> some View {
         NavigationLink(value: LibraryRoute.folder(folder.id)) {
             FolderRowLabel(folder: folder,
-                           count: library.tracks(in: folder.id).count,
+                           count: library.trackCount(in: folder.id),
                            playingHere: isPlaying(in: folder))
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
@@ -890,7 +912,7 @@ struct ArchivedTracksView: View {
 
     private func archivedFolderRow(_ folder: Folder) -> some View {
         NavigationLink(value: LibraryRoute.folder(folder.id)) {
-            FolderRowLabel(folder: folder, count: library.tracks(in: folder.id).count)
+            FolderRowLabel(folder: folder, count: library.trackCount(in: folder.id))
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(role: .destructive) {

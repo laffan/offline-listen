@@ -5,8 +5,12 @@ import AVFoundation
 /// the lifecycle of the underlying audio files.
 @MainActor
 final class LibraryStore: ObservableObject {
-    @Published private(set) var tracks: [Track] = []
-    @Published private(set) var folders: [Folder] = []
+    @Published private(set) var tracks: [Track] = [] {
+        didSet { invalidateTrackDerived() }
+    }
+    @Published private(set) var folders: [Folder] = [] {
+        didSet { invalidateFolderDerived() }
+    }
     /// The listening log behind the **Recent** folder, newest first. Persisted
     /// separately from the library (`recents.json`) — it's a record of
     /// behaviour, not of what's on disk.
@@ -50,18 +54,95 @@ final class LibraryStore: ObservableObject {
         syncExporter?(op, rootID)
     }
 
+    // MARK: - Derived state (caches)
+    //
+    // Every screen reads these dozens of times per render pass — a track row
+    // asks whether its folder is archived, a folder row asks how many tracks it
+    // holds, search asks both for each of hundreds of tracks. Computed from
+    // scratch each time they were quadratic in the library's size, which is what
+    // made search take seconds to respond on a few hundred tracks. They're
+    // memoized instead and thrown away whenever `tracks`/`folders` change, so
+    // the answers can never go stale.
+
+    private var cachedArchivedFolderIDs: Set<UUID>?
+    private var cachedActiveTracks: [Track]?
+    private var cachedTrackIndexByID: [UUID: Int]?
+    private var cachedFolderTrackCounts: [UUID: Int]?
+    private var cachedSearchKeys: [UUID: String]?
+    private var cachedTrackIDsBySource: [String: UUID]?
+
+    private func invalidateTrackDerived() {
+        cachedActiveTracks = nil
+        cachedTrackIndexByID = nil
+        cachedFolderTrackCounts = nil
+        cachedSearchKeys = nil
+        cachedTrackIDsBySource = nil
+    }
+
+    private func invalidateFolderDerived() {
+        cachedArchivedFolderIDs = nil
+        // Which tracks are active depends on which folders are archived.
+        cachedActiveTracks = nil
+    }
+
+    /// Every folder id that is archived, directly or by inheritance — the
+    /// closure of `isArchived` over the parent links, computed in one pass.
+    private var archivedFolderIDs: Set<UUID> {
+        if let cached = cachedArchivedFolderIDs { return cached }
+        var archived = Set(folders.filter(\.isArchived).map(\.id))
+        var childIDs: [UUID: [UUID]] = [:]
+        for folder in folders {
+            guard let parentID = folder.parentID else { continue }
+            childIDs[parentID, default: []].append(folder.id)
+        }
+        var frontier = Array(archived)
+        while let id = frontier.popLast() {
+            for child in childIDs[id] ?? [] where archived.insert(child).inserted {
+                frontier.append(child)
+            }
+        }
+        cachedArchivedFolderIDs = archived
+        return archived
+    }
+
     /// True when a folder — or any of its ancestors — has been archived, so the
     /// whole subtree hides from the main library.
     func folderArchived(_ folderID: UUID?) -> Bool {
-        var currentID = folderID
-        var hops = 0
-        while let id = currentID, hops < 64 {
-            guard let folder = folders.first(where: { $0.id == id }) else { return false }
-            if folder.isArchived { return true }
-            currentID = folder.parentID
-            hops += 1
+        guard let folderID else { return false }
+        return archivedFolderIDs.contains(folderID)
+    }
+
+    /// A track by id, without a linear scan — the lookup behind the Recent log,
+    /// the "is this playing here?" row checks, and the Browse play buttons.
+    func track(withID id: UUID) -> Track? {
+        if cachedTrackIndexByID == nil {
+            var index: [UUID: Int] = Dictionary(minimumCapacity: tracks.count)
+            for (offset, track) in tracks.enumerated() { index[track.id] = offset }
+            cachedTrackIndexByID = index
         }
-        return false
+        guard let offset = cachedTrackIndexByID?[id], tracks.indices.contains(offset) else { return nil }
+        return tracks[offset]
+    }
+
+    /// How many active tracks a folder holds — what every folder row shows.
+    /// Counted for all folders at once rather than filtering the library per row.
+    func trackCount(in folderID: UUID) -> Int {
+        if cachedFolderTrackCounts == nil {
+            var counts: [UUID: Int] = [:]
+            for track in tracks where !track.isArchived {
+                guard let id = track.folderID else { continue }
+                counts[id, default: 0] += 1
+            }
+            cachedFolderTrackCounts = counts
+        }
+        return cachedFolderTrackCounts?[folderID] ?? 0
+    }
+
+    /// True when `trackID` is an active member of `folderID` — the check that
+    /// lights a folder row up while something inside it plays.
+    func folder(_ folderID: UUID, contains trackID: UUID?) -> Bool {
+        guard let trackID, let track = self.track(withID: trackID) else { return false }
+        return track.folderID == folderID && !track.isArchived
     }
 
     /// Folders the user has archived (directly or via an ancestor) are hidden
@@ -115,7 +196,15 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    var activeTracks: [Track] { tracks.filter { !$0.isArchived && !folderArchived($0.folderID) } }
+    var activeTracks: [Track] {
+        if let cached = cachedActiveTracks { return cached }
+        let archived = archivedFolderIDs
+        let value = tracks.filter { track in
+            !track.isArchived && !(track.folderID.map { archived.contains($0) } ?? false)
+        }
+        cachedActiveTracks = value
+        return value
+    }
     /// Individually-archived loose tracks (not those merely living in an
     /// archived folder, which are reached by opening the folder in the Archive).
     var archivedTracks: [Track] { tracks.filter { $0.isArchived } }
@@ -130,7 +219,7 @@ final class LibraryStore: ObservableObject {
     /// carries its own id, so the list can show the same track twice.
     var recentListenEntries: [RecentListenRow] {
         recentListens.compactMap { entry in
-            guard let track = tracks.first(where: { $0.id == entry.trackID }) else { return nil }
+            guard let track = self.track(withID: entry.trackID) else { return nil }
             return RecentListenRow(entry: entry, track: track)
         }
     }
@@ -143,26 +232,82 @@ final class LibraryStore: ObservableObject {
         return recentListenEntries.compactMap { seen.insert($0.track.id).inserted ? $0.track : nil }
     }
 
+    // MARK: - Search
+
+    /// Normalizes text for matching: case- and diacritic-insensitive, so
+    /// "beyonce" still finds "Beyoncé".
+    ///
+    /// Folding once, up front, is the whole trick. `localizedStandardContains`
+    /// re-derives the same collation on *every* comparison, which for a library
+    /// of a few hundred tracks (title + artist, re-run for each keystroke and
+    /// again for each rendered row) added up to seconds of stalling before the
+    /// first results appeared. Both sides are folded here instead, and the
+    /// comparison itself is a plain literal substring search.
+    private static func searchKey(_ text: String) -> String {
+        text.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
+                     locale: nil)
+    }
+
+    /// Folded "title artist" haystack per track, rebuilt only when the library
+    /// itself changes.
+    private var searchKeys: [UUID: String] {
+        if let cached = cachedSearchKeys { return cached }
+        var keys: [UUID: String] = Dictionary(minimumCapacity: tracks.count)
+        for track in tracks {
+            keys[track.id] = Self.searchKey("\(track.title) \(track.artist)")
+        }
+        cachedSearchKeys = keys
+        return keys
+    }
+
     /// Active tracks whose title or artist matches `query` — the Library's
     /// search. Unlike the main list this reaches **into folders**, since
     /// "where did I put that track" is the question search exists to answer.
-    /// Matching is `localizedStandardContains`: case- and diacritic-insensitive,
-    /// so "beyonce" finds "Beyoncé".
     func searchTracks(matching query: String) -> [Track] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return [] }
-        return activeTracks.filter {
-            $0.title.localizedStandardContains(trimmed) || $0.artist.localizedStandardContains(trimmed)
+        let needle = Self.searchKey(query.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard !needle.isEmpty else { return [] }
+        let keys = searchKeys
+        return activeTracks.filter { track in
+            guard let haystack = keys[track.id] else { return false }
+            return haystack.range(of: needle, options: .literal) != nil
         }
     }
 
     /// Non-archived folders whose name matches `query`, so search can offer the
     /// folder itself alongside the tracks inside it.
     func searchFolders(matching query: String) -> [Folder] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return [] }
-        return folders.filter { !$0.isArchived && $0.name.localizedStandardContains(trimmed) }
+        let needle = Self.searchKey(query.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard !needle.isEmpty else { return [] }
+        return folders.filter {
+            !$0.isArchived && Self.searchKey($0.name).range(of: needle, options: .literal) != nil
+        }
     }
+
+    /// The library track a link produced, if any — keyed by YouTube video id
+    /// (falling back to the URL itself) so a Browse row can play what it
+    /// downloaded, whatever URL shape the source handed over.
+    func track(forSourceURL url: String) -> Track? {
+        let key = Self.sourceKey(url)
+        guard !key.isEmpty else { return nil }
+        if cachedTrackIDsBySource == nil {
+            var index: [String: UUID] = Dictionary(minimumCapacity: tracks.count)
+            // Newest first (the library inserts at the top), so a re-download
+            // resolves to the copy the user just made.
+            for track in tracks.reversed() where !track.sourceURL.isEmpty {
+                index[Self.sourceKey(track.sourceURL)] = track.id
+            }
+            cachedTrackIDsBySource = index
+        }
+        guard let id = cachedTrackIDsBySource?[key] else { return nil }
+        return self.track(withID: id)
+    }
+
+    private static func sourceKey(_ url: String) -> String {
+        guard let parsed = URL(string: url),
+              let videoID = YouTubeKitExtractor.videoID(from: parsed) else { return url }
+        return videoID
+    }
+
     /// Tracks pushed to the Apple Watch — the "Watch" virtual folder. Like the
     /// Inbox, these still live wherever they normally do in the library; this is
     /// just a filtered view for managing what's on the watch.

@@ -19,17 +19,25 @@ struct RootView: View {
     }
 
     var body: some View {
+        // Every tab but the Player carries the mini player above the tab bar,
+        // so a track stays controllable wherever you are. It's attached per tab
+        // (outside each screen's own NavigationStack) rather than to the
+        // TabView, which is what lets a screen's own bottom bar — the Every
+        // Noise scan/artist bars — stack neatly above it.
         TabView(selection: $selection) {
             DownloadView(onPlay: { selection = .player })
+                .miniPlayerBar { selection = .player }
                 .tabItem { Label("Download", systemImage: "arrow.down.circle") }
                 .badge(pendingDownloads == 0 ? nil : Text("\(pendingDownloads)"))
                 .tag(Tab.download)
 
             BrowseView()
+                .miniPlayerBar { selection = .player }
                 .tabItem { Label("Browse", systemImage: "safari") }
                 .tag(Tab.browse)
 
             LibraryView(onPlay: { selection = .player })
+                .miniPlayerBar { selection = .player }
                 .tabItem { Label("Library", systemImage: "music.note.list") }
                 .tag(Tab.library)
 
@@ -38,6 +46,7 @@ struct RootView: View {
                 .tag(Tab.player)
 
             SettingsView()
+                .miniPlayerBar { selection = .player }
                 .tabItem { Label("Settings", systemImage: "gearshape") }
                 .tag(Tab.settings)
         }
