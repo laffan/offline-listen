@@ -330,6 +330,12 @@ steers the suggestions — early Dylan, 1980s synth-pop, 1970s Mali — and a
 blank name auto-fills with the era folded in, e.g. "Mali (1970s)", so two
 eras of the same subject read apart in the source list.
 
+Every AI request logs its **full prompt and response** to the Log (debug
+level, category `Browse`), so a refresh that comes back thin can be diagnosed
+on-device: the summary lines distinguish "the model suggested little" from
+"YouTube search resolved little", and a Discography refresh reports exactly
+how many albums/tracks its caps dropped.
+
 The AI types use the **Anthropic key from Settings** (they're unavailable until
 one is saved). For Artist / Genre / Country the model is asked for
 real, well-known songs — title and artist —
@@ -378,7 +384,12 @@ a **Find** field — at both levels:
   genre reveals its **constituent artists**, likewise positioned in rough
   relation to one another on the genre's own map.
 - **List** is the same set alphabetically, each genre in its map color with a
-  per-row preview play button.
+  per-row preview play button. A **sort menu** beside the Find field switches
+  the order to **Similarity** — the site's own list behavior, since map
+  distance *is* the similarity measure. In similarity mode every row grows a
+  **resort button**: tap it and the list re-orders around that entry (it
+  lands on top, its sonic neighbors follow), exactly like clicking a genre
+  on the site. The artist list inside a genre sorts the same two ways.
 - **Scan** auto-plays through the example tracks in map order — the site's
   scan mode as a bottom transport bar (prev / play-pause / next), with the map
   following along and the current entry drawn inverted. It works on the genre
@@ -393,6 +404,15 @@ involved) and opens an action bar with a **"+"** that files that artist into
 Browse as a regular **Artist source** — **Top 10** or **Discography**, the
 same two depths offered everywhere else — with the first refresh kicked off
 immediately.
+
+With **Spotify credentials** saved (Settings ▸ Spotify), the same "+" offers
+a third choice: **Browse Discography** — the artist's *real* catalogue read
+live from Spotify (the scraped data carries every artist's Spotify id, but no
+discographies). Releases group into Albums / Singles & EPs / Compilations,
+newest first; expanding one lists its tracks, and a per-release **Download**
+hands it to the exact pipeline a pasted album link takes — ISRC-first
+YouTube matching, the track-selection popup (presented right over the
+browser), and a library folder named after the release.
 
 **Why it isn't laggy.** The dataset is big (6,291 genres, ~630k artist rows),
 and the site itself chugs on an iPad, so nothing is ever

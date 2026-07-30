@@ -15,6 +15,9 @@ struct EveryNoiseView: View {
 
     @State private var mode: ENBrowseMode = .map
     @State private var query = ""
+    /// List mode's order, and the genre a similarity sort is anchored on.
+    @State private var listSort: ENListSort = .alphabetical
+    @State private var listAnchor: String?
     /// Programmatic pushes (map taps, find results) drive the stack directly.
     @State private var path: [ENGenre] = []
     /// Where scan left off, so reopening resumes mid-map.
@@ -63,13 +66,14 @@ struct EveryNoiseView: View {
 
     private var browser: some View {
         VStack(spacing: 0) {
-            ENModeBar(mode: $mode, query: $query)
+            ENModeBar(mode: $mode, query: $query, sort: $listSort)
             ZStack(alignment: .top) {
                 switch mode {
                 case .map, .scan:
                     genreMap
                 case .list:
-                    ENGenreListView(genres: store.genres, query: query) { genre in
+                    ENGenreListView(genres: store.genres, query: query,
+                                    sort: listSort, anchorKey: $listAnchor) { genre in
                         path.append(genre)
                     }
                 }
@@ -156,10 +160,28 @@ enum ENBrowseMode: String, CaseIterable, Identifiable {
     }
 }
 
-/// The mode picker and Find field — the site's header controls.
+/// How list mode orders its rows. Similarity is the site's own list behavior:
+/// map distance *is* the similarity measure, so "sort from here" surfaces an
+/// item's sonic neighbors — each row grows a resort button that re-anchors
+/// the order on itself.
+enum ENListSort: String, CaseIterable, Identifiable {
+    case alphabetical, similarity
+    var id: String { rawValue }
+    var displayName: String {
+        switch self {
+        case .alphabetical: return "Alphabetical"
+        case .similarity: return "Similarity"
+        }
+    }
+}
+
+/// The mode picker and Find field — the site's header controls. List mode
+/// adds the sort menu beside Find.
 struct ENModeBar: View {
     @Binding var mode: ENBrowseMode
     @Binding var query: String
+    /// The list sort, shown only in list mode (map/scan don't sort).
+    var sort: Binding<ENListSort>? = nil
 
     var body: some View {
         VStack(spacing: 8) {
@@ -170,27 +192,52 @@ struct ENModeBar: View {
             }
             .pickerStyle(.segmented)
 
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                TextField("Find", text: $query)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                if !query.isEmpty {
-                    Button {
-                        query = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                    TextField("Find", text: $query)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                    if !query.isEmpty {
+                        Button {
+                            query = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
+                .padding(8)
+                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
+
+                if mode == .list, let sort {
+                    Menu {
+                        Picker("Sort", selection: sort) {
+                            ForEach(ENListSort.allCases) { s in
+                                Text(s.displayName).tag(s)
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "arrow.up.arrow.down")
+                            .padding(9)
+                            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
+                    }
+                    .accessibilityLabel("Sort order")
+                }
             }
-            .padding(8)
-            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
         }
         .padding(.horizontal)
         .padding(.bottom, 8)
     }
+}
+
+/// Squared map distance — the similarity metric (closer on the map = more
+/// alike). Squared is fine for ordering and avoids the sqrt.
+func enDistanceSquared(_ ax: Int, _ ay: Int, _ bx: Int, _ by: Int) -> Int {
+    let dx = ax - bx
+    let dy = ay - by
+    return dx * dx + dy * dy
 }
 
 struct ENFindEntry: Identifiable {
@@ -240,58 +287,93 @@ struct ENFindResults: View {
     }
 }
 
-/// List mode: every genre alphabetically in its map color, with a preview
-/// play button per row; tapping the row opens its artists.
+/// List mode: every genre in its map color, with a preview play button per
+/// row; tapping the row opens its artists. Sorted alphabetically, or — the
+/// site's own list behavior — by **similarity**: each row's resort button
+/// re-orders the whole list around that genre (it lands on top, its sonic
+/// neighbors follow). With no anchor picked yet, similarity shows the map's
+/// own top-to-bottom order, which is already a similarity walk.
 struct ENGenreListView: View {
     @EnvironmentObject private var playback: PlaybackManager
     @EnvironmentObject private var player: ENPreviewPlayer
 
     let genres: [ENGenre]
     let query: String
+    var sort: ENListSort = .alphabetical
+    /// The genre the similarity order is anchored on (its `key`).
+    @Binding var anchorKey: String?
     let onOpen: (ENGenre) -> Void
 
     private var shown: [ENGenre] {
         let base = query.isEmpty
             ? genres
             : genres.filter { $0.name.localizedStandardContains(query) }
-        return base.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        switch sort {
+        case .alphabetical:
+            return base.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        case .similarity:
+            guard let anchor = genres.first(where: { $0.key == anchorKey }) else { return base }
+            return base.sorted {
+                enDistanceSquared($0.x, $0.y, anchor.x, anchor.y)
+                    < enDistanceSquared($1.x, $1.y, anchor.x, anchor.y)
+            }
+        }
     }
 
     var body: some View {
-        List(shown) { genre in
-            HStack(spacing: 12) {
-                Button {
-                    if player.currentID == genre.key {
-                        player.togglePlayPause()
-                    } else if let preview = genre.preview {
-                        player.play(preview, id: genre.key, mainPlayback: playback)
+        ScrollViewReader { proxy in
+            List(shown) { genre in
+                HStack(spacing: 12) {
+                    Button {
+                        if player.currentID == genre.key {
+                            player.togglePlayPause()
+                        } else if let preview = genre.preview {
+                            player.play(preview, id: genre.key, mainPlayback: playback)
+                        }
+                    } label: {
+                        Image(systemName: player.currentID == genre.key && player.isPlaying
+                              ? "pause.circle.fill" : "play.circle")
+                            .font(.title3)
                     }
-                } label: {
-                    Image(systemName: player.currentID == genre.key && player.isPlaying
-                          ? "pause.circle.fill" : "play.circle")
-                        .font(.title3)
-                }
-                .buttonStyle(.borderless)
-                .disabled(genre.preview == nil)
-                .opacity(genre.preview == nil ? 0.3 : 1)
+                    .buttonStyle(.borderless)
+                    .disabled(genre.preview == nil)
+                    .opacity(genre.preview == nil ? 0.3 : 1)
 
-                Button {
-                    onOpen(genre)
-                } label: {
-                    HStack {
-                        Text(genre.name)
-                            .foregroundStyle(Color(UIColor(noiseHex: genre.color)))
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+                    Button {
+                        onOpen(genre)
+                    } label: {
+                        HStack {
+                            Text(genre.name)
+                                .foregroundStyle(Color(UIColor(noiseHex: genre.color)))
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                        .contentShape(Rectangle())
                     }
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+
+                    if sort == .similarity {
+                        Button {
+                            anchorKey = genre.key
+                        } label: {
+                            Image(systemName: genre.key == anchorKey
+                                  ? "arrow.up.to.line.circle.fill" : "arrow.up.to.line.circle")
+                                .font(.title3)
+                                .foregroundStyle(genre.key == anchorKey ? Color.accentColor : Color.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("Sort by similarity to \(genre.name)")
+                    }
                 }
-                .buttonStyle(.plain)
+            }
+            .listStyle(.plain)
+            .onChange(of: anchorKey) { key in
+                guard sort == .similarity, let key else { return }
+                withAnimation { proxy.scrollTo(key, anchor: .top) }
             }
         }
-        .listStyle(.plain)
     }
 }
 
@@ -422,6 +504,9 @@ struct ENGenreView: View {
     @State private var artists: [ENArtist]?
     @State private var mode: ENBrowseMode = .map
     @State private var query = ""
+    /// List mode's order, and the artist a similarity sort is anchored on.
+    @State private var listSort: ENListSort = .alphabetical
+    @State private var listAnchor: String?
     @State private var scanIndex = 0
     @State private var centerRequest: NoiseMapCenter?
     @State private var flashID: String?
@@ -475,7 +560,7 @@ struct ENGenreView: View {
 
     private func content(_ artists: [ENArtist]) -> some View {
         VStack(spacing: 0) {
-            ENModeBar(mode: $mode, query: $query)
+            ENModeBar(mode: $mode, query: $query, sort: $listSort)
             ZStack(alignment: .top) {
                 switch mode {
                 case .map, .scan:
@@ -534,28 +619,64 @@ struct ENGenreView: View {
         .ignoresSafeArea(edges: .bottom)
     }
 
+    /// The artist rows, ordered like the genre list: alphabetical, or by
+    /// similarity around the anchored artist (the per-row resort button).
     private func artistList(_ artists: [ENArtist]) -> some View {
-        let shown = (query.isEmpty ? artists : artists.filter { $0.name.localizedStandardContains(query) })
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        return List(shown) { artist in
-            Button {
-                select(artist)
-            } label: {
-                HStack {
-                    Text(artist.name)
-                        .foregroundStyle(Color(UIColor(noiseHex: artist.color)))
-                    Spacer()
-                    if player.currentID == artist.id && player.isPlaying {
-                        Image(systemName: "speaker.wave.2.fill")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+        let base = query.isEmpty ? artists : artists.filter { $0.name.localizedStandardContains(query) }
+        let shown: [ENArtist]
+        switch listSort {
+        case .alphabetical:
+            shown = base.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        case .similarity:
+            if let anchor = artists.first(where: { $0.id == listAnchor }) {
+                shown = base.sorted {
+                    enDistanceSquared($0.x, $0.y, anchor.x, anchor.y)
+                        < enDistanceSquared($1.x, $1.y, anchor.x, anchor.y)
+                }
+            } else {
+                shown = base
+            }
+        }
+        return ScrollViewReader { proxy in
+            List(shown) { artist in
+                HStack(spacing: 12) {
+                    Button {
+                        select(artist)
+                    } label: {
+                        HStack {
+                            Text(artist.name)
+                                .foregroundStyle(Color(UIColor(noiseHex: artist.color)))
+                            Spacer()
+                            if player.currentID == artist.id && player.isPlaying {
+                                Image(systemName: "speaker.wave.2.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+
+                    if listSort == .similarity {
+                        Button {
+                            listAnchor = artist.id
+                        } label: {
+                            Image(systemName: artist.id == listAnchor
+                                  ? "arrow.up.to.line.circle.fill" : "arrow.up.to.line.circle")
+                                .font(.title3)
+                                .foregroundStyle(artist.id == listAnchor ? Color.accentColor : Color.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("Sort by similarity to \(artist.name)")
                     }
                 }
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .listStyle(.plain)
+            .onChange(of: listAnchor) { key in
+                guard listSort == .similarity, let key else { return }
+                withAnimation { proxy.scrollTo(key, anchor: .top) }
+            }
         }
-        .listStyle(.plain)
     }
 
     /// Tap an artist: the preview starts right away and the action bar (with
@@ -599,9 +720,13 @@ struct ENArtistBar: View {
 
     @EnvironmentObject private var playback: PlaybackManager
     @EnvironmentObject private var browse: BrowseStore
+    @EnvironmentObject private var spotifySettings: SpotifySettingsStore
 
     @State private var choosingMode = false
     @State private var added: ArtistSourceMode?
+    /// The live-from-Spotify discography sheet (offered when credentials are
+    /// saved — the scraped dataset itself carries no discographies).
+    @State private var browsingDiscography = false
 
     var body: some View {
         HStack(spacing: 14) {
@@ -664,8 +789,18 @@ struct ENArtistBar: View {
         .confirmationDialog("Follow this artist", isPresented: $choosingMode, titleVisibility: .visible) {
             Button("Top 10") { add(.topTracks) }
             Button("Discography") { add(.discography) }
+            if spotifySettings.isConfigured, artist.spotify != nil {
+                Button("Browse Discography") { browsingDiscography = true }
+            }
         } message: {
-            Text("Add “\(artist.name)” as a new Artist source in Browse.")
+            Text(spotifySettings.isConfigured && artist.spotify != nil
+                 ? "Add “\(artist.name)” as a new Artist source in Browse — or browse their real discography from Spotify."
+                 : "Add “\(artist.name)” as a new Artist source in Browse.")
+        }
+        .sheet(isPresented: $browsingDiscography) {
+            if let spotifyID = artist.spotify {
+                ENDiscographySheet(artistName: artist.name, spotifyID: spotifyID)
+            }
         }
         .onChange(of: artist.id) { _ in added = nil }
     }
@@ -682,5 +817,185 @@ struct ENArtistBar: View {
             try? await Task.sleep(nanoseconds: 2_500_000_000)
             if added == mode { added = nil }
         }
+    }
+}
+
+// MARK: - Live discography (Spotify)
+
+/// The tapped artist's *real* discography, read live from Spotify — the
+/// scraped dataset carries each artist's Spotify id but no catalogue, so this
+/// needs the Settings ▸ Spotify credentials. Releases group into Albums /
+/// Singles & EPs / Compilations, newest first; expanding one fetches its
+/// tracklist, and **Download** hands the album to the exact pipeline a pasted
+/// album link takes — per-track YouTube matching, the selection popup, a
+/// folder named after the album.
+struct ENDiscographySheet: View {
+    let artistName: String
+    let spotifyID: String
+
+    @EnvironmentObject private var spotifySettings: SpotifySettingsStore
+    @EnvironmentObject private var downloads: DownloadManager
+    @EnvironmentObject private var browse: BrowseStore
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var albums: [SpotifyAlbumSummary]?
+    @State private var loadError: String?
+    /// Releases already handed to the queue this visit, so the button reads
+    /// as done instead of quietly queueing twice.
+    @State private var sent: Set<String> = []
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let loadError {
+                    ContentUnavailableViewCompat(
+                        title: "Couldn't load the discography",
+                        systemImage: "exclamationmark.triangle",
+                        description: loadError
+                    )
+                } else if let albums {
+                    if albums.isEmpty {
+                        ContentUnavailableViewCompat(
+                            title: "Nothing listed",
+                            systemImage: "opticaldisc",
+                            description: "Spotify lists no releases for this artist."
+                        )
+                    } else {
+                        releaseList(albums)
+                    }
+                } else {
+                    ProgressView("Reading the catalogue…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .navigationTitle(artistName)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            // A downloaded album ends in the same selection popup a pasted
+            // one does — it has to present over *this* sheet, because the
+            // Download tab's copy sits buried under the full-screen browser.
+            .sheet(item: $downloads.pendingPlaylist) { pending in
+                PlaylistPickerView(pending: pending)
+            }
+        }
+        .task {
+            guard let client = spotifySettings.client else {
+                loadError = "Add Spotify credentials in Settings ▸ Spotify first."
+                return
+            }
+            do {
+                albums = try await client.artistAlbums(id: spotifyID)
+            } catch {
+                loadError = error.localizedDescription
+            }
+        }
+    }
+
+    private func releaseList(_ albums: [SpotifyAlbumSummary]) -> some View {
+        List {
+            releaseSection("Albums", albums.filter { $0.group == "album" })
+            releaseSection("Singles & EPs", albums.filter { $0.group == "single" })
+            releaseSection("Compilations", albums.filter { $0.group == "compilation" })
+            Section {
+            } footer: {
+                Text("Download queues a release the same way pasting its Spotify link does: each track is matched to a YouTube video, you pick which to keep, and they land in a folder named after the release — in \(browse.downloadMode.displayName) mode.")
+            }
+        }
+        .listStyle(.insetGrouped)
+    }
+
+    @ViewBuilder
+    private func releaseSection(_ title: String, _ items: [SpotifyAlbumSummary]) -> some View {
+        if !items.isEmpty {
+            Section(title) {
+                ForEach(items.sorted { $0.releaseDate > $1.releaseDate }) { album in
+                    ENAlbumRow(album: album, sent: sent.contains(album.id)) {
+                        guard let ref = SpotifyRef.parse(album.url) else { return }
+                        downloads.enqueueSpotify(ref: ref, urlString: album.url,
+                                                 mode: browse.downloadMode)
+                        sent.insert(album.id)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// One release row: name, year and track count, a Download button, and a
+/// disclosure that reads the tracklist from Spotify on first expand.
+private struct ENAlbumRow: View {
+    let album: SpotifyAlbumSummary
+    let sent: Bool
+    let onDownload: () -> Void
+
+    @EnvironmentObject private var spotifySettings: SpotifySettingsStore
+
+    @State private var expanded = false
+    @State private var tracks: [SpotifyTrack]?
+    @State private var trackError: String?
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            if let trackError {
+                Text(trackError)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            } else if let tracks {
+                ForEach(Array(tracks.enumerated()), id: \.offset) { index, track in
+                    Text("\(index + 1).  \(track.name)")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                ProgressView()
+            }
+        } label: {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(album.name)
+                        .lineLimit(2)
+                    Text(detailLine)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                if sent {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.green)
+                } else {
+                    Button {
+                        onDownload()
+                    } label: {
+                        Image(systemName: "arrow.down.circle")
+                            .font(.title3)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Download \(album.name)")
+                }
+            }
+        }
+        .onChange(of: expanded) { open in
+            guard open, tracks == nil, trackError == nil else { return }
+            Task {
+                guard let client = spotifySettings.client else { return }
+                do {
+                    tracks = try await client.album(id: album.id).tracks
+                } catch {
+                    trackError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private var detailLine: String {
+        var parts: [String] = []
+        if !album.year.isEmpty { parts.append(album.year) }
+        if album.totalTracks > 0 { parts.append("\(album.totalTracks) track\(album.totalTracks == 1 ? "" : "s")") }
+        return parts.joined(separator: " · ")
     }
 }

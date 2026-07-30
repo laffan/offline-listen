@@ -16,12 +16,22 @@ enum AIDiscovery {
         guard await settings.isAuthenticated else { throw BrowseFetchError.aiNotConfigured }
         let client = await AnthropicClient(apiKey: settings.apiKey, model: settings.model)
 
+        // The full exchange goes to the Log (debug level) so a refresh that
+        // comes back thin can be diagnosed on-device: was it the model's
+        // suggestions, or the YouTube resolution afterwards?
+        let prompt = userPrompt(source: source, excludingTitles: excludingTitles)
+        appLog("AI prompt → \(source.kind.displayName) \"\(source.name)\":\n--- system ---\n\(systemPrompt)\n--- user ---\n\(prompt)",
+               level: .debug, category: "Browse")
         let raw = try await client.complete(
             system: systemPrompt,
-            userText: userPrompt(source: source, excludingTitles: excludingTitles),
+            userText: prompt,
             maxTokens: 1500
         )
+        appLog("AI response for \"\(source.name)\" (\(raw.count) chars):\n\(raw.prefix(1500))\(raw.count > 1500 ? "\n… [truncated in log]" : "")",
+               level: .debug, category: "Browse")
         let suggestions = parse(raw)
+        appLog("\(source.kind.displayName) \"\(source.name)\": model suggested \(suggestions.count) song(s).",
+               category: "Browse")
         guard !suggestions.isEmpty else {
             throw BrowseFetchError.badInput("The AI returned no usable song suggestions.")
         }
@@ -44,6 +54,10 @@ enum AIDiscovery {
                 datePublished: nil
             ))
         }
+        // An all-skips outcome means YouTube search resolution is the broken
+        // half (rate-limited, markup drift), not the model — say so plainly.
+        appLog("\(source.kind.displayName) \"\(source.name)\": \(items.count) of \(suggestions.count) suggestion(s) resolved on YouTube.",
+               level: items.isEmpty ? .warning : .info, category: "Browse")
         return items
     }
 

@@ -43,13 +43,30 @@ enum DiscographyAgent {
         guard !artist.isEmpty else { throw BrowseFetchError.badInput("Enter an artist's name.") }
 
         let client = await AnthropicClient(apiKey: settings.apiKey, model: settings.model)
+        // Full exchange to the Log (debug level), so an incomplete catalogue
+        // can be pinned on the model's answer vs. the caps/resolution below.
+        appLog("AI prompt → Discography \"\(artist)\":\n--- system ---\n\(systemPrompt)\n--- user ---\nArtist: \(artist)",
+               level: .debug, category: "Browse")
+        // 8192, not 4096: a prolific artist's 20-album catalogue as JSON runs
+        // past 4k output tokens, and a capped response truncates mid-array —
+        // which used to read as an inexplicably short discography.
         let raw = try await client.complete(
             system: systemPrompt,
             userText: "Artist: \(artist)",
-            maxTokens: 4096
+            maxTokens: 8192
         )
+        appLog("Discography response for \"\(artist)\" (\(raw.count) chars):\n\(raw.prefix(1200))\(raw.count > 1200 ? "\n… [truncated in log]" : "")",
+               level: .debug, category: "Browse")
+        if !raw.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("}") {
+            appLog("Discography response for \"\(artist)\" doesn't end in \"}\" — the model likely hit the token cap, so late albums are missing.",
+                   level: .warning, category: "Browse")
+        }
 
         let discography = parse(raw)
+        let modelTracks = discography.albums.reduce(0) { $0 + $1.tracks.count }
+        appLog("Discography for \"\(artist)\": model returned \(discography.highlights.count) highlight(s) and \(discography.albums.count) album(s) with \(modelTracks) track(s).",
+               category: "Browse")
+        logCapDrops(artist: artist, discography: discography)
         guard !discography.highlights.isEmpty || !discography.albums.isEmpty else {
             throw BrowseFetchError.badInput("The AI couldn't produce a discography for \"\(artist)\". Check the spelling and try again.")
         }
@@ -90,6 +107,26 @@ enum DiscographyAgent {
         appLog("Discography: resolved \(items.count) track(s) for \"\(artist)\" across up to \(min(discography.albums.count, maxAlbums)) album(s).",
                category: "Browse")
         return Result(items: items)
+    }
+
+    /// Says up front — precisely — how much of the model's catalogue the caps
+    /// will drop, so "the discography is incomplete" is a diagnosis you can
+    /// read off the Log instead of a mystery: N albums past the album cap,
+    /// M tracks past the per-album cap, K past the total-lookup ceiling.
+    private static func logCapDrops(artist: String, discography: Discography) {
+        let extraAlbums = max(0, discography.albums.count - maxAlbums)
+        let keptAlbums = discography.albums.prefix(maxAlbums)
+        let overlongTracks = keptAlbums.reduce(0) { $0 + max(0, $1.tracks.count - maxTracksPerAlbum) }
+        let planned = min(discography.highlights.count, maxHighlights)
+            + keptAlbums.reduce(0) { $0 + min($1.tracks.count, maxTracksPerAlbum) }
+        let overTotal = max(0, planned - maxTotalTracks)
+        guard extraAlbums > 0 || overlongTracks > 0 || overTotal > 0 else { return }
+        var parts: [String] = []
+        if extraAlbums > 0 { parts.append("\(extraAlbums) album(s) past the \(maxAlbums)-album cap") }
+        if overlongTracks > 0 { parts.append("\(overlongTracks) track(s) past the \(maxTracksPerAlbum)-per-album cap") }
+        if overTotal > 0 { parts.append("\(overTotal) track(s) past the \(maxTotalTracks)-lookup ceiling") }
+        appLog("Discography for \"\(artist)\": the refresh caps will drop \(parts.joined(separator: ", ")).",
+               level: .warning, category: "Browse")
     }
 
     /// Resolves one `"artist track"` query to a real YouTube video and wraps it

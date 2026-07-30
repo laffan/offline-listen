@@ -67,6 +67,23 @@ struct SpotifyTrack: Sendable, Equatable {
     var duration: TimeInterval { Double(durationMS) / 1000 }
 }
 
+/// One release in an artist's catalogue, as `/artists/{id}/albums` lists it —
+/// enough to browse a discography and hand an album to the download pipeline.
+struct SpotifyAlbumSummary: Sendable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    /// "1979", "1979-10" or "1979-10-12" — Spotify's precision varies.
+    let releaseDate: String
+    /// "album" | "single" | "compilation" — the group Spotify files it under.
+    let group: String
+    let totalTracks: Int
+
+    var year: String { releaseDate.isEmpty ? "" : String(releaseDate.prefix(4)) }
+    /// The open.spotify.com link — the same shape the paste path parses, so
+    /// downloading an album from here rides the existing pipeline unchanged.
+    var url: String { "https://open.spotify.com/album/\(id)" }
+}
+
 /// A Spotify album, playlist or artist reduced to a name (which becomes the
 /// library folder's name) and its tracks in Spotify's own order.
 struct SpotifyCollection: Sendable {
@@ -248,6 +265,39 @@ struct SpotifyClient {
         appLog("Spotify artist \"\(name)\": \(tracks.count) top track(s) in market \(market).",
                category: Self.category)
         return SpotifyCollection(name: name, tracks: tracks)
+    }
+
+    /// An artist's releases — albums, singles/EPs and compilations, without
+    /// the "appears on" clutter — paginated to completion. This backs the
+    /// Every Noise browser's discography view; each row's `url` re-enters the
+    /// ordinary paste pipeline when the user downloads an album.
+    func artistAlbums(id: String) async throws -> [SpotifyAlbumSummary] {
+        var albums: [SpotifyAlbumSummary] = []
+        var next: String? = "\(Self.apiBase)/artists/\(id)/albums?include_groups=album,single,compilation&limit=50"
+        while let link = next, let url = URL(string: link) {
+            let data = try await get(url, describing: "artist's albums")
+            guard let page = try? JSONDecoder().decode(APIPage<APIAlbumSummary>.self, from: data) else {
+                throw SpotifyError.malformedResponse
+            }
+            for item in page.items ?? [] {
+                guard let itemID = item.id, let name = item.name, !name.isEmpty else { continue }
+                albums.append(SpotifyAlbumSummary(
+                    id: itemID,
+                    name: name,
+                    releaseDate: item.releaseDate ?? "",
+                    group: item.albumGroup ?? item.albumType ?? "album",
+                    totalTracks: item.totalTracks ?? 0))
+            }
+            next = page.next
+        }
+        // The same release can be listed once per market variant under a
+        // different id; a name+year collapse keeps the list readable.
+        var seen = Set<String>()
+        let unique = albums.filter {
+            seen.insert("\($0.name.lowercased())|\($0.year)|\($0.group)").inserted
+        }
+        appLog("Spotify artist \(id): \(unique.count) release(s) in the catalogue.", category: Self.category)
+        return unique
     }
 
     /// Dispatches a collection reference to the right endpoint.
@@ -454,6 +504,24 @@ private struct APIArtist: Decodable {
 private struct APIAlbum: Decodable {
     let name: String?
     let tracks: APIPage<APITrack>?
+}
+
+/// A row of `/artists/{id}/albums` — the summary form, no tracklist.
+private struct APIAlbumSummary: Decodable {
+    let id: String?
+    let name: String?
+    let releaseDate: String?
+    let albumGroup: String?
+    let albumType: String?
+    let totalTracks: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name
+        case releaseDate = "release_date"
+        case albumGroup = "album_group"
+        case albumType = "album_type"
+        case totalTracks = "total_tracks"
+    }
 }
 
 private struct APIPlaylist: Decodable {

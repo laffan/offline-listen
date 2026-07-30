@@ -68,6 +68,18 @@ session's local checkout at `/home/user/offline-listen` (local commit
    the scraper's per-genre shards don't carry one); genre "similar genres"
    sidebar links (not scraped).
 
+**Round 2 (after the first on-device build succeeded):** list mode gained a
+sort menu (Alphabetical / Similarity, with per-row "resort from here"
+anchoring — map distance is the similarity metric); the artist "+" dialog
+gained **Browse Discography** (live from Spotify via the artist id in the
+dataset + `SpotifyClient.artistAlbums`; per-release Download rides
+`enqueueSpotify`, with the selection popup presented inside the sheet); and
+the Top 10 / Discography agents now log their full prompts/responses at
+debug level, report cap-drops precisely, and Discography's `maxTokens` rose
+4096 → 8192 (truncated JSON was reading as an incomplete catalogue). These
+are build-checked only up to round 1 — the round-2 diff itself has not been
+compiled yet.
+
 ## Design decisions worth knowing
 
 - **No Spotify API anywhere.** Preview URLs are static p.scdn.co links
