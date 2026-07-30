@@ -2,7 +2,9 @@ import SwiftUI
 import UIKit
 
 /// One dot of text on a noise map — a genre on the master map, or an artist
-/// on a genre's map. Coordinates are the site's own layout pixels.
+/// on a genre's map. Coordinates are the site's own layout pixels (top-left
+/// origin); the renderer flips the vertical axis, so an item with the
+/// smallest `y` draws at the *bottom* of the canvas.
 struct NoiseMapItem {
     let id: String
     let label: String
@@ -118,6 +120,13 @@ struct NoiseMapView: UIViewRepresentable {
             indexByID.removeAll(keepingCapacity: true)
             grid.removeAll(keepingCapacity: true)
 
+            // The vertical axis renders *reversed* relative to the scraped
+            // page coordinates: the site's y grows downward (CSS), and flipping
+            // it here turns the map the way round the user reads it. Only the
+            // anchor positions flip — everything downstream (the grid, taps,
+            // centering) works off the flipped `frames`, so nothing else cares.
+            let maxRawY = items.map(\.y).max() ?? 0
+
             var maxX: CGFloat = 0
             var maxY: CGFloat = 0
             for (i, item) in items.enumerated() {
@@ -126,7 +135,7 @@ struct NoiseMapView: UIViewRepresentable {
                 let text = item.label as NSString
                 let size = text.size(withAttributes: [.font: font])
                 let frame = CGRect(x: Self.padding + item.x,
-                                   y: Self.padding + item.y,
+                                   y: Self.padding + (maxRawY - item.y),
                                    width: ceil(size.width) + 10,
                                    height: ceil(size.height) + 4)
                 frames.append(frame)

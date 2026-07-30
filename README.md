@@ -531,7 +531,9 @@ when that genre is opened, with a small LRU keeping recent genres warm. And the
 maps are **virtualized**: a `UIScrollView` with a spatial grid materializes
 only the labels intersecting the visible rect (plus a margin), recycling them
 from a pool as the map pans — a few hundred live views at most, whatever the
-dataset size (`NoiseMapView`). The repo carries the scraped dataset (6,291
+dataset size (`NoiseMapView`). The maps render with the **vertical axis
+reversed** relative to the scraped page coordinates (the site's y grows
+downward, CSS-style; the renderer flips it once, at layout). The repo carries the scraped dataset (6,291
 genres, ~630k artist rows, ~57 MB of shards), so a fresh clone builds with the
 whole map included; a build somehow missing it shows a clear explanation
 instead of an empty map.
