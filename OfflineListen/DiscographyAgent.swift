@@ -55,11 +55,13 @@ enum DiscographyAgent {
 
     /// The pinned **Top 10** as an agent call: the model lists the artist's
     /// ten most popular tracks, names only — YouTube matching stays the
-    /// browser's on-demand search step, exactly like an album's tracks. This
-    /// is what the Spotify-backed discography's "Search Top 10" runs on:
-    /// Spotify's own `/top-tracks` endpoint answers 403 (Forbidden) under
-    /// newer client-credentials apps, and no Spotify call is needed to *name*
-    /// the songs anyway.
+    /// browser's on-demand search step, exactly like an album's tracks.
+    ///
+    /// An **empty answer is a legitimate one**, not an error: the prompt
+    /// forbids inventing tracks, so the model answers `[]` for any artist it
+    /// doesn't know — which is most of the Every Noise map's long tail. The
+    /// caller (`SpotifyDiscographyProvider`) treats empty as "ask the
+    /// catalogue instead", never as something to show the user.
     static func topTracks(artist rawArtist: String, settings: AISettingsStore) async throws -> [String] {
         guard await settings.isAuthenticated else { throw BrowseFetchError.aiNotConfigured }
 
@@ -80,9 +82,6 @@ enum DiscographyAgent {
         let titles = parseTitles(raw)
         appLog("Top 10 for \"\(artist)\": model returned \(titles.count) track(s).",
                level: titles.isEmpty ? .warning : .info, category: "Browse")
-        guard !titles.isEmpty else {
-            throw BrowseFetchError.badInput("The AI couldn't list top tracks for \"\(artist)\". Check the spelling and try again.")
-        }
         return Array(titles.prefix(10))
     }
 

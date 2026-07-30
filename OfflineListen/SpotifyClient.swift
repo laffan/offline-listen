@@ -59,6 +59,10 @@ struct SpotifyTrack: Sendable, Equatable {
     /// The album cover's largest image URL, when the endpoint served one —
     /// what a download fetched from this track wears as its artwork.
     let albumImageURL: String?
+    /// Spotify's 0–100 per-track popularity score, carried by *full* track
+    /// objects (`/tracks?ids=` re-reads); nil on simplified ones. What the
+    /// catalogue-derived Top 10 ranks by.
+    var popularity: Int? = nil
 
     var primaryArtist: String { artists.first ?? "" }
 
@@ -154,6 +158,10 @@ struct SpotifyClient {
     /// "artist" can list thousands of releases; at the default page size this
     /// still covers 1,000+).
     private static let maxAlbumPages = 50
+    /// How many releases the catalogue-derived Top 10 reads tracklists for —
+    /// each costs an album read plus its `/tracks?ids=` batches, so a huge
+    /// catalogue is sampled rather than swept.
+    private static let maxDerivedTopReleases = 12
 
     /// The market for `/artists/{id}/top-tracks`, where it's a required
     /// parameter: the device's region, falling back to US.
@@ -275,6 +283,47 @@ struct SpotifyClient {
         appLog("Spotify artist \"\(name)\": \(tracks.count) top track(s) in market \(market).",
                category: Self.category)
         return SpotifyCollection(name: name, tracks: tracks)
+    }
+
+    /// Rebuilds an artist's Top 10 from the catalogue when the dedicated
+    /// endpoint can't serve it (`/top-tracks` answers 403 under newer
+    /// client-credentials apps, and the AI agent only knows well-known
+    /// names): reads the tracklists of up to `maxDerivedTopReleases`
+    /// non-compilation releases and ranks every track by Spotify's own
+    /// per-track **popularity** score — which the full track objects carry,
+    /// and which the top-tracks endpoint is essentially a view over.
+    /// Same-named recordings (an album track re-issued as a single) collapse
+    /// to their most popular copy.
+    func derivedTopTracks(artistID: String, limit: Int = 10) async throws -> [SpotifyTrack] {
+        let releases = try await artistAlbums(id: artistID)
+        var considered = releases.filter { $0.group != "compilation" }
+        if considered.isEmpty { considered = releases }
+        if considered.count > Self.maxDerivedTopReleases {
+            considered = Array(considered.prefix(Self.maxDerivedTopReleases))
+        }
+
+        var best: [String: SpotifyTrack] = [:]
+        var order: [String] = []
+        for release in considered {
+            guard let collection = try? await album(id: release.id) else { continue }
+            for track in collection.tracks {
+                let key = track.name.lowercased()
+                if let existing = best[key] {
+                    if (track.popularity ?? 0) > (existing.popularity ?? 0) {
+                        best[key] = track
+                    }
+                } else {
+                    best[key] = track
+                    order.append(key)
+                }
+            }
+        }
+        let ranked = order.compactMap { best[$0] }
+            .sorted { ($0.popularity ?? 0) > ($1.popularity ?? 0) }
+        let top = Array(ranked.prefix(limit))
+        appLog("Spotify artist \(artistID): derived a top \(top.count) from \(considered.count) release(s) (\(ranked.count) tracks ranked by popularity).",
+               category: Self.category)
+        return top
     }
 
     /// An artist's display metadata — name and portrait — from `/artists/{id}`.
@@ -438,7 +487,8 @@ struct SpotifyClient {
                             durationMS: api.durationMS ?? 0,
                             isrc: (isrc?.isEmpty ?? true) ? nil : isrc,
                             trackNumber: api.trackNumber,
-                            albumImageURL: api.album?.images?.first?.url ?? imageFallback)
+                            albumImageURL: api.album?.images?.first?.url ?? imageFallback,
+                            popularity: api.popularity)
     }
 
     // MARK: - Transport
@@ -559,9 +609,10 @@ private struct APITrack: Decodable {
     let externalIDs: APIExternalIDs?
     let trackNumber: Int?
     let isLocal: Bool?
+    let popularity: Int?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, type, artists, album
+        case id, name, type, artists, album, popularity
         case durationMS = "duration_ms"
         case externalIDs = "external_ids"
         case trackNumber = "track_number"

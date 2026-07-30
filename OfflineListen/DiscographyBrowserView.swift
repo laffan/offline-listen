@@ -140,18 +140,36 @@ struct SpotifyDiscographyProvider: DiscographyProviding {
         let collection: SpotifyCollection
         switch release.kind {
         case .topTen:
-            // Agent-listed when possible (see `aiSettings`); those tracks
-            // carry no ISRC or duration, so their YouTube match falls to the
-            // plain title search — the same rule the AI layout lives by.
+            // Three sources, in order of preference. The **agent** knows the
+            // popular canon and costs one call — but it answers [] for
+            // artists it doesn't know, which is most of the Every Noise
+            // map's long tail, so an empty answer isn't a failure: the
+            // **catalogue itself** is read next, ranked by Spotify's
+            // per-track popularity score (endpoints that still work). The
+            // dedicated **top-tracks endpoint** stays as the last resort —
+            // it answers 403 under newer client-credentials apps, but
+            // remains correct where it works.
             if let aiSettings, await aiSettings.isAuthenticated {
-                let titles = try await DiscographyAgent.topTracks(artist: artistName,
-                                                                  settings: aiSettings)
-                return titles.enumerated().map { index, title in
-                    DiscographyTrackInfo(id: "top-\(index)", name: title, artist: artistName,
-                                         albumName: "", durationMS: nil, isrc: nil)
+                let titles = (try? await DiscographyAgent.topTracks(artist: artistName,
+                                                                    settings: aiSettings)) ?? []
+                if !titles.isEmpty {
+                    // Agent tracks carry no ISRC or duration, so their
+                    // YouTube match falls to the plain title search — the
+                    // same rule the AI layout lives by.
+                    return titles.enumerated().map { index, title in
+                        DiscographyTrackInfo(id: "top-\(index)", name: title, artist: artistName,
+                                             albumName: "", durationMS: nil, isrc: nil)
+                    }
                 }
+                appLog("Top 10: the model doesn't know \"\(artistName)\" — ranking the catalogue by popularity instead.",
+                       category: "Browse")
             }
-            collection = try await client.artistTopTracks(id: release.id)
+            if let derived = try? await client.derivedTopTracks(artistID: release.id),
+               !derived.isEmpty {
+                collection = SpotifyCollection(name: "Top 10", tracks: derived)
+            } else {
+                collection = try await client.artistTopTracks(id: release.id)
+            }
         case .release, .highlights:
             collection = try await client.album(id: release.id)
         }
