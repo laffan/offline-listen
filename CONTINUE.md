@@ -80,6 +80,18 @@ debug level, report cap-drops precisely, and Discography's `maxTokens` rose
 are build-checked only up to round 1 — the round-2 diff itself has not been
 compiled yet.
 
+**Round 3 (after round 2 shipped and worked on-device):** the browser moved
+from a fullScreenCover to a **push inside Browse's navigation** (tab bar
+visible; genre and discography pushes use `navigationDestination(isPresented:)`
+since the stack isn't path-bound); the discography's per-release action became
+a **magnifier** that matches tracks on YouTube inline (`SpotifyResolver.
+youTubeURL` per track, live progress, matched rows gain Download/Preview,
+misses dim — the PlaylistPicker popup is gone from this flow); per-track
+downloads enqueue **unfiled** so they appear in the Library's Tracks list, not
+an album folder (that folder-invisibility was reported as a bug); and
+`artistAlbums` dropped its explicit `limit=50` (Spotify 400s it now) in favor
+of server-default paging via `next` links.
+
 ## Design decisions worth knowing
 
 - **No Spotify API anywhere.** Preview URLs are static p.scdn.co links

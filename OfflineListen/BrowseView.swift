@@ -62,7 +62,9 @@ struct BrowseView: View {
             .sheet(item: $addingKind) { kind in
                 AddBrowseSourceView(kind: kind)
             }
-            .fullScreenCover(isPresented: $showingEveryNoise) {
+            // A push, not a cover: the browser lives inside the main nav —
+            // tab bar in place — like every other Browse screen.
+            .navigationDestination(isPresented: $showingEveryNoise) {
                 EveryNoiseView()
             }
         }

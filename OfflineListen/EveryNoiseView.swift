@@ -8,7 +8,6 @@ import SwiftUI
 /// regular Artist source (Top 10 or Discography) back in Browse.
 struct EveryNoiseView: View {
     @EnvironmentObject private var playback: PlaybackManager
-    @Environment(\.dismiss) private var dismiss
 
     @StateObject private var store = EveryNoiseStore()
     @StateObject private var player = ENPreviewPlayer()
@@ -18,8 +17,9 @@ struct EveryNoiseView: View {
     /// List mode's order, and the genre a similarity sort is anchored on.
     @State private var listSort: ENListSort = .alphabetical
     @State private var listAnchor: String?
-    /// Programmatic pushes (map taps, find results) drive the stack directly.
-    @State private var path: [ENGenre] = []
+    /// The genre being opened (map taps, list rows) — pushed onto Browse's
+    /// own navigation stack, so the tab bar stays put throughout.
+    @State private var pushedGenre: ENGenre?
     /// Where scan left off, so reopening resumes mid-map.
     @AppStorage("everyNoiseScanIndex") private var scanIndex = 0
     @State private var centerRequest: NoiseMapCenter?
@@ -27,33 +27,33 @@ struct EveryNoiseView: View {
     @State private var flashID: String?
 
     var body: some View {
-        NavigationStack(path: $path) {
-            Group {
-                switch store.state {
-                case .idle, .loading:
-                    ProgressView("Loading the genre map…")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                case .missing:
-                    missingData
-                case .ready:
-                    browser
-                }
+        Group {
+            switch store.state {
+            case .idle, .loading:
+                ProgressView("Loading the genre map…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .missing:
+                missingData
+            case .ready:
+                browser
             }
-            .navigationTitle("Every Noise")
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(for: ENGenre.self) { genre in
-                ENGenreView(genre: genre)
-            }
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Done") { dismiss() }
-                }
+        }
+        .navigationTitle("Every Noise")
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(isPresented: genreIsPushed) {
+            if let pushedGenre {
+                ENGenreView(genre: pushedGenre)
             }
         }
         .environmentObject(store)
         .environmentObject(player)
         .onAppear { store.loadIfNeeded() }
         .onDisappear { player.stop() }
+    }
+
+    private var genreIsPushed: Binding<Bool> {
+        Binding(get: { pushedGenre != nil },
+                set: { if !$0 { pushedGenre = nil } })
     }
 
     private var missingData: some View {
@@ -74,7 +74,7 @@ struct EveryNoiseView: View {
                 case .list:
                     ENGenreListView(genres: store.genres, query: query,
                                     sort: listSort, anchorKey: $listAnchor) { genre in
-                        path.append(genre)
+                        pushedGenre = genre
                     }
                 }
                 if mode != .list, !query.isEmpty {
@@ -115,7 +115,7 @@ struct EveryNoiseView: View {
                 // Scanning: a tap retunes the scan there instead of leaving.
                 if let i = store.genres.firstIndex(of: genre) { scanIndex = i }
             } else {
-                path.append(genre)
+                pushedGenre = genre
             }
         }
         .ignoresSafeArea(edges: .bottom)
@@ -512,6 +512,8 @@ struct ENGenreView: View {
     @State private var flashID: String?
     /// The artist the action bar is showing (tapped on map or list).
     @State private var selected: ENArtist?
+    /// The artist whose live Spotify discography is being pushed.
+    @State private var discographyArtist: ENArtist?
 
     var body: some View {
         Group {
@@ -549,11 +551,20 @@ struct ENGenreView: View {
                 .accessibilityLabel("Play a \(genre.name) example")
             }
         }
+        .navigationDestination(isPresented: Binding(
+            get: { discographyArtist != nil },
+            set: { if !$0 { discographyArtist = nil } }
+        )) {
+            if let discographyArtist, let spotifyID = discographyArtist.spotify {
+                ENDiscographyView(artistName: discographyArtist.name, spotifyID: spotifyID)
+            }
+        }
         .task(id: genre.key) {
             artists = await store.artists(for: genre)
         }
         .onDisappear {
-            // Popping back to the genre map stops this genre's previews.
+            // Covered or popped, this genre's previews stop (the discography
+            // and the genre map both talk over them otherwise).
             player.stop()
         }
     }
@@ -593,10 +604,14 @@ struct ENGenreView: View {
                 centerRequest = NoiseMapCenter(id: entry.id, token: UUID())
             }
         } else if let selected {
-            ENArtistBar(artist: selected, player: player) {
-                self.selected = nil
-                player.stop()
-            }
+            ENArtistBar(artist: selected, player: player,
+                        onBrowseDiscography: {
+                            discographyArtist = selected
+                        },
+                        onClose: {
+                            self.selected = nil
+                            player.stop()
+                        })
         }
     }
 
@@ -716,6 +731,9 @@ struct ENGenreView: View {
 struct ENArtistBar: View {
     let artist: ENArtist
     @ObservedObject var player: ENPreviewPlayer
+    /// Pushes the live-from-Spotify discography (offered when credentials are
+    /// saved — the scraped dataset itself carries no discographies).
+    var onBrowseDiscography: (() -> Void)? = nil
     let onClose: () -> Void
 
     @EnvironmentObject private var playback: PlaybackManager
@@ -724,9 +742,6 @@ struct ENArtistBar: View {
 
     @State private var choosingMode = false
     @State private var added: ArtistSourceMode?
-    /// The live-from-Spotify discography sheet (offered when credentials are
-    /// saved — the scraped dataset itself carries no discographies).
-    @State private var browsingDiscography = false
 
     var body: some View {
         HStack(spacing: 14) {
@@ -789,20 +804,19 @@ struct ENArtistBar: View {
         .confirmationDialog("Follow this artist", isPresented: $choosingMode, titleVisibility: .visible) {
             Button("Top 10") { add(.topTracks) }
             Button("Discography") { add(.discography) }
-            if spotifySettings.isConfigured, artist.spotify != nil {
-                Button("Browse Discography") { browsingDiscography = true }
+            if offersLiveDiscography, let onBrowseDiscography {
+                Button("Browse Discography") { onBrowseDiscography() }
             }
         } message: {
-            Text(spotifySettings.isConfigured && artist.spotify != nil
+            Text(offersLiveDiscography
                  ? "Add “\(artist.name)” as a new Artist source in Browse — or browse their real discography from Spotify."
                  : "Add “\(artist.name)” as a new Artist source in Browse.")
         }
-        .sheet(isPresented: $browsingDiscography) {
-            if let spotifyID = artist.spotify {
-                ENDiscographySheet(artistName: artist.name, spotifyID: spotifyID)
-            }
-        }
         .onChange(of: artist.id) { _ in added = nil }
+    }
+
+    private var offersLiveDiscography: Bool {
+        spotifySettings.isConfigured && artist.spotify != nil && onBrowseDiscography != nil
     }
 
     /// Mirrors the Blog Agent's tap-an-artist flow: create the source and
@@ -824,63 +838,52 @@ struct ENArtistBar: View {
 
 /// The tapped artist's *real* discography, read live from Spotify — the
 /// scraped dataset carries each artist's Spotify id but no catalogue, so this
-/// needs the Settings ▸ Spotify credentials. Releases group into Albums /
-/// Singles & EPs / Compilations, newest first; expanding one fetches its
-/// tracklist, and **Download** hands the album to the exact pipeline a pasted
-/// album link takes — per-track YouTube matching, the selection popup, a
-/// folder named after the album.
-struct ENDiscographySheet: View {
+/// needs the Settings ▸ Spotify credentials. Pushed inside the main nav like
+/// everything else. Releases group into Albums / Singles & EPs / Compilations,
+/// newest first; expanding one lists its tracks, and each release's **search**
+/// button matches its tracks against YouTube in place — matched tracks light
+/// up with Download/Preview beside them, no picker popup. Downloads are
+/// single-track picks, so they file **unfiled** (visible in the Library's
+/// Tracks list and the Inbox both), not into an album folder.
+struct ENDiscographyView: View {
     let artistName: String
     let spotifyID: String
 
     @EnvironmentObject private var spotifySettings: SpotifySettingsStore
-    @EnvironmentObject private var downloads: DownloadManager
     @EnvironmentObject private var browse: BrowseStore
-    @Environment(\.dismiss) private var dismiss
 
     @State private var albums: [SpotifyAlbumSummary]?
     @State private var loadError: String?
-    /// Releases already handed to the queue this visit, so the button reads
-    /// as done instead of quietly queueing twice.
-    @State private var sent: Set<String> = []
+    /// The track being auditioned — the same preview modal Browse rows use.
+    @State private var previewItem: BrowseItem?
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if let loadError {
+        Group {
+            if let loadError {
+                ContentUnavailableViewCompat(
+                    title: "Couldn't load the discography",
+                    systemImage: "exclamationmark.triangle",
+                    description: loadError
+                )
+            } else if let albums {
+                if albums.isEmpty {
                     ContentUnavailableViewCompat(
-                        title: "Couldn't load the discography",
-                        systemImage: "exclamationmark.triangle",
-                        description: loadError
+                        title: "Nothing listed",
+                        systemImage: "opticaldisc",
+                        description: "Spotify lists no releases for this artist."
                     )
-                } else if let albums {
-                    if albums.isEmpty {
-                        ContentUnavailableViewCompat(
-                            title: "Nothing listed",
-                            systemImage: "opticaldisc",
-                            description: "Spotify lists no releases for this artist."
-                        )
-                    } else {
-                        releaseList(albums)
-                    }
                 } else {
-                    ProgressView("Reading the catalogue…")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    releaseList(albums)
                 }
+            } else {
+                ProgressView("Reading the catalogue…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .navigationTitle(artistName)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Done") { dismiss() }
-                }
-            }
-            // A downloaded album ends in the same selection popup a pasted
-            // one does — it has to present over *this* sheet, because the
-            // Download tab's copy sits buried under the full-screen browser.
-            .sheet(item: $downloads.pendingPlaylist) { pending in
-                PlaylistPickerView(pending: pending)
-            }
+        }
+        .navigationTitle(artistName)
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $previewItem) { item in
+            BrowsePreviewView(item: item, mode: browse.downloadMode)
         }
         .task {
             guard let client = spotifySettings.client else {
@@ -902,7 +905,7 @@ struct ENDiscographySheet: View {
             releaseSection("Compilations", albums.filter { $0.group == "compilation" })
             Section {
             } footer: {
-                Text("Download queues a release the same way pasting its Spotify link does: each track is matched to a YouTube video, you pick which to keep, and they land in a folder named after the release — in \(browse.downloadMode.displayName) mode.")
+                Text("The magnifier searches a release's tracks on YouTube (ISRC first, then title, duration-checked). Matched tracks light up with Download and Preview — both in \(browse.downloadMode.displayName) mode. Downloads land in the Library's track list and Inbox.")
             }
         }
         .listStyle(.insetGrouped)
@@ -913,11 +916,8 @@ struct ENDiscographySheet: View {
         if !items.isEmpty {
             Section(title) {
                 ForEach(items.sorted { $0.releaseDate > $1.releaseDate }) { album in
-                    ENAlbumRow(album: album, sent: sent.contains(album.id)) {
-                        guard let ref = SpotifyRef.parse(album.url) else { return }
-                        downloads.enqueueSpotify(ref: ref, urlString: album.url,
-                                                 mode: browse.downloadMode)
-                        sent.insert(album.id)
+                    ENAlbumRow(album: album) { item in
+                        previewItem = item
                     }
                 }
             }
@@ -925,34 +925,32 @@ struct ENDiscographySheet: View {
     }
 }
 
-/// One release row: name, year and track count, a Download button, and a
-/// disclosure that reads the tracklist from Spotify on first expand.
+/// One release row: name, year and track count, plus a **search** button that
+/// matches the tracklist against YouTube. Expanding shows the tracks; after a
+/// search, matched tracks are highlighted with Download/Preview beside them
+/// and misses are dimmed. Searching shows live progress in the row.
 private struct ENAlbumRow: View {
     let album: SpotifyAlbumSummary
-    let sent: Bool
-    let onDownload: () -> Void
+    let onPreview: (BrowseItem) -> Void
 
     @EnvironmentObject private var spotifySettings: SpotifySettingsStore
+    @EnvironmentObject private var downloads: DownloadManager
+    @EnvironmentObject private var browse: BrowseStore
 
     @State private var expanded = false
     @State private var tracks: [SpotifyTrack]?
     @State private var trackError: String?
+    @State private var searching = false
+    @State private var searched = false
+    @State private var progress = (done: 0, total: 0)
+    /// track id → matched YouTube watch URL (absent = no match once searched).
+    @State private var matches: [String: String] = [:]
+    /// Tracks already sent to the download queue from this row.
+    @State private var sent: Set<String> = []
 
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
-            if let trackError {
-                Text(trackError)
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-            } else if let tracks {
-                ForEach(Array(tracks.enumerated()), id: \.offset) { index, track in
-                    Text("\(index + 1).  \(track.name)")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-            } else {
-                ProgressView()
-            }
+            trackRows
         } label: {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -963,33 +961,146 @@ private struct ENAlbumRow: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 8)
-                if sent {
-                    Image(systemName: "checkmark.circle.fill")
+                if searching {
+                    ProgressView()
+                } else if searched {
+                    Image(systemName: "magnifyingglass.circle.fill")
                         .font(.title3)
-                        .foregroundStyle(.green)
+                        .foregroundStyle(.tertiary)
                 } else {
                     Button {
-                        onDownload()
+                        search()
                     } label: {
-                        Image(systemName: "arrow.down.circle")
+                        Image(systemName: "magnifyingglass.circle")
                             .font(.title3)
                     }
                     .buttonStyle(.borderless)
-                    .accessibilityLabel("Download \(album.name)")
+                    .accessibilityLabel("Find \(album.name)'s tracks on YouTube")
                 }
             }
         }
         .onChange(of: expanded) { open in
             guard open, tracks == nil, trackError == nil else { return }
-            Task {
-                guard let client = spotifySettings.client else { return }
-                do {
-                    tracks = try await client.album(id: album.id).tracks
-                } catch {
-                    trackError = error.localizedDescription
+            Task { await loadTracks() }
+        }
+    }
+
+    @ViewBuilder
+    private var trackRows: some View {
+        if let trackError {
+            Text(trackError)
+                .font(.caption)
+                .foregroundStyle(.orange)
+        } else if let tracks {
+            if searching {
+                Text("Matching \(progress.done) of \(progress.total) on YouTube…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
+                trackRow(number: index + 1, track: track)
+            }
+        } else {
+            ProgressView()
+        }
+    }
+
+    private func trackRow(number: Int, track: SpotifyTrack) -> some View {
+        HStack(spacing: 10) {
+            Text("\(number).  \(track.name)")
+                .font(.callout)
+                .fontWeight(matches[track.id] != nil ? .medium : .regular)
+                .foregroundStyle(trackStyle(track))
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            if let url = matches[track.id] {
+                if sent.contains(track.id) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                } else {
+                    Button {
+                        // A single-track pick, so no album folder: it lands in
+                        // the Library's root Tracks list (and the Inbox).
+                        downloads.enqueue(urlString: url, mode: browse.downloadMode)
+                        sent.insert(track.id)
+                    } label: {
+                        Image(systemName: "arrow.down.circle")
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Download \(track.name)")
                 }
+                Button {
+                    onPreview(browseItem(for: track, url: url))
+                } label: {
+                    Image(systemName: "play.circle")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Preview \(track.name)")
+            } else if searched {
+                Text("no match")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
         }
+    }
+
+    private func trackStyle(_ track: SpotifyTrack) -> HierarchicalShapeStyle {
+        if matches[track.id] != nil { return .primary }
+        return searched ? .tertiary : .secondary
+    }
+
+    /// Fetches the tracklist (also triggered by plain expansion, so the
+    /// search never runs against a missing list). Main-actor: these methods
+    /// write `@State`, and a Task spawned in a nonisolated context wouldn't
+    /// come back to the main thread on its own.
+    @MainActor
+    private func loadTracks() async {
+        guard let client = spotifySettings.client else {
+            trackError = "Add Spotify credentials in Settings ▸ Spotify first."
+            return
+        }
+        do {
+            tracks = try await client.album(id: album.id).tracks
+        } catch {
+            trackError = error.localizedDescription
+        }
+    }
+
+    /// The search: resolve each track to a YouTube video (ISRC first, then
+    /// title, duration-gated — `SpotifyResolver`, same as a pasted album),
+    /// updating the rows as each match lands.
+    @MainActor
+    private func search() {
+        expanded = true
+        searching = true
+        Task {
+            if tracks == nil { await loadTracks() }
+            guard let tracks, !tracks.isEmpty else {
+                searching = false
+                searched = tracks != nil
+                return
+            }
+            progress = (0, tracks.count)
+            for (index, track) in tracks.enumerated() {
+                if let url = await SpotifyResolver.youTubeURL(for: track) {
+                    matches[track.id] = url
+                }
+                progress = (index + 1, tracks.count)
+            }
+            searching = false
+            searched = true
+        }
+    }
+
+    /// Wraps a matched track as a Browse item so the standard preview modal
+    /// can audition it. The item is ephemeral (its id lives in no store), and
+    /// every store call the modal makes is an id lookup, so nothing sticks.
+    private func browseItem(for track: SpotifyTrack, url: String) -> BrowseItem {
+        BrowseItem(sourceID: UUID(),
+                   title: track.primaryArtist.isEmpty ? track.name : "\(track.primaryArtist) — \(track.name)",
+                   detail: album.name,
+                   url: url,
+                   videoID: URLComponents(string: url)?.queryItems?.first(where: { $0.name == "v" })?.value)
     }
 
     private var detailLine: String {

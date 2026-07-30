@@ -368,7 +368,10 @@ for everything); refresh errors show on the source row and in the **Log**
 
 The **world button** beside Browse's "+" opens an in-app rendition of
 [Every Noise at Once](https://everynoise.com) — Glenn McDonald's
-readability-adjusted scatter-plot of the musical genre space. The site froze in
+readability-adjusted scatter-plot of the musical genre space. It **pushes
+within Browse's own navigation** (the tab bar stays put, like every other
+Browse screen), with the scan transport and the artist bar sitting just
+above the tabs. The site froze in
 late 2024 when Spotify revoked its API access, so its data is static — which is
 what makes bundling it reasonable: a **one-time scrape**
 (`tools/everynoise/scrape.py`, a modernized descendant of
@@ -409,10 +412,14 @@ With **Spotify credentials** saved (Settings ▸ Spotify), the same "+" offers
 a third choice: **Browse Discography** — the artist's *real* catalogue read
 live from Spotify (the scraped data carries every artist's Spotify id, but no
 discographies). Releases group into Albums / Singles & EPs / Compilations,
-newest first; expanding one lists its tracks, and a per-release **Download**
-hands it to the exact pipeline a pasted album link takes — ISRC-first
-YouTube matching, the track-selection popup (presented right over the
-browser), and a library folder named after the release.
+newest first; expanding one lists its tracks. Each release carries a
+**magnifier** button that matches its tracks against YouTube in place
+(ISRC-first, duration-gated — the pasted-link machinery), with live progress
+in the row; when the search settles, the **matched tracks light up with
+Download and Preview beside them** (Preview is the standard Browse
+listen-first modal) and misses dim to "no match" — no picker popup. These are
+single-track picks, so downloads go in **unfiled**: they show in the
+Library's Tracks list (and the Inbox) rather than an album folder.
 
 **Why it isn't laggy.** The dataset is big (6,291 genres, ~630k artist rows),
 and the site itself chugs on an iPad, so nothing is ever
