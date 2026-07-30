@@ -507,6 +507,9 @@ struct ENScanEntry {
 /// "scan" mode, as a bottom bar.
 struct ENScanBar: View {
     @EnvironmentObject private var playback: PlaybackManager
+    /// The maps this bar sits over ignore the bottom safe area, so the mini
+    /// player doesn't push the bar up on its own — it clears it by hand.
+    @Environment(\.miniPlayerHeight) private var miniPlayerHeight
 
     let entries: [ENScanEntry]
     @Binding var index: Int
@@ -564,6 +567,7 @@ struct ENScanBar: View {
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity)
         .background(.regularMaterial)
+        .padding(.bottom, miniPlayerHeight)
         .onAppear {
             player.onFinished = { move(1) }
             if !entries.indices.contains(index) { index = 0 }
@@ -866,6 +870,9 @@ struct ENArtistBar: View {
     @EnvironmentObject private var playback: PlaybackManager
     @EnvironmentObject private var browse: BrowseStore
     @EnvironmentObject private var spotifySettings: SpotifySettingsStore
+    /// The artist map underneath ignores the bottom safe area, so the mini
+    /// player doesn't push this bar up on its own — it clears it by hand.
+    @Environment(\.miniPlayerHeight) private var miniPlayerHeight
 
     @State private var choosingMode = false
     @State private var added: ArtistSourceMode?
@@ -930,6 +937,7 @@ struct ENArtistBar: View {
         .padding(.horizontal)
         .padding(.vertical, 10)
         .background(.regularMaterial)
+        .padding(.bottom, miniPlayerHeight)
         .confirmationDialog("", isPresented: $choosingMode) {
             Button("Top 10") { add(.topTracks) }
             Button("Discography") { add(.discography) }

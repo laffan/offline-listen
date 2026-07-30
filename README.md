@@ -211,9 +211,12 @@ Five screens (tabs):
    *every other screen*: a hairline progress line, what's playing, play/pause
    and next — so you can keep browsing or searching without going back to the
    Player. Tapping the title opens the Player. It's attached as a safe-area
-   inset, so lists scroll clear of it and anything else anchored to the bottom
-   of a screen (the Every Noise scan and artist-preview bars) stacks neatly
-   above it; with nothing loaded it takes up no room at all.
+   inset, so lists scroll clear of it, and with nothing loaded it takes up no
+   room at all. A screen that pins its *own* bar to the bottom while opting out
+   of the safe area — the Every Noise maps, which run edge to edge under the tab
+   bar — doesn't get that for free: its scan and artist-preview bars read the
+   mini player's measured height from `\.miniPlayerHeight` and lift themselves
+   clear of it.
 5. **Settings** — AI configuration on top, then **Spotify** credentials, a
    **Local Sync** section, a
    **Blog Agent** section (posts per

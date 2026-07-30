@@ -38,12 +38,16 @@ does need the Settings ▸ Spotify credentials.
 - **Discography downloads are per-track picks and enqueue *unfiled*** —
   album-folder filing hid them from the Library's root Tracks list, which
   read as a bug.
-- **The scan and artist bars stack on the mini player, not over it.** Both use
-  `.safeAreaInset(edge: .bottom)` inside Browse's nav stack; the mini player is
-  inset onto the *tab* (outside that stack) in `RootView`, so the two compose —
-  artist bar above, mini player below, tab bar under both. Anything else pinned
-  to the bottom of an Every Noise screen should use a safe-area inset for the
-  same reason; an overlay would sit on top of the mini player.
+- **The scan and artist bars must clear the mini player by hand.** Both use
+  `.safeAreaInset(edge: .bottom)` inside Browse's nav stack, and the mini player
+  is inset onto the *tab* (outside that stack) in `RootView` — which is *not*
+  enough to stack them: the maps these bars sit over run edge to edge with
+  `.ignoresSafeArea(edges: .bottom)`, so the bars land against the screen's
+  bottom and the mini player draws straight over them. `ENScanBar` and
+  `ENArtistBar` each read `\.miniPlayerHeight` (published by
+  `miniPlayerBar(onOpen:)`, measured, 0 when nothing is loaded) and pad
+  themselves by it. Anything new pinned to the bottom of an Every Noise screen
+  needs the same treatment.
 - The Top 10 / Discography agents log full prompts/responses at debug level
   (Log, category `Browse`); Discography's `maxTokens` is 8192 because 4096
   truncated big catalogues mid-JSON.

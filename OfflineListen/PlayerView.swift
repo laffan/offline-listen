@@ -538,14 +538,64 @@ private struct MiniPlayerProgressLine: View {
     }
 }
 
+/// How tall the mini player currently is, published down the tab's view tree
+/// (0 with nothing loaded).
+///
+/// A safe-area inset is enough for ordinary content — lists scroll clear of the
+/// bar on their own. It is *not* enough for a screen that opts out of the
+/// bottom safe area and then pins its own bar there: the Every Noise maps run
+/// edge to edge under the tab bar (`ignoresSafeArea(edges: .bottom)`), so their
+/// scan and artist bars are positioned against the screen's bottom rather than
+/// the inset one, and would sit behind the mini player. Those bars read this
+/// and lift themselves by it.
+private struct MiniPlayerHeightKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 0
+}
+
+extension EnvironmentValues {
+    var miniPlayerHeight: CGFloat {
+        get { self[MiniPlayerHeightKey.self] }
+        set { self[MiniPlayerHeightKey.self] = newValue }
+    }
+}
+
+/// Carries the measured height back up out of the inset.
+private struct MiniPlayerHeightPreference: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+/// Attaches the mini player beneath a tab's content and publishes its height.
+private struct MiniPlayerBarModifier: ViewModifier {
+    let onOpen: () -> Void
+
+    /// Measured rather than assumed — the bar grows with the user's type size.
+    @State private var height: CGFloat = 0
+
+    func body(content: Content) -> some View {
+        content
+            .environment(\.miniPlayerHeight, height)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                MiniPlayerBar(onOpen: onOpen)
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.preference(key: MiniPlayerHeightPreference.self,
+                                                   value: geo.size.height)
+                        }
+                    )
+            }
+            .onPreferenceChange(MiniPlayerHeightPreference.self) { height = $0 }
+    }
+}
+
 extension View {
     /// Attaches the mini player beneath a tab's content. A safe-area inset
-    /// rather than an overlay, so lists scroll clear of it and anything else
-    /// anchored to the bottom of the screen stacks above it instead of behind.
+    /// rather than an overlay, so lists scroll clear of it; screens that ignore
+    /// the bottom safe area read `\.miniPlayerHeight` to clear it themselves.
     func miniPlayerBar(onOpen: @escaping () -> Void) -> some View {
-        safeAreaInset(edge: .bottom, spacing: 0) {
-            MiniPlayerBar(onOpen: onOpen)
-        }
+        modifier(MiniPlayerBarModifier(onOpen: onOpen))
     }
 }
 
