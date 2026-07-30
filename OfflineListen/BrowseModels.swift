@@ -133,7 +133,7 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
         case .blogAgent:
             return "For blogs without a feed: an AI agent reads recent articles and shows each as a summary, its YouTube links, and the artists it mentions (tap one to follow that artist)."
         case .discography, .artist:
-            return "AI follows one artist — their top tracks, or their whole discography."
+            return "Follow one artist: an AI Top 10, an AI-laid-out discography, or their real discography from Spotify."
         case .genre:
             return "AI suggests popular songs in the genre and finds them on YouTube."
         case .country:
@@ -147,20 +147,25 @@ enum BrowseEra {
     static let decades = ["1950s", "1960s", "1970s", "1980s", "1990s", "2000s", "2010s", "2020s"]
 }
 
-/// What an **Artist** source follows. Picked in the add sheet — the two used to
-/// be separate source kinds ("Artist Top 10" and "Artist Discography"), which
-/// made the "+" menu read as two unrelated things rather than one artist with
-/// two depths.
+/// What an **Artist** source follows. Picked in the add sheet — the modes used
+/// to be separate source kinds, which made the "+" menu read as unrelated
+/// things rather than one artist with several depths. The two discography
+/// modes share the album-first browser (`DiscographyBrowserView`): the first
+/// pass shows just albums and song names, and each album's tracks are matched
+/// against YouTube when you search it. They differ only in where the
+/// catalogue comes from — the AI's layout, or Spotify's real one.
 enum ArtistSourceMode: String, Codable, CaseIterable, Identifiable {
     case topTracks
     case discography
+    case spotifyDiscography
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
         case .topTracks: return "Top 10"
-        case .discography: return "Discography"
+        case .discography: return "Search Discography"
+        case .spotifyDiscography: return "Spotify Discography"
         }
     }
 
@@ -169,13 +174,19 @@ enum ArtistSourceMode: String, Codable, CaseIterable, Identifiable {
         case .topTracks:
             return "AI finds the artist's 10 most popular tracks on YouTube, digging deeper on each refresh."
         case .discography:
-            return "An AI agent lays out the artist's full discography as a nested list of albums, with a Highlights list of essential songs on top."
+            return "An AI agent lays out the artist's albums and song names, with a Highlights list on top. Search an album to match its tracks against YouTube."
+        case .spotifyDiscography:
+            return "Reads the artist's real discography live from Spotify — a pinned Top 10, then every release. Search a release to match its tracks against YouTube. Needs the Settings ▸ Spotify credentials."
         }
     }
 
     /// Only Top 10 can be scoped to a decade — a discography spans the
     /// artist's whole catalogue by definition.
     var supportsEra: Bool { self == .topTracks }
+
+    /// Whether refreshing this mode calls the Anthropic API. The Spotify
+    /// discography needs no AI key — only the Spotify credentials.
+    var usesAI: Bool { self != .spotifyDiscography }
 }
 
 /// One configured source inside the Browse tab (a channel, a feed, an artist…).
@@ -243,6 +254,15 @@ struct BrowseSource: Identifiable, Codable, Hashable {
     /// hasn't been migrated yet. Drives the album-grouped list layout.
     var isDiscography: Bool {
         kind == .discography || (kind == .artist && artistSourceMode == .discography)
+    }
+
+    /// True when opening the source shows the album-first discography browser
+    /// (`ArtistDiscographySourceView`) instead of the item list — both
+    /// discography modes, from either catalogue. These sources carry no
+    /// Browse items and don't take part in the item-refresh pipeline; their
+    /// first pass is fetched (and cached) by the browser itself.
+    var usesDiscographyBrowser: Bool {
+        kind == .discography || (kind == .artist && artistSourceMode != .topTracks)
     }
 
     /// Whether the "More" button should be offered: the kind pages at all, and

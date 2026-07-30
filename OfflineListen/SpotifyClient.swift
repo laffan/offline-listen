@@ -271,6 +271,26 @@ struct SpotifyClient {
         return SpotifyCollection(name: name, tracks: tracks)
     }
 
+    /// Resolves an artist's name to their Spotify id — what makes a typed-in
+    /// "Spotify Discography" Browse source work without an Every Noise tap
+    /// (which carries the id in the scraped data). Takes Spotify's top search
+    /// hit, which is overwhelmingly the artist meant; a misfire is visible
+    /// immediately (the wrong catalogue) and fixable by retyping the name.
+    func searchArtist(named name: String) async throws -> (id: String, name: String) {
+        let query = name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? name
+        let data = try await get(path: "/search?q=\(query)&type=artist&limit=1",
+                                 describing: "artist search")
+        guard let response = try? JSONDecoder().decode(APIArtistSearch.self, from: data) else {
+            throw SpotifyError.malformedResponse
+        }
+        guard let hit = response.artists?.items?.first, let id = hit.id, !id.isEmpty else {
+            throw SpotifyError.notFound("artist named \"\(name)\"")
+        }
+        let resolved = hit.name ?? name
+        appLog("Spotify artist search \"\(name)\" → \(resolved) (\(id)).", category: Self.category)
+        return (id, resolved)
+    }
+
     /// An artist's releases — albums, singles/EPs and compilations, without
     /// the "appears on" clutter — paginated to completion. This backs the
     /// Every Noise browser's discography view; each row's `url` re-enters the
@@ -514,7 +534,13 @@ private struct APITrack: Decodable {
 }
 
 private struct APIArtist: Decodable {
+    let id: String?
     let name: String?
+}
+
+/// The `/search?type=artist` envelope: a paging object under an "artists" key.
+private struct APIArtistSearch: Decodable {
+    let artists: APIPage<APIArtist>?
 }
 
 private struct APIAlbum: Decodable {

@@ -65,8 +65,8 @@ struct BrowseSourceView: View {
             titleVisibility: .visible,
             presenting: artistForSource
         ) { artist in
-            Button("Top 10") { addArtistSource(.topTracks, name: artist) }
-            Button("Discography") { addArtistSource(.discography, name: artist) }
+            Button(ArtistSourceMode.topTracks.displayName) { addArtistSource(.topTracks, name: artist) }
+            Button(ArtistSourceMode.discography.displayName) { addArtistSource(.discography, name: artist) }
             Button("Cancel", role: .cancel) {}
         } message: { artist in
             Text("Add “\(artist)” as a new Artist source.")

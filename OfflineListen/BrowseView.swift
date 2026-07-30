@@ -117,7 +117,14 @@ struct BrowseView: View {
                     Section(kind.pluralName) {
                         ForEach(ofKind) { source in
                             NavigationLink {
-                                BrowseSourceView(sourceID: source.id)
+                                // Discography-mode Artist sources open the
+                                // album-first browser; everything else keeps
+                                // the item list.
+                                if source.usesDiscographyBrowser {
+                                    ArtistDiscographySourceView(sourceID: source.id)
+                                } else {
+                                    BrowseSourceView(sourceID: source.id)
+                                }
                             } label: {
                                 BrowseSourceRow(source: source)
                             }
@@ -127,12 +134,16 @@ struct BrowseView: View {
                                 } label: {
                                     Label("Delete", systemImage: "trash")
                                 }
-                                Button {
-                                    Task { await browse.refresh(source) }
-                                } label: {
-                                    Label("Refresh", systemImage: "arrow.clockwise")
+                                // Catalogue sources refresh from their own
+                                // screen's toolbar; the swipe would no-op.
+                                if !source.usesDiscographyBrowser {
+                                    Button {
+                                        Task { await browse.refresh(source) }
+                                    } label: {
+                                        Label("Refresh", systemImage: "arrow.clockwise")
+                                    }
+                                    .tint(.blue)
                                 }
-                                .tint(.blue)
                             }
                         }
                     }
@@ -202,6 +213,7 @@ struct AddBrowseSourceView: View {
 
     @EnvironmentObject private var browse: BrowseStore
     @EnvironmentObject private var aiSettings: AISettingsStore
+    @EnvironmentObject private var spotifySettings: SpotifySettingsStore
     @Environment(\.dismiss) private var dismiss
 
     @State private var name = ""
@@ -214,9 +226,22 @@ struct AddBrowseSourceView: View {
     /// Presents the all-countries picker (Country kind only).
     @State private var showingCountryList = false
 
-    private var aiBlocked: Bool { kind.usesAI && !aiSettings.isAuthenticated }
-
     private var isArtist: Bool { kind == .artist }
+
+    /// Whether the configured source would call the Anthropic API — every AI
+    /// kind except an Artist source in Spotify Discography mode, which reads
+    /// Spotify instead.
+    private var aiBlocked: Bool {
+        guard kind.usesAI else { return false }
+        if isArtist && !artistMode.usesAI { return false }
+        return !aiSettings.isAuthenticated
+    }
+
+    /// The Spotify Discography mode is the one source that needs the
+    /// Settings ▸ Spotify credentials rather than an AI key.
+    private var spotifyBlocked: Bool {
+        isArtist && artistMode == .spotifyDiscography && !spotifySettings.isConfigured
+    }
 
     /// The era picker applies to the AI music kinds — but not to an Artist
     /// source in Discography mode, which spans the whole catalogue.
@@ -251,12 +276,14 @@ struct AddBrowseSourceView: View {
                         }
                     }
                     if isArtist {
+                        // A menu, not segments: three modes with real names
+                        // ("Spotify Discography") don't fit a segmented bar.
                         Picker("Follow", selection: $artistMode) {
                             ForEach(ArtistSourceMode.allCases) { mode in
                                 Text(mode.displayName).tag(mode)
                             }
                         }
-                        .pickerStyle(.segmented)
+                        .pickerStyle(.menu)
                     }
                     if showsEra {
                         Picker("Era", selection: $era) {
@@ -280,6 +307,15 @@ struct AddBrowseSourceView: View {
                             .foregroundStyle(.orange)
                     }
                 }
+
+                if spotifyBlocked {
+                    Section {
+                        Label("This mode reads the discography from Spotify. Add Spotify credentials in Settings first.",
+                              systemImage: "key")
+                            .font(.callout)
+                            .foregroundStyle(.orange)
+                    }
+                }
             }
             .navigationTitle("Add \(kind.displayName)")
             .navigationBarTitleDisplayMode(.inline)
@@ -290,7 +326,8 @@ struct AddBrowseSourceView: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Add") { add() }
                         .fontWeight(.semibold)
-                        .disabled(input.trimmingCharacters(in: .whitespaces).isEmpty || aiBlocked)
+                        .disabled(input.trimmingCharacters(in: .whitespaces).isEmpty
+                                  || aiBlocked || spotifyBlocked)
                 }
             }
             .sheet(isPresented: $showingCountryList) {

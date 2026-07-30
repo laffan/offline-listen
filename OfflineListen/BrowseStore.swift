@@ -77,10 +77,14 @@ final class BrowseStore: ObservableObject {
         // (with the era folded in for an era-scoped Country source).
         var fallbackName = trimmedInput.isEmpty ? kind.displayName : trimmedInput
         if let era { fallbackName += " (\(era))" }
-        // Two Artist sources for the same artist — a Top 10 and a Discography —
-        // would otherwise be two identically-named rows.
-        if kind == .artist, artistMode == .discography, trimmedName.isEmpty {
-            fallbackName += " (Discography)"
+        // Several Artist sources for the same artist — a Top 10 and either
+        // discography — would otherwise be identically-named rows.
+        if kind == .artist, trimmedName.isEmpty {
+            switch artistMode {
+            case .discography: fallbackName += " (Discography)"
+            case .spotifyDiscography: fallbackName += " (Spotify)"
+            default: break
+            }
         }
         let source = BrowseSource(kind: kind,
                                   name: trimmedName.isEmpty ? fallbackName : trimmedName,
@@ -98,6 +102,8 @@ final class BrowseStore: ObservableObject {
         items.removeAll { $0.sourceID == source.id }
         posts.removeAll { $0.sourceID == source.id }
         lastError[source.id] = nil
+        // A discography-mode source's cached first pass goes with it.
+        try? FileManager.default.removeItem(at: AppPaths.discographyCatalogue(for: source.id))
         save()
         appLog("Browse: removed source \"\(source.name)\"", category: "Browse")
     }
@@ -170,6 +176,11 @@ final class BrowseStore: ObservableObject {
     }
 
     func refresh(_ source: BrowseSource) async {
+        // Discography-mode sources have no item feed to refresh: their
+        // album-first catalogue is fetched (and re-fetched) from inside their
+        // own screen, which stamps `lastRefreshed` via
+        // `saveDiscographyCatalogue`. Refresh-all just passes them by.
+        guard !source.usesDiscographyBrowser else { return }
         guard !refreshing.contains(source.id) else { return }
         refreshing.insert(source.id)
         defer { refreshing.remove(source.id) }
@@ -197,18 +208,16 @@ final class BrowseStore: ObservableObject {
                 feedTitle = result.blogTitle
                 mergePosts(result.posts, into: source.id)
             case .discography:
-                fetched = try await DiscographyAgent.fetch(source: source, settings: aiSettings).items
+                // Unreachable — the guard above returns for every
+                // discography-mode source (this legacy kind included).
+                return
             case .artist, .genre, .country:
-                if source.isDiscography {
-                    fetched = try await DiscographyAgent.fetch(source: source, settings: aiSettings).items
-                } else {
-                    // Tell the model what it already suggested so refreshes dig
-                    // deeper instead of repeating (discards included, on purpose).
-                    let existingTitles = items.filter { $0.sourceID == source.id }.map(\.title)
-                    fetched = try await AIDiscovery.fetch(source: source,
-                                                          settings: aiSettings,
-                                                          excludingTitles: existingTitles)
-                }
+                // Tell the model what it already suggested so refreshes dig
+                // deeper instead of repeating (discards included, on purpose).
+                let existingTitles = items.filter { $0.sourceID == source.id }.map(\.title)
+                fetched = try await AIDiscovery.fetch(source: source,
+                                                      settings: aiSettings,
+                                                      excludingTitles: existingTitles)
             }
 
             let added = merge(fetched, into: source.id)
@@ -356,6 +365,36 @@ final class BrowseStore: ObservableObject {
                                         datePublished: candidate.datePublished))
                 known[candidate.dedupKey] = posts.count - 1
             }
+        }
+    }
+
+    // MARK: - Discography catalogues
+
+    /// The saved first pass of a discography-mode Artist source — one JSON
+    /// file per source under `Documents/Discographies/`, so re-opening the
+    /// source shows the catalogue instantly instead of re-running the fetch
+    /// (an AI layout costs a model call; Spotify costs a page walk).
+    func loadDiscographyCatalogue(for sourceID: UUID) -> DiscographyCatalogue? {
+        guard let data = try? Data(contentsOf: AppPaths.discographyCatalogue(for: sourceID)) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(DiscographyCatalogue.self, from: data)
+    }
+
+    /// Persists a freshly fetched first pass and stamps the source's
+    /// `lastRefreshed` — the browser's fetch is these sources' refresh.
+    func saveDiscographyCatalogue(_ catalogue: DiscographyCatalogue, for sourceID: UUID) {
+        do {
+            let data = try JSONEncoder().encode(catalogue)
+            try data.write(to: AppPaths.discographyCatalogue(for: sourceID), options: .atomic)
+        } catch {
+            appLog("Couldn't save the discography catalogue: \(error.localizedDescription)",
+                   level: .error, category: "Browse")
+        }
+        if let index = sources.firstIndex(where: { $0.id == sourceID }) {
+            sources[index].lastRefreshed = Date()
+            lastError[sourceID] = nil
+            save()
         }
     }
 

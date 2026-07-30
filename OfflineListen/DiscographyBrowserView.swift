@@ -1,0 +1,647 @@
+import SwiftUI
+
+// MARK: - Catalogue model
+//
+// The album-first "first pass": release and song *names* only, no YouTube
+// work. Matching tracks to actual videos happens per release, on demand, when
+// the user searches that release — which is what keeps opening a big catalogue
+// instant instead of costing a search scrape per track up front. The same
+// shapes serve both providers (Spotify's live catalogue and the AI layout),
+// and they're Codable so a Browse source can persist its first pass.
+
+struct DiscographyTrackInfo: Identifiable, Codable, Hashable {
+    let id: String
+    var name: String
+    var artist: String
+    var albumName: String
+    /// Spotify's figures, when the provider has them — they gate the YouTube
+    /// match on the right recording. The AI layout carries neither.
+    var durationMS: Int?
+    var isrc: String?
+}
+
+/// What a release row is, beyond an ordinary album: the pinned **Top 10**
+/// (Spotify's most-played, "Search Top 10" button) or the AI layout's
+/// **Highlights** list. Both sit above the albums and behave like a release.
+enum DiscographyReleaseKind: String, Codable {
+    case release
+    case topTen
+    case highlights
+}
+
+struct DiscographyRelease: Identifiable, Codable, Hashable {
+    let id: String
+    var name: String
+    var year: String
+    var totalTracks: Int
+    var kind: DiscographyReleaseKind
+    /// Inline tracklist (the AI layout carries its names up front); nil means
+    /// the provider loads it on demand (a Spotify album's tracks).
+    var tracks: [DiscographyTrackInfo]?
+}
+
+struct DiscographySection: Identifiable, Codable, Hashable {
+    var title: String
+    var releases: [DiscographyRelease]
+    var id: String { title }
+}
+
+struct DiscographyCatalogue: Codable {
+    var artistName: String
+    var spotifyArtistID: String?
+    var sections: [DiscographySection]
+    var fetched: Date
+}
+
+// MARK: - Providers
+
+/// Where a discography browser gets its data: the catalogue layout, each
+/// release's tracks, and the on-demand YouTube match for one track.
+protocol DiscographyProviding {
+    /// The full first pass — names only, no YouTube work.
+    func loadCatalogue() async throws -> DiscographyCatalogue
+    /// A release's tracks (still names only), fetched if the layout carries none.
+    func tracks(for release: DiscographyRelease) async throws -> [DiscographyTrackInfo]
+    /// The YouTube video for one track, or nil when nothing usable matches.
+    func youTubeURL(for track: DiscographyTrackInfo) async -> String?
+}
+
+/// The artist's *real* catalogue, live from Spotify: releases grouped
+/// Albums / Singles & EPs / Compilations with a pinned **Top 10** on top.
+/// Matching is ISRC-first with a duration gate (`SpotifyResolver`), so a hit
+/// is almost always the right recording.
+struct SpotifyDiscographyProvider: DiscographyProviding {
+    let client: SpotifyClient
+    let artistName: String
+    /// Known Spotify artist id (the Every Noise data carries one per artist);
+    /// nil makes `loadCatalogue` resolve the typed name via Spotify's search.
+    var artistID: String? = nil
+
+    func loadCatalogue() async throws -> DiscographyCatalogue {
+        let resolvedID: String
+        var resolvedName = artistName
+        if let artistID {
+            resolvedID = artistID
+        } else {
+            let hit = try await client.searchArtist(named: artistName)
+            resolvedID = hit.id
+            resolvedName = hit.name
+        }
+        let albums = try await client.artistAlbums(id: resolvedID)
+
+        // Top 10 pinned first — its tracks (and their YouTube matches) load on
+        // demand, exactly like an album's. The release id doubles as the
+        // artist id, which is what the top-tracks endpoint needs.
+        var sections: [DiscographySection] = [
+            DiscographySection(title: "", releases: [
+                DiscographyRelease(id: resolvedID, name: "Top 10", year: "",
+                                   totalTracks: 0, kind: .topTen, tracks: nil)
+            ])
+        ]
+        func add(_ title: String, _ group: String) {
+            let matches = albums.filter { $0.group == group }
+                .sorted { $0.releaseDate > $1.releaseDate }
+            guard !matches.isEmpty else { return }
+            sections.append(DiscographySection(title: title, releases: matches.map {
+                DiscographyRelease(id: $0.id, name: $0.name, year: $0.year,
+                                   totalTracks: $0.totalTracks, kind: .release, tracks: nil)
+            }))
+        }
+        add("Albums", "album")
+        add("Singles & EPs", "single")
+        add("Compilations", "compilation")
+
+        return DiscographyCatalogue(artistName: resolvedName,
+                                    spotifyArtistID: resolvedID,
+                                    sections: sections,
+                                    fetched: Date())
+    }
+
+    func tracks(for release: DiscographyRelease) async throws -> [DiscographyTrackInfo] {
+        let collection: SpotifyCollection
+        switch release.kind {
+        case .topTen:
+            collection = try await client.artistTopTracks(id: release.id)
+        case .release, .highlights:
+            collection = try await client.album(id: release.id)
+        }
+        let tracks = release.kind == .topTen
+            ? Array(collection.tracks.prefix(10))
+            : collection.tracks
+        return tracks.map {
+            DiscographyTrackInfo(id: $0.id, name: $0.name, artist: $0.primaryArtist,
+                                 albumName: $0.albumName, durationMS: $0.durationMS,
+                                 isrc: $0.isrc)
+        }
+    }
+
+    func youTubeURL(for track: DiscographyTrackInfo) async -> String? {
+        await SpotifyResolver.youTubeURL(for: SpotifyTrack(
+            id: track.id,
+            name: track.name,
+            artists: track.artist.isEmpty ? [] : [track.artist],
+            albumName: track.albumName,
+            durationMS: track.durationMS ?? 0,
+            isrc: track.isrc,
+            trackNumber: nil))
+    }
+}
+
+/// The AI-laid-out catalogue (`DiscographyAgent`): albums with song names and
+/// a **Highlights** list on top, from one model call. With no ISRC or duration
+/// to gate on, a track resolves to the top result of a YouTube search — the
+/// same rule the old eager pipeline used, now paid per album on demand.
+struct AIDiscographyProvider: DiscographyProviding {
+    let artistName: String
+    let settings: AISettingsStore
+
+    func loadCatalogue() async throws -> DiscographyCatalogue {
+        let discography = try await DiscographyAgent.layout(artist: artistName, settings: settings)
+
+        var sections: [DiscographySection] = []
+        if !discography.highlights.isEmpty {
+            sections.append(DiscographySection(title: "", releases: [
+                DiscographyRelease(id: "highlights",
+                                   name: DiscographyAgent.highlightsTitle,
+                                   year: "",
+                                   totalTracks: discography.highlights.count,
+                                   kind: .highlights,
+                                   tracks: trackInfos(discography.highlights,
+                                                      album: DiscographyAgent.highlightsTitle,
+                                                      idPrefix: "hl"))
+            ]))
+        }
+        // The model answers oldest-first; newest-first is how the Spotify
+        // catalogue reads, so match it (ties keep the model's order).
+        let ordered = discography.albums.enumerated().sorted { a, b in
+            let ya = a.element.year ?? Int.min
+            let yb = b.element.year ?? Int.min
+            return ya != yb ? ya > yb : a.offset < b.offset
+        }.map(\.element)
+        if !ordered.isEmpty {
+            sections.append(DiscographySection(title: "Albums", releases: ordered.enumerated().map { index, album in
+                DiscographyRelease(id: "album-\(index)-\(album.title)",
+                                   name: album.title,
+                                   year: album.year.map(String.init) ?? "",
+                                   totalTracks: album.tracks.count,
+                                   kind: .release,
+                                   tracks: trackInfos(album.tracks, album: album.title,
+                                                      idPrefix: "a\(index)"))
+            }))
+        }
+
+        return DiscographyCatalogue(artistName: artistName,
+                                    spotifyArtistID: nil,
+                                    sections: sections,
+                                    fetched: Date())
+    }
+
+    private func trackInfos(_ names: [String], album: String, idPrefix: String) -> [DiscographyTrackInfo] {
+        names.enumerated().map { index, name in
+            DiscographyTrackInfo(id: "\(idPrefix)-\(index)", name: name, artist: artistName,
+                                 albumName: album, durationMS: nil, isrc: nil)
+        }
+    }
+
+    func tracks(for release: DiscographyRelease) async throws -> [DiscographyTrackInfo] {
+        release.tracks ?? []
+    }
+
+    func youTubeURL(for track: DiscographyTrackInfo) async -> String? {
+        let query = "\(track.artist) \(track.name)"
+        guard let videoID = await YouTubeSearchResolver.firstVideoID(matching: query) else {
+            appLog("No YouTube result for \"\(query)\" — skipping.",
+                   level: .warning, category: "Browse")
+            return nil
+        }
+        return BrowseHTTP.watchURL(forVideoID: videoID)
+    }
+}
+
+// MARK: - The browser
+
+/// The shared album-first discography screen: sections of release rows, each
+/// expandable to its track names, each searchable to match those tracks
+/// against YouTube in place — matched tracks light up with Download/Preview
+/// beside them, misses are dimmed. Serves both the Every Noise browser's
+/// "Browse Discography" push and the Browse tab's discography-mode Artist
+/// sources; only the provider (and whether the first pass is cached) differs.
+struct DiscographyBrowserView: View {
+    let title: String
+    let provider: any DiscographyProviding
+    /// Library folder new downloads file into — Browse sources pass their name
+    /// so everything from one source stays together. Nil leaves picks unfiled
+    /// (the Every Noise browser's single-track behaviour).
+    var downloadFolderName: String? = nil
+    /// Where a cached first pass comes from / goes to. Browse sources persist
+    /// theirs so re-opening doesn't re-run the fetch; Every Noise passes
+    /// neither and loads live, as it always has.
+    var loadCached: (() -> DiscographyCatalogue?)? = nil
+    var onFetched: ((DiscographyCatalogue) -> Void)? = nil
+
+    @EnvironmentObject private var browse: BrowseStore
+
+    @State private var catalogue: DiscographyCatalogue?
+    @State private var loadError: String?
+    @State private var loading = false
+    /// The track being auditioned — the same preview modal Browse rows use.
+    @State private var previewItem: BrowseItem?
+
+    var body: some View {
+        Group {
+            if let catalogue {
+                if catalogue.sections.isEmpty {
+                    ContentUnavailableViewCompat(
+                        title: "Nothing listed",
+                        systemImage: "opticaldisc",
+                        description: "No releases came back for this artist."
+                    )
+                } else {
+                    releaseList(catalogue)
+                }
+            } else if let loadError {
+                VStack(spacing: 16) {
+                    ContentUnavailableViewCompat(
+                        title: "Couldn't load the discography",
+                        systemImage: "exclamationmark.triangle",
+                        description: loadError
+                    )
+                    Button {
+                        Task { await fetch() }
+                    } label: {
+                        Label("Try Again", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.bordered)
+                }
+            } else {
+                ProgressView("Reading the catalogue…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                if loading && catalogue != nil {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button {
+                        Task { await fetch() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .disabled(loading)
+                    .accessibilityLabel("Refresh the catalogue")
+                }
+            }
+        }
+        .sheet(item: $previewItem) { item in
+            BrowsePreviewView(item: item, mode: browse.downloadMode)
+        }
+        // A refresh that fails with a catalogue already showing keeps the old
+        // one — this surfaces why nothing changed.
+        .alert("Couldn't refresh", isPresented: refreshErrorPresented) {
+            Button("OK") {}
+        } message: {
+            Text(loadError ?? "")
+        }
+        .task {
+            guard catalogue == nil else { return }
+            if let cached = loadCached?() {
+                catalogue = cached
+                return
+            }
+            await fetch()
+        }
+    }
+
+    private var refreshErrorPresented: Binding<Bool> {
+        Binding(
+            get: { loadError != nil && catalogue != nil },
+            set: { if !$0 { loadError = nil } }
+        )
+    }
+
+    private func releaseList(_ catalogue: DiscographyCatalogue) -> some View {
+        List {
+            ForEach(catalogue.sections) { section in
+                Section(section.title) {
+                    ForEach(section.releases) { release in
+                        DiscographyReleaseRow(release: release,
+                                              provider: provider,
+                                              downloadFolderName: downloadFolderName) { item in
+                            previewItem = item
+                        }
+                    }
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+    }
+
+    @MainActor
+    private func fetch() async {
+        guard !loading else { return }
+        loading = true
+        defer { loading = false }
+        do {
+            let fresh = try await provider.loadCatalogue()
+            catalogue = fresh
+            loadError = nil
+            onFetched?(fresh)
+        } catch {
+            if isCancellation(error) { return }
+            loadError = error.localizedDescription
+        }
+    }
+}
+
+/// One release row: name, year and track count, plus a **search** button that
+/// matches the tracklist against YouTube (labelled **Search Top 10** on the
+/// pinned Top 10 row). Expanding shows the track names; after a search,
+/// matched tracks carry Download/Preview and misses are dimmed. The Download
+/// button becomes the shared green play button once its track lands in the
+/// library.
+private struct DiscographyReleaseRow: View {
+    let release: DiscographyRelease
+    let provider: any DiscographyProviding
+    let downloadFolderName: String?
+    let onPreview: (BrowseItem) -> Void
+
+    @EnvironmentObject private var downloads: DownloadManager
+    @EnvironmentObject private var browse: BrowseStore
+
+    @State private var expanded = false
+    @State private var tracks: [DiscographyTrackInfo]?
+    @State private var trackError: String?
+    @State private var searching = false
+    @State private var searched = false
+    @State private var progress = (done: 0, total: 0)
+    /// track id → matched YouTube watch URL (absent = no match once searched).
+    @State private var matches: [String: String] = [:]
+    /// Tracks already sent to the download queue from this row.
+    @State private var sent: Set<String> = []
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            trackRows
+        } label: {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(release.name)
+                        .fontWeight(release.kind == .release ? .regular : .medium)
+                        .lineLimit(2)
+                    if !detailLine.isEmpty {
+                        Text(detailLine)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 8)
+                searchControl
+            }
+        }
+        .onChange(of: expanded) { open in
+            guard open, tracks == nil, trackError == nil else { return }
+            Task { await loadTracks() }
+        }
+    }
+
+    @ViewBuilder
+    private var searchControl: some View {
+        if searching {
+            ProgressView()
+        } else if searched {
+            Image(systemName: "magnifyingglass.circle.fill")
+                .font(.title3)
+                .foregroundStyle(.tertiary)
+        } else if release.kind == .topTen {
+            // The one labelled search button — the pinned row's whole point.
+            Button {
+                search()
+            } label: {
+                Label("Search Top 10", systemImage: "magnifyingglass")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .buttonStyle(.borderless)
+        } else {
+            Button {
+                search()
+            } label: {
+                Image(systemName: "magnifyingglass.circle")
+                    .font(.title3)
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Find \(release.name)'s tracks on YouTube")
+        }
+    }
+
+    @ViewBuilder
+    private var trackRows: some View {
+        if let trackError {
+            Text(trackError)
+                .font(.caption)
+                .foregroundStyle(.orange)
+        } else if let tracks {
+            if searching {
+                Text("Matching \(progress.done) of \(progress.total)…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
+                trackRow(number: index + 1, track: track)
+            }
+        } else {
+            ProgressView()
+        }
+    }
+
+    private func trackRow(number: Int, track: DiscographyTrackInfo) -> some View {
+        HStack(spacing: 10) {
+            Text("\(number).  \(track.name)")
+                .font(.callout)
+                .fontWeight(matches[track.id] != nil ? .medium : .regular)
+                .foregroundStyle(trackStyle(track))
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            if let url = matches[track.id] {
+                if sent.contains(track.id) {
+                    // Becomes the shared green play button the moment the
+                    // download lands in the library — plays in the background,
+                    // list intact.
+                    BrowseTrackStatusButton(sourceURL: url,
+                                            pendingIcon: "checkmark.circle.fill",
+                                            pendingLabel: "Sent to Downloads")
+                } else {
+                    Button {
+                        enqueue(url)
+                        sent.insert(track.id)
+                    } label: {
+                        Image(systemName: "arrow.down.circle")
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Download \(track.name)")
+                }
+                Button {
+                    onPreview(browseItem(for: track, url: url))
+                } label: {
+                    Image(systemName: "play.circle")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Preview \(track.name)")
+            } else if searched {
+                Text("no match")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private func trackStyle(_ track: DiscographyTrackInfo) -> HierarchicalShapeStyle {
+        if matches[track.id] != nil { return .primary }
+        return searched ? .tertiary : .secondary
+    }
+
+    /// Queues one matched track. A Browse source files it into the folder
+    /// named after the source; the Every Noise browser's picks stay unfiled.
+    private func enqueue(_ url: String) {
+        if let folder = downloadFolderName, !folder.isEmpty {
+            downloads.enqueue(urlString: url, mode: browse.downloadMode, browseFolderNamed: folder)
+        } else {
+            downloads.enqueue(urlString: url, mode: browse.downloadMode)
+        }
+    }
+
+    /// Fetches the tracklist (also triggered by plain expansion, so the
+    /// search never runs against a missing list). Main-actor: these methods
+    /// write `@State`, and a Task spawned in a nonisolated context wouldn't
+    /// come back to the main thread on its own.
+    @MainActor
+    private func loadTracks() async {
+        do {
+            tracks = try await provider.tracks(for: release)
+        } catch {
+            if isCancellation(error) { return }
+            trackError = error.localizedDescription
+        }
+    }
+
+    /// The search: resolve each track to a YouTube video via the provider
+    /// (ISRC-first for Spotify, top search hit for the AI layout), updating
+    /// the rows as each match lands.
+    @MainActor
+    private func search() {
+        expanded = true
+        searching = true
+        Task {
+            if tracks == nil { await loadTracks() }
+            guard let tracks, !tracks.isEmpty else {
+                searching = false
+                searched = tracks != nil
+                return
+            }
+            progress = (0, tracks.count)
+            for (index, track) in tracks.enumerated() {
+                if let url = await provider.youTubeURL(for: track) {
+                    matches[track.id] = url
+                }
+                progress = (index + 1, tracks.count)
+            }
+            searching = false
+            searched = true
+        }
+    }
+
+    /// Wraps a matched track as a Browse item so the standard preview modal
+    /// can audition it. The item is ephemeral (its id lives in no store), and
+    /// every store call the modal makes is an id lookup, so nothing sticks.
+    private func browseItem(for track: DiscographyTrackInfo, url: String) -> BrowseItem {
+        BrowseItem(sourceID: UUID(),
+                   title: track.artist.isEmpty ? track.name : "\(track.artist) — \(track.name)",
+                   detail: release.name,
+                   url: url,
+                   videoID: URLComponents(string: url)?.queryItems?.first(where: { $0.name == "v" })?.value)
+    }
+
+    private var detailLine: String {
+        switch release.kind {
+        case .topTen:
+            return "Their most played, matched against YouTube"
+        case .highlights:
+            return "Essential songs"
+        case .release:
+            var parts: [String] = []
+            if !release.year.isEmpty { parts.append(release.year) }
+            if release.totalTracks > 0 {
+                parts.append("\(release.totalTracks) track\(release.totalTracks == 1 ? "" : "s")")
+            }
+            return parts.joined(separator: " · ")
+        }
+    }
+}
+
+// MARK: - The Browse source wrapper
+
+/// A discography-mode Artist source's screen: the shared browser wired to the
+/// right provider (live Spotify catalogue or the AI layout), with the first
+/// pass persisted per source so re-opening doesn't re-run the fetch — the
+/// toolbar's refresh re-reads it. Downloads file into a folder named after
+/// the source, like every other Browse download.
+struct ArtistDiscographySourceView: View {
+    let sourceID: UUID
+
+    @EnvironmentObject private var browse: BrowseStore
+    @EnvironmentObject private var aiSettings: AISettingsStore
+    @EnvironmentObject private var spotifySettings: SpotifySettingsStore
+
+    private var source: BrowseSource? {
+        browse.sources.first { $0.id == sourceID }
+    }
+
+    var body: some View {
+        if let source {
+            switch source.artistSourceMode {
+            case .spotifyDiscography:
+                if let client = spotifySettings.client {
+                    browser(for: source,
+                            provider: SpotifyDiscographyProvider(client: client,
+                                                                 artistName: source.input))
+                } else {
+                    ContentUnavailableViewCompat(
+                        title: "Spotify isn't set up",
+                        systemImage: "key",
+                        description: "This source reads the discography live from Spotify. Add credentials in Settings ▸ Spotify first."
+                    )
+                    .navigationTitle(source.name)
+                    .navigationBarTitleDisplayMode(.inline)
+                }
+            default:
+                browser(for: source,
+                        provider: AIDiscographyProvider(artistName: source.input,
+                                                        settings: aiSettings))
+            }
+        }
+    }
+
+    private func browser(for source: BrowseSource, provider: any DiscographyProviding) -> some View {
+        DiscographyBrowserView(
+            title: source.name,
+            provider: provider,
+            downloadFolderName: source.name,
+            loadCached: { browse.loadDiscographyCatalogue(for: source.id) },
+            onFetched: { browse.saveDiscographyCatalogue($0, for: source.id) })
+    }
+}
+
+extension AppPaths {
+    /// One saved first pass per discography-mode Artist source.
+    static var discographies: URL {
+        let url = documents.appendingPathComponent("Discographies", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    static func discographyCatalogue(for sourceID: UUID) -> URL {
+        discographies.appendingPathComponent("\(sourceID.uuidString).json")
+    }
+}

@@ -88,8 +88,9 @@ Five screens (tabs):
 2. **Browse** — keeps tabs on and curates different audio **sources** (see
    [Browse: keeping tabs on audio sources](#browse-keeping-tabs-on-audio-sources)).
    Add YouTube channels/playlists, RSS feeds, a **Blog Agent** for blogs
-   without a feed, an **Artist** source (following either their **Top 10** or
-   their whole **Discography**), or AI-curated Genre / Country
+   without a feed, an **Artist** source (following their **Top 10**, an
+   AI-laid-out **Search Discography**, or their real **Spotify Discography**),
+   or AI-curated Genre / Country
    lists; each refresh surfaces YouTube links, shown as compact
    name-over-artist rows, and
    every item offers **Download** (sends it to the download queue) and
@@ -371,8 +372,8 @@ Seven **source types**, in two families:
 | **YouTube Channel** | Scrape/RSS: watches the channel's upload feed (`/feeds/videos.xml`). Accepts a channel URL, `@handle`, bare `UC…` id, or plain channel name — see [Resolving a channel](#resolving-a-channel). |
 | **YouTube Playlist** | Scrape/RSS: watches the playlist's feed. Accepts a playlist URL (anything with `list=`) or a bare playlist id. |
 | **RSS Feed** | RSS reader: parses any RSS/Atom feed and keeps **only the posts that contain YouTube links** (a music blog's roundups, a newsletter's song-of-the-day). A post with several links yields one item per video. |
-| **Blog Agent** | AI agent: RSS-reader behaviour for blogs **without a feed**. The agent fetches the homepage, asks the model which of the page's links are individual recent articles (telling posts apart from nav/category/about links is exactly the judgement call heuristics get wrong — and the model may only *pick from* the links found on the page, never invent one), then reads the most recent ones. Each article becomes a **post** — a section headed by its title + date, with three parts: a one-or-two-sentence **summary**, the **YouTube tracks** actually linked in the article (Download/Preview like any Browse item), and a list of the **artists it names**. Tapping an artist opens a popup to spin up a new **Artist** source — Top 10 or Discography — for that name on the spot — so a text-only write-up with no embedded videos still turns into something to follow. (This replaces the earlier "guess the songs and search YouTube for each" step, which resolved unreliably.) **Settings ▸ Blog Agent** caps how many **posts per refresh** are read and how many **songs per post** are taken (defaults 5 and 5), so a link-heavy blog can't flood the list. |
-| **Artist** | AI, in one of two **modes** picked when the source is added. **Top 10**: the model lists the artist's **top 10 most popular tracks**, ranked, digging deeper on each refresh. **Discography** (blog-agent style): the model lays out their whole catalogue — a short **Highlights** list of essential songs, then the studio **albums** each with its year and tracklist. The list is **grouped by album** (a nested list of sections, newest album first) with the **Highlights** section pinned on top; the same signature song can appear both in Highlights and on its album. As everywhere in Browse, the model supplies only album/song **names** — every track is resolved to a real video via the search scraper, never a model-supplied link. Each track costs a YouTube search, so a refresh is **capped** (12 highlights, up to 20 albums × 16 tracks, 120 lookups total); anything past the ceiling is dropped and logged. (These were two separate source types once; sources created back then keep working and appear as Artist sources in Discography mode.) |
+| **Blog Agent** | AI agent: RSS-reader behaviour for blogs **without a feed**. The agent fetches the homepage, asks the model which of the page's links are individual recent articles (telling posts apart from nav/category/about links is exactly the judgement call heuristics get wrong — and the model may only *pick from* the links found on the page, never invent one), then reads the most recent ones. Each article becomes a **post** — a section headed by its title + date, with three parts: a one-or-two-sentence **summary**, the **YouTube tracks** actually linked in the article (Download/Preview like any Browse item), and a list of the **artists it names**. Tapping an artist opens a popup to spin up a new **Artist** source — Top 10 or Search Discography — for that name on the spot — so a text-only write-up with no embedded videos still turns into something to follow. (This replaces the earlier "guess the songs and search YouTube for each" step, which resolved unreliably.) **Settings ▸ Blog Agent** caps how many **posts per refresh** are read and how many **songs per post** are taken (defaults 5 and 5), so a link-heavy blog can't flood the list. |
+| **Artist** | One of three **modes** picked when the source is added. **Top 10** (AI): the model lists the artist's **top 10 most popular tracks**, ranked, digging deeper on each refresh — the ordinary item list. **Search Discography** (AI) and **Spotify Discography** both open the **album-first discography browser** instead (the same screen the Every Noise browser's Browse Discography uses): the first pass shows just **albums and song names** — a model call laying out the catalogue (Highlights pinned on top), or Spotify's real release list (a pinned **Top 10** with its **Search Top 10** button, then Albums / Singles & EPs / Compilations) — and each release's **search** button matches its tracks against YouTube on demand, right in the list (matched tracks light up with Download/Preview; misses dim). Nothing is resolved up front, so opening a big catalogue is instant and a refresh no longer costs a search per track. The first pass is **cached per source** (`Documents/Discographies/`); the screen's toolbar refresh re-fetches it. Downloads file into a folder named after the source, like every Browse download. The Spotify mode needs the Settings ▸ Spotify credentials (and no AI key); the typed name is resolved to the artist via Spotify's search. (Discography was a separate source type once; sources created back then keep working as Artist sources in Search Discography mode.) |
 | **Genre** | AI: popular songs in a genre, across artists. |
 | **Country** | AI: popular songs from a country (by artists from that country). The country field has a **globe button** that opens a searchable modal of every country (built from the system's localized ISO region list) in case the right name isn't obvious. |
 
@@ -386,19 +387,21 @@ eras of the same subject read apart in the source list.
 Every AI request logs its **full prompt and response** to the Log (debug
 level, category `Browse`), so a refresh that comes back thin can be diagnosed
 on-device: the summary lines distinguish "the model suggested little" from
-"YouTube search resolved little", and a Discography refresh reports exactly
-how many albums/tracks its caps dropped.
+"YouTube search resolved little". (A discography's first pass is layout only —
+per-track YouTube lookups happen in the browser, per release, on demand — so
+the old per-refresh lookup caps are gone.)
 
-The AI types use the **Anthropic key from Settings** (they're unavailable until
-one is saved). For Artist / Genre / Country the model is asked for
-real, well-known songs — title and artist —
-and is deliberately **never trusted to produce YouTube links** (it hallucinates
-video ids); each suggestion is instead resolved to a real video by scraping the
-top result of a YouTube search. For Artist (Top 10) / Genre / Country, on a
-refresh the model is told what it already suggested so it digs deeper instead of
-repeating itself (so refreshing keeps surfacing the next-most-popular tracks); a
-Discography refresh re-lays the catalogue and merges it in, so re-confirmed
-tracks stay put and only genuinely new ones are added.
+The AI types use the **Anthropic key from Settings** (they're unavailable
+until one is saved — except an Artist source in **Spotify Discography** mode,
+which reads Spotify instead and needs only those credentials). For Artist /
+Genre / Country the model is asked for real, well-known songs — title and
+artist — and is deliberately **never trusted to produce YouTube links** (it
+hallucinates video ids); each suggestion is instead resolved to a real video
+by scraping the top result of a YouTube search. For Artist (Top 10) / Genre /
+Country, on a refresh the model is told what it already suggested so it digs
+deeper instead of repeating itself (so refreshing keeps surfacing the
+next-most-popular tracks); refreshing a discography re-lays the catalogue and
+replaces the cached first pass.
 
 **Agent blockers.** Sites behind bot protection refuse automated readers —
 a 403/429 for non-browser clients, or a Cloudflare-style challenge
@@ -465,23 +468,28 @@ a **Find** field — at both levels:
 
 Tapping an **artist** plays a **30-second preview of their top song** (the
 snippet URL is embedded in the scraped data — no Spotify account or API key is
-involved) and opens an action bar with a **"+"** that files that artist into
-Browse as a regular **Artist source** — **Top 10** or **Discography**, the
-same two depths offered everywhere else — with the first refresh kicked off
-immediately.
-
-With **Spotify credentials** saved (Settings ▸ Spotify), the same "+" offers
-a third choice: **Browse Discography** — the artist's *real* catalogue read
-live from Spotify (the scraped data carries every artist's Spotify id, but no
-discographies). Releases group into Albums / Singles & EPs / Compilations,
-newest first; expanding one lists its tracks. Each release carries a
-**magnifier** button that matches its tracks against YouTube in place
+involved) and opens an action bar with a **"+"**. With **Spotify credentials**
+saved (Settings ▸ Spotify), the "+" goes **straight to Browse Discography** —
+no chooser popup — the artist's *real* catalogue read live from Spotify (the
+scraped data carries every artist's Spotify id, but no discographies). A
+pinned **Top 10** row with a **Search Top 10** button sits at the top —
+Spotify's most-played for the artist, matched against YouTube on tap, which is
+where the popup's old Top 10 option went; beneath it, releases group into
+Albums / Singles & EPs / Compilations, newest first. Expanding a release lists
+its track names, and its **magnifier** matches them against YouTube in place
 (ISRC-first, duration-gated — the pasted-link machinery), with live progress
 in the row; when the search settles, the **matched tracks light up with
 Download and Preview beside them** (Preview is the standard Browse
 listen-first modal) and misses dim to "no match" — no picker popup. These are
 single-track picks, so downloads go in **unfiled**: they show in the
-Library's Tracks list (and the Inbox) rather than an album folder.
+Library's Tracks list (and the Inbox) rather than an album folder. This is
+the same screen a discography-mode **Artist source** opens in Browse — one
+album-first browser, wherever a catalogue shows.
+
+Without Spotify configured (or for an artist the scrape carries no Spotify id
+for), the "+" keeps the old popup: file the artist into Browse as a regular
+**Artist source** — **Top 10** or **Search Discography** — with the first
+refresh kicked off immediately.
 
 **Why it isn't laggy.** The dataset is big (6,291 genres, ~630k artist rows),
 and the site itself chugs on an iPad, so nothing is ever
@@ -655,11 +663,12 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `BrowseFetchers.swift` | YouTube channel/playlist feed fetch (+ channel-id resolution by page scrape), the YouTube-link-filtered RSS reader, and the search-result resolver. |
 | `AIDiscovery.swift` | AI song discovery for Artist/Genre/Country sources (suggestions via the Messages API, links via the search resolver). |
 | `BlogAgent.swift` | The Blog Agent source: homepage fetch → AI link triage → article reads → per-article summary + artist extraction + YouTube-link harvest, with bot-protection ("agent blocked") detection. |
-| `DiscographyAgent.swift` | The Discography source: AI lays out an artist's albums (+ a Highlights list); each track is resolved to a YouTube link via the search scraper, bounded by per-refresh caps. |
+| `DiscographyAgent.swift` | The AI catalogue layout behind Search Discography mode: albums + track names + a Highlights list, one model call, no YouTube work (matching moved into the browser, on demand). |
+| `DiscographyBrowserView.swift` | The shared album-first discography browser (names first, per-release YouTube search, pinned Top 10) + its two catalogue providers (Spotify live / AI layout) + the Browse-source wrapper that caches the first pass. |
 | `BrowseView.swift` | The Browse tab: sources grouped by type, add-source sheet, refresh, and the world button into the Every Noise browser. |
 | `EveryNoiseData.swift` | The bundled Every Noise dataset: models, the lazy/LRU shard-loading store, and the 30-second preview player. |
 | `NoiseMapView.swift` | The virtualized `UIScrollView` scatter map (spatial grid + recycled labels) both noise maps render through. |
-| `EveryNoiseView.swift` | The Every Noise browser: Map/List/Scan modes + Find at both levels, the scan transport, and the artist bar whose "+" creates Artist sources. |
+| `EveryNoiseView.swift` | The Every Noise browser: Map/List/Scan modes + Find at both levels, the scan transport, and the artist bar whose "+" opens the live discography (or creates Artist sources when Spotify isn't set up). |
 | `EveryNoiseData/` | Bundled (folder reference): `genres.json` index + per-genre artist shards, written by the one-time `tools/everynoise/scrape.py`. |
 | `BrowseSourceView.swift` | One source's items with per-row Download/Preview/Discard, plus a **Select** mode for bulk download; also `BrowseTrackStatusButton`, the green play button every browse list shows once a download is in the library. |
 | `BrowsePreviewView.swift` | The preview modal: pipeline download, mini player, Save/Discard. |

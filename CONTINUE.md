@@ -35,9 +35,20 @@ does need the Settings ▸ Spotify credentials.
 - **Spotify's `/artists/{id}/albums` 400s an explicit `limit`** under a
   client-credentials app. Request the default page size and follow the
   server-minted `next` links.
-- **Discography downloads are per-track picks and enqueue *unfiled*** —
-  album-folder filing hid them from the Library's root Tracks list, which
-  read as a bug.
+- **Every discography now renders through `DiscographyBrowserView`** — one
+  album-first screen (names first, per-release YouTube search, pinned Top 10
+  with a "Search Top 10" button) behind a `DiscographyProviding` protocol with
+  two providers: Spotify live and the AI layout (`DiscographyAgent.layout`,
+  which no longer resolves YouTube links at all). Browse's discography-mode
+  Artist sources open it via `ArtistDiscographySourceView` (first pass cached
+  in `Documents/Discographies/<source-id>.json`; `BrowseStore.refresh` skips
+  these sources — their screen's toolbar is their refresh). The Every Noise
+  "+" jumps straight into it when Spotify is configured; the Top 10 / Search
+  Discography popup survives only as the no-Spotify fallback.
+- **Every Noise discography downloads are per-track picks and enqueue
+  *unfiled*** — album-folder filing hid them from the Library's root Tracks
+  list, which read as a bug. (A Browse-source discography *does* file into the
+  source's folder, like every other Browse download.)
 - **The scan and artist bars must clear the mini player by hand.** Both use
   `.safeAreaInset(edge: .bottom)` inside Browse's nav stack, and the mini player
   is inset onto the *tab* (outside that stack) in `RootView` — which is *not*

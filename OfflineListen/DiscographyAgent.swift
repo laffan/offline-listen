@@ -1,50 +1,31 @@
 import Foundation
 
-/// The Browse tab's **Discography** source: an AI agent that, given an artist's
-/// name, lays out the artist's discography as a nested list of albums — each
-/// album a section of its tracks — with a **Highlights** list of the artist's
-/// essential songs pinned on top.
+/// The AI half of the Artist source's **Search Discography** mode: given an
+/// artist's name, the model lays out the discography as albums with real song
+/// *names* (plus a **Highlights** list of essentials pinned on top). That
+/// layout is all this agent produces now — it never resolves YouTube links.
+/// The discography browser (`DiscographyBrowserView`) shows the album and song
+/// names as a first pass, and each album's tracks are matched against YouTube
+/// only when the user searches that album, so one refresh no longer costs a
+/// search scrape per track across the whole catalogue.
 ///
-/// Like `AIDiscovery` and the Blog Agent's mentioned-track fallback, the model
-/// is asked only for real album and song *names* (with each album's year); it
-/// is never trusted to produce YouTube links (it hallucinates video ids), so
-/// every track is resolved to a real video by scraping the top result of a
-/// YouTube search.
+/// (The model is never trusted to produce YouTube links — it hallucinates
+/// video ids — which is why matching is a separate, on-demand search step.)
 enum DiscographyAgent {
-    /// The pinned first section's name — also the `groupKey`/`postTitle` its
-    /// items carry, so the list can lift it above the albums.
+    /// The pinned first section's name.
     static let highlightsTitle = "Highlights"
 
-    /// Caps that keep one refresh's YouTube-search fan-out bounded: a prolific
-    /// artist's catalogue runs to hundreds of tracks and each track costs a
-    /// search scrape. Anything past the ceiling is dropped and logged (never
-    /// silently), matching the app's "no silent caps" rule.
-    private static let maxHighlights = 12
-    private static let maxAlbums = 20
-    private static let maxTracksPerAlbum = 16
-    /// Hard ceiling on how many track lookups one refresh performs.
-    private static let maxTotalTracks = 120
-
-    /// A far-future stamp shared by every Highlights track so they (a) sort as
-    /// one block above the real, past-dated album tracks and (b) keep the
-    /// model's best-first order under the list's stable date sort — a per-item
-    /// `nil` date would fall back to each row's fetch time and reverse them.
-    /// The list hides this stamp in the Highlights header.
-    static let highlightsDate = DiscographyAgent.date(forYear: 9999)
-
-    struct Result {
-        var items: [FetchedBrowseItem]
-    }
-
-    static func fetch(source: BrowseSource, settings: AISettingsStore) async throws -> Result {
+    /// Asks the model for the artist's catalogue layout: album titles, years
+    /// and track names, plus the Highlights list. No YouTube work happens here.
+    static func layout(artist rawArtist: String, settings: AISettingsStore) async throws -> Discography {
         guard await settings.isAuthenticated else { throw BrowseFetchError.aiNotConfigured }
 
-        let artist = source.input.trimmingCharacters(in: .whitespacesAndNewlines)
+        let artist = rawArtist.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !artist.isEmpty else { throw BrowseFetchError.badInput("Enter an artist's name.") }
 
         let client = await AnthropicClient(apiKey: settings.apiKey, model: settings.model)
         // Full exchange to the Log (debug level), so an incomplete catalogue
-        // can be pinned on the model's answer vs. the caps/resolution below.
+        // can be pinned on the model's answer.
         appLog("AI prompt → Discography \"\(artist)\":\n--- system ---\n\(systemPrompt)\n--- user ---\nArtist: \(artist)",
                level: .debug, category: "Browse")
         // 8192, not 4096: a prolific artist's 20-album catalogue as JSON runs
@@ -66,92 +47,10 @@ enum DiscographyAgent {
         let modelTracks = discography.albums.reduce(0) { $0 + $1.tracks.count }
         appLog("Discography for \"\(artist)\": model returned \(discography.highlights.count) highlight(s) and \(discography.albums.count) album(s) with \(modelTracks) track(s).",
                category: "Browse")
-        logCapDrops(artist: artist, discography: discography)
         guard !discography.highlights.isEmpty || !discography.albums.isEmpty else {
             throw BrowseFetchError.badInput("The AI couldn't produce a discography for \"\(artist)\". Check the spelling and try again.")
         }
-
-        var items: [FetchedBrowseItem] = []
-        var attempts = 0
-        var truncated = false
-
-        // Highlights first — stamped with the shared far-future date so they
-        // sort as a block at the very top, in the model's best-first order.
-        for title in discography.highlights.prefix(maxHighlights) {
-            if Task.isCancelled { break }
-            guard attempts < maxTotalTracks else { truncated = true; break }
-            attempts += 1
-            if let item = await resolve(artist: artist, track: title, section: highlightsTitle, date: highlightsDate) {
-                items.append(item)
-            }
-        }
-
-        // Then each album's tracks, grouped under the album and dated by its
-        // release year (albums thus land newest-first beneath Highlights).
-        albums: for album in discography.albums.prefix(maxAlbums) {
-            let albumDate = album.year.flatMap(Self.date(forYear:))
-            for track in album.tracks.prefix(maxTracksPerAlbum) {
-                if Task.isCancelled { break albums }
-                guard attempts < maxTotalTracks else { truncated = true; break albums }
-                attempts += 1
-                if let item = await resolve(artist: artist, track: track, section: album.title, date: albumDate) {
-                    items.append(item)
-                }
-            }
-        }
-
-        if truncated {
-            appLog("Discography for \"\(artist)\" is large — capped at \(maxTotalTracks) track lookups this refresh.",
-                   level: .warning, category: "Browse")
-        }
-        appLog("Discography: resolved \(items.count) track(s) for \"\(artist)\" across up to \(min(discography.albums.count, maxAlbums)) album(s).",
-               category: "Browse")
-        return Result(items: items)
-    }
-
-    /// Says up front — precisely — how much of the model's catalogue the caps
-    /// will drop, so "the discography is incomplete" is a diagnosis you can
-    /// read off the Log instead of a mystery: N albums past the album cap,
-    /// M tracks past the per-album cap, K past the total-lookup ceiling.
-    private static func logCapDrops(artist: String, discography: Discography) {
-        let extraAlbums = max(0, discography.albums.count - maxAlbums)
-        let keptAlbums = discography.albums.prefix(maxAlbums)
-        let overlongTracks = keptAlbums.reduce(0) { $0 + max(0, $1.tracks.count - maxTracksPerAlbum) }
-        let planned = min(discography.highlights.count, maxHighlights)
-            + keptAlbums.reduce(0) { $0 + min($1.tracks.count, maxTracksPerAlbum) }
-        let overTotal = max(0, planned - maxTotalTracks)
-        guard extraAlbums > 0 || overlongTracks > 0 || overTotal > 0 else { return }
-        var parts: [String] = []
-        if extraAlbums > 0 { parts.append("\(extraAlbums) album(s) past the \(maxAlbums)-album cap") }
-        if overlongTracks > 0 { parts.append("\(overlongTracks) track(s) past the \(maxTracksPerAlbum)-per-album cap") }
-        if overTotal > 0 { parts.append("\(overTotal) track(s) past the \(maxTotalTracks)-lookup ceiling") }
-        appLog("Discography for \"\(artist)\": the refresh caps will drop \(parts.joined(separator: ", ")).",
-               level: .warning, category: "Browse")
-    }
-
-    /// Resolves one `"artist track"` query to a real YouTube video and wraps it
-    /// as an item grouped under `section` (an album title, or "Highlights"),
-    /// dated by `date` (the album's release year, or the Highlights stamp).
-    /// Returns nil when the search finds nothing — logged and skipped, exactly
-    /// like `AIDiscovery`.
-    private static func resolve(artist: String, track: String, section: String, date: Date?) async -> FetchedBrowseItem? {
-        let query = "\(artist) \(track)"
-        guard let videoID = await YouTubeSearchResolver.firstVideoID(matching: query) else {
-            appLog("No YouTube result for \"\(query)\" — skipping.", level: .warning, category: "Browse")
-            return nil
-        }
-        return FetchedBrowseItem(
-            title: "\(artist) — \(track)",
-            detail: "",
-            url: BrowseHTTP.watchURL(forVideoID: videoID),
-            videoID: videoID,
-            datePublished: date,
-            postTitle: section,
-            postURL: nil,
-            // Fold the section into the dedup identity so a Highlights track
-            // that is *also* an album track stays a separate row in each.
-            groupKey: section
-        )
+        return discography
     }
 
     // MARK: - Prompt
