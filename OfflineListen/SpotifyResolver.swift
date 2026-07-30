@@ -89,7 +89,8 @@ enum SpotifyResolver {
     /// One track as a playlist entry, or nil when nothing matched.
     private static func entry(for track: SpotifyTrack) async -> PlaylistEntry? {
         guard let url = await youTubeURL(for: track) else { return nil }
-        return PlaylistEntry(title: track.displayTitle, url: url)
+        return PlaylistEntry(title: track.displayTitle, url: url,
+                             artworkURL: track.albumImageURL)
     }
 
     /// Finds the YouTube video for one Spotify track.

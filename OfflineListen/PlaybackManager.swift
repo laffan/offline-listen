@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import MediaPlayer
+import UIKit
 
 /// Drives playback for the player screen and the lock screen / Control Center.
 ///
@@ -45,6 +46,10 @@ final class PlaybackManager: NSObject, ObservableObject {
     private var index = 0
     private var ticker: Timer?
     private var endObserver: NSObjectProtocol?
+    /// The current track's album art for the lock screen / Control Center,
+    /// loaded once per track change — `updateNowPlaying` runs at 2 Hz and
+    /// must never touch the disk.
+    private var lockScreenArtwork: MPMediaItemArtwork?
 
     private var hasRestored = false
     private var lastPersist = Date.distantPast
@@ -193,6 +198,12 @@ final class PlaybackManager: NSObject, ObservableObject {
         currentTrack = track
         progress.currentTime = 0
         progress.duration = track.duration
+        // The queue holds snapshots; the library's live copy has the artwork
+        // if it arrived after this queue was built.
+        let liveTrack = library.track(withID: track.id) ?? track
+        lockScreenArtwork = TrackArtwork.image(for: liveTrack).map { image in
+            MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+        }
         updateTransportButtons()
         stopEngine()
 
@@ -392,6 +403,7 @@ final class PlaybackManager: NSObject, ObservableObject {
         guard let track = currentTrack else {
             center.nowPlayingInfo = nil
             center.playbackState = .stopped
+            lockScreenArtwork = nil
             return
         }
         var info: [String: Any] = [
@@ -402,6 +414,9 @@ final class PlaybackManager: NSObject, ObservableObject {
             MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0
         ]
         info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = 1.0
+        if let lockScreenArtwork {
+            info[MPMediaItemPropertyArtwork] = lockScreenArtwork
+        }
         center.nowPlayingInfo = info
         // iOS 13+ uses an explicit playback state to decide whether (and how) to
         // present the Now Playing controls on the lock screen; without it the

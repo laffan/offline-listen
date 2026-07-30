@@ -56,6 +56,9 @@ struct SpotifyTrack: Sendable, Equatable {
     /// a specific *recording*, which is what makes it the better search key.
     let isrc: String?
     let trackNumber: Int?
+    /// The album cover's largest image URL, when the endpoint served one —
+    /// what a download fetched from this track wears as its artwork.
+    let albumImageURL: String?
 
     var primaryArtist: String { artists.first ?? "" }
 
@@ -77,6 +80,8 @@ struct SpotifyAlbumSummary: Sendable, Identifiable, Hashable {
     /// "album" | "single" | "compilation" — the group Spotify files it under.
     let group: String
     let totalTracks: Int
+    /// The cover's largest image URL (Spotify orders images largest first).
+    let imageURL: String?
 
     var year: String { releaseDate.isEmpty ? "" : String(releaseDate.prefix(4)) }
     /// The open.spotify.com link — the same shape the paste path parses, so
@@ -192,6 +197,7 @@ struct SpotifyClient {
             throw SpotifyError.malformedResponse
         }
         let name = album.name ?? "Album"
+        let cover = album.images?.first?.url
 
         var simplified = album.tracks?.items ?? []
         var next = album.tracks?.next
@@ -203,7 +209,7 @@ struct SpotifyClient {
             next = page.next
         }
 
-        let tracks = try await fullTracks(for: simplified, albumFallback: name)
+        let tracks = try await fullTracks(for: simplified, albumFallback: name, imageFallback: cover)
         appLog("Spotify album \"\(name)\": \(tracks.count) track(s).", category: Self.category)
         return SpotifyCollection(name: name, tracks: tracks)
     }
@@ -271,6 +277,16 @@ struct SpotifyClient {
         return SpotifyCollection(name: name, tracks: tracks)
     }
 
+    /// An artist's display metadata — name and portrait — from `/artists/{id}`.
+    /// Backs the discography browser's header.
+    func artist(id: String) async throws -> (name: String, imageURL: String?) {
+        let data = try await get(path: "/artists/\(id)", describing: "artist")
+        guard let artist = try? JSONDecoder().decode(APIArtist.self, from: data) else {
+            throw SpotifyError.malformedResponse
+        }
+        return (artist.name ?? "Artist", artist.images?.first?.url)
+    }
+
     /// Resolves an artist's name to their Spotify id — what makes a typed-in
     /// "Spotify Discography" Browse source work without an Every Noise tap
     /// (which carries the id in the scraped data). Takes Spotify's top search
@@ -322,7 +338,8 @@ struct SpotifyClient {
                     name: name,
                     releaseDate: item.releaseDate ?? "",
                     group: item.albumGroup ?? item.albumType ?? "album",
-                    totalTracks: item.totalTracks ?? 0))
+                    totalTracks: item.totalTracks ?? 0,
+                    imageURL: item.images?.first?.url))
             }
             next = page.next
         }
@@ -351,10 +368,13 @@ struct SpotifyClient {
     /// Re-reads simplified album tracks as full track objects (in batches of
     /// 50) so they carry an ISRC. Best-effort: if the batch call fails, the
     /// simplified objects are used as-is with the album's name carried down.
-    private func fullTracks(for simplified: [APITrack], albumFallback: String) async throws -> [SpotifyTrack] {
+    private func fullTracks(for simplified: [APITrack], albumFallback: String,
+                            imageFallback: String? = nil) async throws -> [SpotifyTrack] {
         let ids = simplified.compactMap { $0.id }
         guard !ids.isEmpty else {
-            return simplified.compactMap { Self.normalize($0, albumFallback: albumFallback) }
+            return simplified.compactMap {
+                Self.normalize($0, albumFallback: albumFallback, imageFallback: imageFallback)
+            }
         }
 
         var full: [String: SpotifyTrack] = [:]
@@ -364,7 +384,8 @@ struct SpotifyClient {
                 let data = try await get(path: "/tracks?ids=\(joined)", describing: "tracks")
                 guard let response = try? JSONDecoder().decode(APITrackList.self, from: data) else { continue }
                 for api in response.tracks ?? [] {
-                    guard let track = Self.normalize(api, albumFallback: albumFallback) else { continue }
+                    guard let track = Self.normalize(api, albumFallback: albumFallback,
+                                                     imageFallback: imageFallback) else { continue }
                     full[track.id] = track
                 }
             } catch {
@@ -378,7 +399,7 @@ struct SpotifyClient {
         // anything the batch didn't return.
         return simplified.compactMap { api in
             if let id = api.id, let track = full[id] { return track }
-            return Self.normalize(api, albumFallback: albumFallback)
+            return Self.normalize(api, albumFallback: albumFallback, imageFallback: imageFallback)
         }
     }
 
@@ -386,7 +407,8 @@ struct SpotifyClient {
 
     /// Turns one API track object into our own shape, rejecting anything that
     /// isn't a usable track (a null entry, an episode, a local file).
-    private static func normalize(_ api: APITrack, albumFallback: String?) -> SpotifyTrack? {
+    private static func normalize(_ api: APITrack, albumFallback: String?,
+                                  imageFallback: String? = nil) -> SpotifyTrack? {
         guard let id = api.id, !id.isEmpty, api.isLocal != true else { return nil }
         if let type = api.type, type != "track" { return nil }
         let name = (api.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -402,7 +424,8 @@ struct SpotifyClient {
                             albumName: api.album?.name ?? albumFallback ?? "",
                             durationMS: api.durationMS ?? 0,
                             isrc: (isrc?.isEmpty ?? true) ? nil : isrc,
-                            trackNumber: api.trackNumber)
+                            trackNumber: api.trackNumber,
+                            albumImageURL: api.album?.images?.first?.url ?? imageFallback)
     }
 
     // MARK: - Transport
@@ -536,6 +559,16 @@ private struct APITrack: Decodable {
 private struct APIArtist: Decodable {
     let id: String?
     let name: String?
+    /// Present on full artist objects (`/artists/{id}`, search hits), largest
+    /// first; absent on the slim artist stubs inside track objects.
+    let images: [APIImage]?
+}
+
+/// One entry of Spotify's `images` arrays (albums, artists, playlists).
+private struct APIImage: Decodable {
+    let url: String?
+    let width: Int?
+    let height: Int?
 }
 
 /// The `/search?type=artist` envelope: a paging object under an "artists" key.
@@ -545,6 +578,7 @@ private struct APIArtistSearch: Decodable {
 
 private struct APIAlbum: Decodable {
     let name: String?
+    let images: [APIImage]?
     let tracks: APIPage<APITrack>?
 }
 
@@ -556,9 +590,10 @@ private struct APIAlbumSummary: Decodable {
     let albumGroup: String?
     let albumType: String?
     let totalTracks: Int?
+    let images: [APIImage]?
 
     enum CodingKeys: String, CodingKey {
-        case id, name
+        case id, name, images
         case releaseDate = "release_date"
         case albumGroup = "album_group"
         case albumType = "album_type"

@@ -59,6 +59,15 @@ does need the Settings ▸ Spotify credentials.
   `miniPlayerBar(onOpen:)`, measured, 0 when nothing is loaded) and pad
   themselves by it. Anything new pinned to the bottom of an Every Noise screen
   needs the same treatment.
+- **Album art flows through the enqueue, not the extractor.** Anything that
+  knows a cover URL (Spotify metadata, the discography browser's tracks)
+  passes `artworkURL:` to `DownloadManager.enqueue`; the job carries it, and
+  `ArtworkFetcher` fetches it best-effort *after* the track is added — into
+  `Documents/Artwork/<track-id>.jpg`, recorded via `library.setArtwork`.
+  Because it lands late, views read artwork off the **library's live copy**
+  (`library.track(withID:)`), never off `playback.currentTrack` (a snapshot);
+  the lock screen loads it once per track change in `loadCurrent` (the 2 Hz
+  `updateNowPlaying` must not touch disk).
 - The Top 10 / Discography agents log full prompts/responses at debug level
   (Log, category `Browse`); Discography's `maxTokens` is 8192 because 4096
   truncated big catalogues mid-JSON.

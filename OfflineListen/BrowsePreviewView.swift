@@ -532,6 +532,9 @@ final class BrowsePreviewModel: ObservableObject {
             chapters: media.chapters
         )
         library.add(track)
+        // Album art (best-effort) when the item carried a cover URL — the
+        // discography browser's matched tracks do.
+        ArtworkFetcher.attach(item.artworkURL, to: track.id, library: library)
         appLog("Preview saved to library: \"\(title)\"", level: .success, category: "Browse")
         return track
     }

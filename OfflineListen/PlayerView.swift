@@ -3,8 +3,27 @@ import AVFoundation
 import AVKit
 import UIKit
 
+/// Loads a track's saved album art off disk, memoized so the player and mini
+/// player don't re-decode a JPEG on every render (NSCache is thread-safe and
+/// sheds under memory pressure). Keyed by file name — one artwork file per
+/// track id, written once, so entries can't go stale.
+enum TrackArtwork {
+    private static let cache = NSCache<NSString, UIImage>()
+
+    static func image(for track: Track) -> UIImage? {
+        guard let name = track.artworkFileName else { return nil }
+        if let hit = cache.object(forKey: name as NSString) { return hit }
+        guard let image = UIImage(contentsOfFile: AppPaths.artwork.appendingPathComponent(name).path) else {
+            return nil
+        }
+        cache.setObject(image, forKey: name as NSString)
+        return image
+    }
+}
+
 struct PlayerView: View {
     @EnvironmentObject private var playback: PlaybackManager
+    @EnvironmentObject private var library: LibraryStore
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     /// Whether the control overlay is visible in fullscreen video.
@@ -72,7 +91,7 @@ struct PlayerView: View {
                             }
                     }
             } else {
-                artwork
+                artworkView(track)
             }
 
             VStack(spacing: 6) {
@@ -161,7 +180,26 @@ struct PlayerView: View {
         !track.artist.isEmpty && track.artist.lowercased() != "unknown"
     }
 
-    private var artwork: some View {
+    /// The saved album art, when the track has any — falling back to the
+    /// gradient placeholder. Artwork lands moments *after* a download (it's
+    /// fetched best-effort once the track exists), so the library's live copy
+    /// is consulted rather than playback's snapshot.
+    @ViewBuilder
+    private func artworkView(_ track: Track) -> some View {
+        let live = library.track(withID: track.id) ?? track
+        if let image = TrackArtwork.image(for: live) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 260, height: 260)
+                .clipShape(RoundedRectangle(cornerRadius: 20))
+                .shadow(radius: 12, y: 6)
+        } else {
+            placeholderArtwork
+        }
+    }
+
+    private var placeholderArtwork: some View {
         RoundedRectangle(cornerRadius: 20)
             .fill(LinearGradient(
                 colors: [Color.accentColor.opacity(0.65), Color.accentColor.opacity(0.25)],
@@ -440,6 +478,7 @@ private struct CurrentChapterLabel: View {
 /// bar until there's a track.
 struct MiniPlayerBar: View {
     @EnvironmentObject private var playback: PlaybackManager
+    @EnvironmentObject private var library: LibraryStore
 
     /// Switches to the Player tab — the mini player is a shortcut to it, not a
     /// replacement.
@@ -453,10 +492,21 @@ struct MiniPlayerBar: View {
                 HStack(spacing: 10) {
                     Button(action: onOpen) {
                         HStack(spacing: 10) {
-                            Image(systemName: icon(for: track))
-                                .font(.footnote)
-                                .foregroundStyle(Color.accentColor)
-                                .frame(width: 16)
+                            // A tiny cover when the track has art (checked
+                            // against the library's live copy — art can land
+                            // after playback started); the kind icon otherwise.
+                            if let image = TrackArtwork.image(for: library.track(withID: track.id) ?? track) {
+                                Image(uiImage: image)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 28, height: 28)
+                                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                            } else {
+                                Image(systemName: icon(for: track))
+                                    .font(.footnote)
+                                    .foregroundStyle(Color.accentColor)
+                                    .frame(width: 16)
+                            }
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(track.title)
                                     .font(.footnote.weight(.medium))

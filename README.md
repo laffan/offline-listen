@@ -69,6 +69,10 @@ Five screens (tabs):
    since every track costs a YouTube search; one paste resolves at most **200**
    tracks, and anything past that is dropped and logged.
 
+   Every track resolved from Spotify also carries its **album art** into the
+   download — the finished track wears the cover in the Player, the lock
+   screen and the mini player (see [Album art](#album-art)).
+
    Matching is ISRC-first: an ISRC names a specific *recording*, so a hit is
    almost always the right master rather than a live take or a lyric-video
    re-upload. Failing that it searches `"artist - title"` and rejects any result
@@ -193,7 +197,10 @@ Five screens (tabs):
    title font. **Convert to Folder** turns it back. See
    [Mixtape folders](#mixtape-folders).
 4. **Player** — artwork, scrubber, play/pause, skip, next/previous — the same
-   control suite for audio and video. **Tap anywhere on the scrub bar to jump
+   control suite for audio and video. A track downloaded with **album art**
+   (anything Spotify-sourced — see [Album art](#album-art)) shows its real
+   cover in place of the gradient placeholder, on the **lock screen and in
+   Control Center** too, and as a tiny cover in the mini player. **Tap anywhere on the scrub bar to jump
    there**; dragging works as before, so you never have to drag the playhead
    across a track just to skip ahead. Beneath the transport, the **previous
    track** is named on the left and the **next track** on the right (labelled
@@ -295,6 +302,28 @@ result appeared. Three things keep it quick, and they're worth preserving:
   a local first. Typing is debounced by 150 ms on top, so a burst of keystrokes
   rebuilds the list once rather than once per letter.
 
+### Album art
+
+Album art is part of the download wherever the cover is known up front —
+which today means everything that comes **through Spotify metadata**: pasted
+Spotify tracks/albums/playlists/artists, and every download or preview-save
+from a Spotify-backed discography page (Every Noise's Browse Discography, a
+Spotify Discography source). The enqueue carries the cover's URL on the
+`DownloadJob`; once the finished track lands in the library the image is
+fetched **best-effort** (a failure just keeps the placeholder, never an
+error) into `Documents/Artwork/<track-id>.jpg` and recorded on the track
+(`artworkFileName`). From there it shows:
+
+- in the **Player**, replacing the gradient placeholder;
+- on the **lock screen / Control Center** (`MPMediaItemPropertyArtwork`,
+  loaded once per track change — never on the 2 Hz tick);
+- as a small cover in the **mini player**.
+
+Artwork is app-local display metadata: it's never synced or exported with the
+file, it's deleted with the track, and tracks without it (YouTube feeds,
+searches, plain pastes) simply keep the placeholder. Decoded images are
+memoized (`TrackArtwork`, an `NSCache`) so list redraws never re-read disk.
+
 ## Browse: keeping tabs on audio sources
 
 The **Browse** tab watches a set of user-configured **sources** and turns what
@@ -373,7 +402,7 @@ Seven **source types**, in two families:
 | **YouTube Playlist** | Scrape/RSS: watches the playlist's feed. Accepts a playlist URL (anything with `list=`) or a bare playlist id. |
 | **RSS Feed** | RSS reader: parses any RSS/Atom feed and keeps **only the posts that contain YouTube links** (a music blog's roundups, a newsletter's song-of-the-day). A post with several links yields one item per video. |
 | **Blog Agent** | AI agent: RSS-reader behaviour for blogs **without a feed**. The agent fetches the homepage, asks the model which of the page's links are individual recent articles (telling posts apart from nav/category/about links is exactly the judgement call heuristics get wrong — and the model may only *pick from* the links found on the page, never invent one), then reads the most recent ones. Each article becomes a **post** — a section headed by its title + date, with three parts: a one-or-two-sentence **summary**, the **YouTube tracks** actually linked in the article (Download/Preview like any Browse item), and a list of the **artists it names**. Tapping an artist opens a popup to spin up a new **Artist** source — Top 10 or Search Discography — for that name on the spot — so a text-only write-up with no embedded videos still turns into something to follow. (This replaces the earlier "guess the songs and search YouTube for each" step, which resolved unreliably.) **Settings ▸ Blog Agent** caps how many **posts per refresh** are read and how many **songs per post** are taken (defaults 5 and 5), so a link-heavy blog can't flood the list. |
-| **Artist** | One of three **modes** picked when the source is added. **Top 10** (AI): the model lists the artist's **top 10 most popular tracks**, ranked, digging deeper on each refresh — the ordinary item list. **Search Discography** (AI) and **Spotify Discography** both open the **album-first discography browser** instead (the same screen the Every Noise browser's Browse Discography uses): the first pass shows just **albums and song names** — a model call laying out the catalogue (Highlights pinned on top), or Spotify's real release list (a pinned **Top 10** with its **Search Top 10** button, then Albums / Singles & EPs / Compilations) — and each release's **search** button matches its tracks against YouTube on demand, right in the list (matched tracks light up with Download/Preview; misses dim). Nothing is resolved up front, so opening a big catalogue is instant and a refresh no longer costs a search per track. The first pass is **cached per source** (`Documents/Discographies/`); the screen's toolbar refresh re-fetches it. Downloads file into a folder named after the source, like every Browse download. The Spotify mode needs the Settings ▸ Spotify credentials (and no AI key); the typed name is resolved to the artist via Spotify's search. (Discography was a separate source type once; sources created back then keep working as Artist sources in Search Discography mode.) |
+| **Artist** | One of three **modes** picked when the source is added. **Top 10** (AI): the model lists the artist's **top 10 most popular tracks**, ranked, digging deeper on each refresh — the ordinary item list. **Search Discography** (AI) and **Spotify Discography** both open the **album-first discography browser** instead (the same screen the Every Noise browser's Browse Discography uses): the first pass shows just **albums and song names** — a model call laying out the catalogue (Highlights pinned on top), or Spotify's real release list (a pinned **Top 10** with its **Search Top 10** button, then Albums / Singles & EPs / Compilations) — and each release's **search** button matches its tracks against YouTube on demand, right in the list (matched tracks light up with Download/Preview; misses dim). Nothing is resolved up front, so opening a big catalogue is instant and a refresh no longer costs a search per track. The first pass is **cached per source** (`Documents/Discographies/`); the screen's toolbar refresh re-fetches it. Downloads file into a folder named after the source, like every Browse download. The browser opens on the **artist page**: their Spotify portrait up top, name beneath it in large type, and a **Learn More** button — an AI-written brief bio, grounded on (and linking to) the artist's Wikipedia entry when one exists. Albums show their **cover art** as a row thumbnail and full-size when twirled open, and every download from here carries that art along (see [Album art](#album-art)). The Spotify mode needs the Settings ▸ Spotify credentials (and no AI key); the typed name is resolved to the artist via Spotify's search. (Discography was a separate source type once; sources created back then keep working as Artist sources in Search Discography mode.) |
 | **Genre** | AI: popular songs in a genre, across artists. |
 | **Country** | AI: popular songs from a country (by artists from that country). The country field has a **globe button** that opens a searchable modal of every country (built from the system's localized ISO region list) in case the right name isn't obvious. |
 
@@ -475,7 +504,9 @@ scraped data carries every artist's Spotify id, but no discographies). A
 pinned **Top 10** row with a **Search Top 10** button sits at the top —
 Spotify's most-played for the artist, matched against YouTube on tap, which is
 where the popup's old Top 10 option went; beneath it, releases group into
-Albums / Singles & EPs / Compilations, newest first. Expanding a release lists
+Albums / Singles & EPs / Compilations, newest first — each with its **cover
+art** beside it, and the artist's portrait, name and **Learn More** bio button
+heading the page. Expanding a release shows its cover full-size and lists
 its track names, and its **magnifier** matches them against YouTube in place
 (ISRC-first, duration-gated — the pasted-link machinery), with live progress
 in the row; when the search settles, the **matched tracks light up with
@@ -631,7 +662,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `Models.swift` | `Track`, `Folder`, `DownloadMode`, `LibraryFilter`, `FolderSort`, paths, helpers. |
 | `LibraryStore.swift` | Persists the library to `Documents/library.json` and folders to `Documents/folders.json`; owns the local moves across the sync boundary (queueing replica ops), the importer's reconcile primitives, and the mixtape conversions. |
 | `LocalSync.swift` | `LocalSyncStore` — the sync folder's security-scoped bookmark, the stamped manifest + journaled exporter, the coordinated importer (placeholder-aware copies), kqueue monitoring, and the off-main tree scan. |
-| `DownloadManager.swift` | Download queue (two concurrent slots) + `DownloadJob` + persisted history. |
+| `DownloadManager.swift` | Download queue (two concurrent slots) + `DownloadJob` + persisted history; `ArtworkFetcher`, the best-effort album-art fetch a finished download triggers. |
 | `PythonGate.swift` | App-wide async mutex serializing every embedded-Python call, so the two-slot pipeline never runs concurrent interpreter work. |
 | `YouTubeExtractor.swift` | `MediaExtractor` protocol + YoutubeDL-iOS impl + a mock. |
 | `YouTubeKitExtractor.swift` | Native-Swift (b5i/YouTubeKit) primary extractor. |
@@ -664,7 +695,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `AIDiscovery.swift` | AI song discovery for Artist/Genre/Country sources (suggestions via the Messages API, links via the search resolver). |
 | `BlogAgent.swift` | The Blog Agent source: homepage fetch → AI link triage → article reads → per-article summary + artist extraction + YouTube-link harvest, with bot-protection ("agent blocked") detection. |
 | `DiscographyAgent.swift` | The AI catalogue layout behind Search Discography mode: albums + track names + a Highlights list, one model call, no YouTube work (matching moved into the browser, on demand). |
-| `DiscographyBrowserView.swift` | The shared album-first discography browser (names first, per-release YouTube search, pinned Top 10) + its two catalogue providers (Spotify live / AI layout) + the Browse-source wrapper that caches the first pass. |
+| `DiscographyBrowserView.swift` | The shared album-first discography browser — artist header (portrait, name, Learn More bio), cover thumbnails/full art, names first, per-release YouTube search, pinned Top 10 — plus its two catalogue providers (Spotify live / AI layout), the Wikipedia lookup + AI bio sheet, and the Browse-source wrapper that caches the first pass. |
 | `BrowseView.swift` | The Browse tab: sources grouped by type, add-source sheet, refresh, and the world button into the Every Noise browser. |
 | `EveryNoiseData.swift` | The bundled Every Noise dataset: models, the lazy/LRU shard-loading store, and the 30-second preview player. |
 | `NoiseMapView.swift` | The virtualized `UIScrollView` scatter map (spatial grid + recycled labels) both noise maps render through. |

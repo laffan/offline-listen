@@ -16,6 +16,9 @@ struct PlaylistEntry: Identifiable, Hashable {
     let title: String
     /// The downloadable URL for this entry.
     let url: String
+    /// Album-art URL for the finished download to wear, when the resolver knew
+    /// one (Spotify entries do; YouTube playlist entries don't).
+    var artworkURL: String? = nil
 }
 
 /// A playlist resolved into the individual entries we can download.

@@ -1395,6 +1395,16 @@ final class LibraryStore: ObservableObject {
         save()
     }
 
+    /// Records a freshly fetched album-art file on a track (the image itself
+    /// is already written to `AppPaths.artwork` — this just points the track
+    /// at it). Called best-effort after a download; see `ArtworkFetcher`.
+    func setArtwork(for id: UUID, fileName: String) {
+        guard let index = tracks.firstIndex(where: { $0.id == id }),
+              tracks[index].artworkFileName != fileName else { return }
+        tracks[index].artworkFileName = fileName
+        save()
+    }
+
     /// Records a podcast's playhead. No-ops for tiny changes to limit churn.
     /// Forwards the new position to the watch when the track is a podcast that's
     /// been sent there, so the two stay in sync.
@@ -1423,6 +1433,9 @@ final class LibraryStore: ObservableObject {
     func delete(_ track: Track) {
         guard let current = tracks.first(where: { $0.id == track.id }) else { return }
         try? FileManager.default.removeItem(at: current.fileURL)
+        if let art = current.artworkFileURL {
+            try? FileManager.default.removeItem(at: art)
+        }
         if current.isSynced {
             exportOp(.removeRemote(rel: current.fileName), rootID: current.syncRootID)
         }
@@ -1435,6 +1448,9 @@ final class LibraryStore: ObservableObject {
         let wasOnWatch = offsets.contains { tracks[$0].sentToWatch }
         for index in offsets {
             try? FileManager.default.removeItem(at: tracks[index].fileURL)
+            if let art = tracks[index].artworkFileURL {
+                try? FileManager.default.removeItem(at: art)
+            }
             if tracks[index].isSynced {
                 exportOp(.removeRemote(rel: tracks[index].fileName), rootID: tracks[index].syncRootID)
             }

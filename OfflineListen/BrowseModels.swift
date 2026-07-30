@@ -305,6 +305,10 @@ struct BrowseItem: Identifiable, Codable, Hashable {
     /// the Download action gets, without changing the item's status (previewing
     /// is browsing, not a decision).
     var previewed: Bool?
+    /// Album-art URL for a save/download of this item to wear, when the list
+    /// that built it knew one (the discography browser's matched tracks). Nil
+    /// everywhere else — feed items carry no artwork.
+    var artworkURL: String?
     /// A dedup discriminator for grouped sources where the *same* video may
     /// legitimately appear in more than one section — notably a Discography's
     /// Highlights track that is also a track on one of its albums. When set it
@@ -324,6 +328,7 @@ struct BrowseItem: Identifiable, Codable, Hashable {
          postTitle: String? = nil,
          postURL: String? = nil,
          previewed: Bool? = nil,
+         artworkURL: String? = nil,
          groupKey: String? = nil) {
         self.id = id
         self.sourceID = sourceID
@@ -337,6 +342,7 @@ struct BrowseItem: Identifiable, Codable, Hashable {
         self.postTitle = postTitle
         self.postURL = postURL
         self.previewed = previewed
+        self.artworkURL = artworkURL
         self.groupKey = groupKey
     }
 

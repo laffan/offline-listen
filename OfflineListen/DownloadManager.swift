@@ -18,6 +18,9 @@ final class DownloadJob: ObservableObject, Identifiable {
     /// The folder a finished track should be filed into, or nil for the main
     /// library list. Set on the child jobs a playlist expands into.
     let folderID: UUID?
+    /// Album-art URL to fetch (best-effort) once the track lands — carried by
+    /// Spotify-sourced enqueues, where the album cover is known up front.
+    let artworkURL: String?
 
     @Published var title: String
     /// A live sub-status shown in place of the state label while a long
@@ -34,12 +37,14 @@ final class DownloadJob: ObservableObject, Identifiable {
     @Published var trackID: UUID?
 
     init(url: String, mode: DownloadMode, isPlaylist: Bool = false,
-         spotifyRef: SpotifyRef? = nil, folderID: UUID? = nil) {
+         spotifyRef: SpotifyRef? = nil, folderID: UUID? = nil,
+         artworkURL: String? = nil) {
         self.url = url
         self.mode = mode
         self.isPlaylist = isPlaylist
         self.spotifyRef = spotifyRef
         self.folderID = folderID
+        self.artworkURL = artworkURL
         if let spotifyRef {
             self.title = DownloadJob.spotifyPlaceholder(for: spotifyRef)
         } else {
@@ -170,6 +175,7 @@ private struct DownloadRecord: Codable {
     var modeRaw: String
     var isPlaylist: Bool
     var folderID: UUID?
+    var artworkURL: String?
     var title: String
     var artist: String?
     var trackID: UUID?
@@ -263,7 +269,8 @@ final class DownloadManager: ObservableObject {
             let job = DownloadJob(url: record.url,
                                   mode: DownloadMode(rawValue: record.modeRaw) ?? .audio,
                                   isPlaylist: record.isPlaylist,
-                                  folderID: record.folderID)
+                                  folderID: record.folderID,
+                                  artworkURL: record.artworkURL)
             job.title = record.title
             job.artist = record.artist
             job.trackID = record.trackID
@@ -301,6 +308,7 @@ final class DownloadManager: ObservableObject {
                                   modeRaw: job.mode.rawValue,
                                   isPlaylist: job.isPlaylist,
                                   folderID: job.folderID,
+                                  artworkURL: job.artworkURL,
                                   title: track?.title ?? job.title,
                                   artist: artist,
                                   trackID: job.trackID,
@@ -382,9 +390,10 @@ final class DownloadManager: ObservableObject {
     /// Adds a URL to the queue. Newest jobs show at the top; processing is FIFO.
     /// A `folderID` files the finished track into that folder (used for the child
     /// jobs a playlist expands into).
-    func enqueue(urlString: String, mode: DownloadMode, folderID: UUID? = nil) {
+    func enqueue(urlString: String, mode: DownloadMode, folderID: UUID? = nil,
+                 artworkURL: String? = nil) {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        let job = DownloadJob(url: trimmed, mode: mode, folderID: folderID)
+        let job = DownloadJob(url: trimmed, mode: mode, folderID: folderID, artworkURL: artworkURL)
         if URL(string: trimmed) == nil || !trimmed.lowercased().hasPrefix("http") {
             job.state = .failed(ExtractorError.invalidURL.localizedDescription)
             jobs.insert(job, at: 0)
@@ -455,6 +464,7 @@ final class DownloadManager: ObservableObject {
         let mode = job.mode
         let wasPlaylist = job.isPlaylist
         let folderID = job.folderID
+        let artworkURL = job.artworkURL
         remove(job)
         appLog("Restarting: \(url)", category: "Queue")
         // Re-read the reference from the URL rather than trusting the job's:
@@ -464,7 +474,7 @@ final class DownloadManager: ObservableObject {
         } else if wasPlaylist {
             enqueuePlaylist(urlString: url, mode: mode)
         } else {
-            enqueue(urlString: url, mode: mode, folderID: folderID)
+            enqueue(urlString: url, mode: mode, folderID: folderID, artworkURL: artworkURL)
         }
     }
 
@@ -655,6 +665,10 @@ final class DownloadManager: ObservableObject {
                 chapters: chapters
             )
             library.add(track)
+            // Album art (best-effort): a Spotify-sourced enqueue carried the
+            // cover URL — fetch it and hang it on the track. Never blocks the
+            // queue, never fatal.
+            ArtworkFetcher.attach(job.artworkURL, to: track.id, library: library)
             job.trackID = track.id
             job.title = track.title
             job.artist = track.artist.lowercased() == "unknown" ? nil : track.artist
@@ -760,7 +774,8 @@ final class DownloadManager: ObservableObject {
 
         let folder = folder(named: playlist.title, fallback: "Playlist")
         for entry in chosen {
-            enqueue(urlString: entry.url, mode: job.mode, folderID: folder.id)
+            enqueue(urlString: entry.url, mode: job.mode, folderID: folder.id,
+                    artworkURL: entry.artworkURL)
         }
         job.state = .finished
         appLog("Playlist \"\(playlist.title)\" → queued \(chosen.count) of \(playlist.entries.count) download(s) into a folder.",
@@ -808,7 +823,7 @@ final class DownloadManager: ObservableObject {
                 job.state = .finished
                 appLog("Spotify track \"\(track.displayTitle)\" → \(url)", level: .success, category: "Queue")
                 persistHistory()
-                enqueue(urlString: url, mode: job.mode)
+                enqueue(urlString: url, mode: job.mode, artworkURL: track.albumImageURL)
                 return
             }
 
@@ -839,7 +854,8 @@ final class DownloadManager: ObservableObject {
 
             let folder = folder(named: playlist.title, fallback: kind.rawValue.capitalized)
             for entry in chosen {
-                enqueue(urlString: entry.url, mode: job.mode, folderID: folder.id)
+                enqueue(urlString: entry.url, mode: job.mode, folderID: folder.id,
+                        artworkURL: entry.artworkURL)
             }
             job.state = .finished
             appLog("Spotify \(kind.rawValue) \"\(playlist.title)\" → queued \(chosen.count) of \(playlist.entries.count) download(s) into a folder.",
@@ -901,8 +917,41 @@ final class DownloadManager: ObservableObject {
     /// everything pulled from one Browse source lands together (e.g. a
     /// "Brian Eno" folder for a Discography source). Blank names fall back to a
     /// generic "Browse" folder.
-    func enqueue(urlString: String, mode: DownloadMode, browseFolderNamed folderName: String) {
+    func enqueue(urlString: String, mode: DownloadMode, browseFolderNamed folderName: String,
+                 artworkURL: String? = nil) {
         let folder = folder(named: folderName, fallback: "Browse")
-        enqueue(urlString: urlString, mode: mode, folderID: folder.id)
+        enqueue(urlString: urlString, mode: mode, folderID: folder.id, artworkURL: artworkURL)
+    }
+}
+
+/// Fetches a track's album art (best-effort, off the queue) and records it on
+/// the track. The image lands in `AppPaths.artwork` as `<track-id>.jpg`; a
+/// failed fetch just leaves the placeholder — never an error the user sees.
+enum ArtworkFetcher {
+    static func attach(_ urlString: String?, to trackID: UUID, library: LibraryStore) {
+        guard let urlString, let url = URL(string: urlString) else { return }
+        Task {
+            do {
+                var request = URLRequest(url: url)
+                request.timeoutInterval = 30
+                let (data, response) = try await URLSession.shared.data(for: request)
+                if let http = response as? HTTPURLResponse,
+                   !(200..<300).contains(http.statusCode) {
+                    throw SpotifyError.http(http.statusCode, "artwork fetch")
+                }
+                guard !data.isEmpty else { return }
+                let fileName = "\(trackID.uuidString).jpg"
+                try data.write(to: AppPaths.artwork.appendingPathComponent(fileName),
+                               options: .atomic)
+                await MainActor.run {
+                    library.setArtwork(for: trackID, fileName: fileName)
+                }
+                appLog("Album art saved (\(data.count / 1024) KB).", level: .debug, category: "Queue")
+            } catch {
+                if isCancellation(error) { return }
+                appLog("Album art fetch failed (kept the placeholder): \(error.localizedDescription)",
+                       level: .warning, category: "Queue")
+            }
+        }
     }
 }

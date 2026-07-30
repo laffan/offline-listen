@@ -18,6 +18,9 @@ struct DiscographyTrackInfo: Identifiable, Codable, Hashable {
     /// match on the right recording. The AI layout carries neither.
     var durationMS: Int?
     var isrc: String?
+    /// The track's album-cover URL, when known — handed to the download so
+    /// the finished track wears its art.
+    var artworkURL: String? = nil
 }
 
 /// What a release row is, beyond an ordinary album: the pinned **Top 10**
@@ -35,6 +38,9 @@ struct DiscographyRelease: Identifiable, Codable, Hashable {
     var year: String
     var totalTracks: Int
     var kind: DiscographyReleaseKind
+    /// The release's cover-art URL (Spotify catalogues carry one; the AI
+    /// layout has none). A thumbnail beside the row; full-size when expanded.
+    var imageURL: String? = nil
     /// Inline tracklist (the AI layout carries its names up front); nil means
     /// the provider loads it on demand (a Spotify album's tracks).
     var tracks: [DiscographyTrackInfo]?
@@ -49,6 +55,9 @@ struct DiscographySection: Identifiable, Codable, Hashable {
 struct DiscographyCatalogue: Codable {
     var artistName: String
     var spotifyArtistID: String?
+    /// The artist's portrait URL (Spotify), for the header. Nil for the AI
+    /// catalogue, whose header is name-only.
+    var artistImageURL: String? = nil
     var sections: [DiscographySection]
     var fetched: Date
 }
@@ -87,6 +96,8 @@ struct SpotifyDiscographyProvider: DiscographyProviding {
             resolvedID = hit.id
             resolvedName = hit.name
         }
+        // The portrait for the header; non-fatal if it doesn't come.
+        let portrait = try? await client.artist(id: resolvedID)
         let albums = try await client.artistAlbums(id: resolvedID)
 
         // Top 10 pinned first — its tracks (and their YouTube matches) load on
@@ -104,15 +115,17 @@ struct SpotifyDiscographyProvider: DiscographyProviding {
             guard !matches.isEmpty else { return }
             sections.append(DiscographySection(title: title, releases: matches.map {
                 DiscographyRelease(id: $0.id, name: $0.name, year: $0.year,
-                                   totalTracks: $0.totalTracks, kind: .release, tracks: nil)
+                                   totalTracks: $0.totalTracks, kind: .release,
+                                   imageURL: $0.imageURL, tracks: nil)
             }))
         }
         add("Albums", "album")
         add("Singles & EPs", "single")
         add("Compilations", "compilation")
 
-        return DiscographyCatalogue(artistName: resolvedName,
+        return DiscographyCatalogue(artistName: portrait?.name ?? resolvedName,
                                     spotifyArtistID: resolvedID,
+                                    artistImageURL: portrait?.imageURL,
                                     sections: sections,
                                     fetched: Date())
     }
@@ -131,7 +144,8 @@ struct SpotifyDiscographyProvider: DiscographyProviding {
         return tracks.map {
             DiscographyTrackInfo(id: $0.id, name: $0.name, artist: $0.primaryArtist,
                                  albumName: $0.albumName, durationMS: $0.durationMS,
-                                 isrc: $0.isrc)
+                                 isrc: $0.isrc,
+                                 artworkURL: $0.albumImageURL ?? release.imageURL)
         }
     }
 
@@ -143,7 +157,8 @@ struct SpotifyDiscographyProvider: DiscographyProviding {
             albumName: track.albumName,
             durationMS: track.durationMS ?? 0,
             isrc: track.isrc,
-            trackNumber: nil))
+            trackNumber: nil,
+            albumImageURL: track.artworkURL))
     }
 }
 
@@ -246,6 +261,9 @@ struct DiscographyBrowserView: View {
     @State private var loading = false
     /// The track being auditioned — the same preview modal Browse rows use.
     @State private var previewItem: BrowseItem?
+    /// The header's Learn More sheet, and its once-per-visit cached result.
+    @State private var showingBio = false
+    @State private var bio: ArtistBio?
 
     var body: some View {
         Group {
@@ -298,6 +316,9 @@ struct DiscographyBrowserView: View {
         .sheet(item: $previewItem) { item in
             BrowsePreviewView(item: item, mode: browse.downloadMode)
         }
+        .sheet(isPresented: $showingBio) {
+            ArtistBioSheet(artistName: catalogue?.artistName ?? title, bio: $bio)
+        }
         // A refresh that fails with a catalogue already showing keeps the old
         // one — this surfaces why nothing changed.
         .alert("Couldn't refresh", isPresented: refreshErrorPresented) {
@@ -324,6 +345,12 @@ struct DiscographyBrowserView: View {
 
     private func releaseList(_ catalogue: DiscographyCatalogue) -> some View {
         List {
+            Section {
+                artistHeader(catalogue)
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            }
             ForEach(catalogue.sections) { section in
                 Section(section.title) {
                     ForEach(section.releases) { release in
@@ -337,6 +364,45 @@ struct DiscographyBrowserView: View {
             }
         }
         .listStyle(.insetGrouped)
+    }
+
+    /// The page's masthead: the artist's portrait (when the catalogue carries
+    /// one — Spotify does, the AI layout doesn't), their name in large type,
+    /// and the **Learn More** button that opens the AI bio sheet.
+    private func artistHeader(_ catalogue: DiscographyCatalogue) -> some View {
+        VStack(spacing: 12) {
+            if let urlString = catalogue.artistImageURL, let url = URL(string: urlString) {
+                AsyncImage(url: url) { phase in
+                    if let image = phase.image {
+                        image.resizable().scaledToFill()
+                    } else {
+                        ZStack {
+                            Color.secondary.opacity(0.12)
+                            Image(systemName: "music.mic")
+                                .font(.system(size: 44))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .frame(width: 180, height: 180)
+                .clipShape(Circle())
+                .shadow(radius: 8, y: 4)
+            }
+            Text(catalogue.artistName)
+                .font(.title.weight(.bold))
+                .multilineTextAlignment(.center)
+            Button {
+                showingBio = true
+            } label: {
+                Label("Learn More", systemImage: "text.book.closed")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
     }
 
     @MainActor
@@ -384,9 +450,21 @@ private struct DiscographyReleaseRow: View {
 
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
+            expandedCover
             trackRows
         } label: {
             HStack(spacing: 12) {
+                if let thumb = release.imageURL.flatMap(URL.init(string:)) {
+                    AsyncImage(url: thumb) { phase in
+                        if let image = phase.image {
+                            image.resizable().scaledToFill()
+                        } else {
+                            Color.secondary.opacity(0.12)
+                        }
+                    }
+                    .frame(width: 44, height: 44)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(release.name)
                         .fontWeight(release.kind == .release ? .regular : .medium)
@@ -436,6 +514,26 @@ private struct DiscographyReleaseRow: View {
         }
     }
 
+    /// The full-size cover, first thing under the twirled-open row. The same
+    /// URL the thumbnail used, so it's usually already in the URL cache.
+    @ViewBuilder
+    private var expandedCover: some View {
+        if let url = release.imageURL.flatMap(URL.init(string:)) {
+            AsyncImage(url: url) { phase in
+                if let image = phase.image {
+                    image.resizable().scaledToFit()
+                } else {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.secondary.opacity(0.12))
+                        .aspectRatio(1, contentMode: .fit)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .padding(.vertical, 4)
+        }
+    }
+
     @ViewBuilder
     private var trackRows: some View {
         if let trackError {
@@ -474,7 +572,7 @@ private struct DiscographyReleaseRow: View {
                                             pendingLabel: "Sent to Downloads")
                 } else {
                     Button {
-                        enqueue(url)
+                        enqueue(url, artworkURL: track.artworkURL)
                         sent.insert(track.id)
                     } label: {
                         Image(systemName: "arrow.down.circle")
@@ -502,13 +600,15 @@ private struct DiscographyReleaseRow: View {
         return searched ? .tertiary : .secondary
     }
 
-    /// Queues one matched track. A Browse source files it into the folder
+    /// Queues one matched track — with its album art riding along, so the
+    /// finished download wears it. A Browse source files it into the folder
     /// named after the source; the Every Noise browser's picks stay unfiled.
-    private func enqueue(_ url: String) {
+    private func enqueue(_ url: String, artworkURL: String?) {
         if let folder = downloadFolderName, !folder.isEmpty {
-            downloads.enqueue(urlString: url, mode: browse.downloadMode, browseFolderNamed: folder)
+            downloads.enqueue(urlString: url, mode: browse.downloadMode,
+                              browseFolderNamed: folder, artworkURL: artworkURL)
         } else {
-            downloads.enqueue(urlString: url, mode: browse.downloadMode)
+            downloads.enqueue(urlString: url, mode: browse.downloadMode, artworkURL: artworkURL)
         }
     }
 
@@ -560,7 +660,8 @@ private struct DiscographyReleaseRow: View {
                    title: track.artist.isEmpty ? track.name : "\(track.artist) — \(track.name)",
                    detail: release.name,
                    url: url,
-                   videoID: URLComponents(string: url)?.queryItems?.first(where: { $0.name == "v" })?.value)
+                   videoID: URLComponents(string: url)?.queryItems?.first(where: { $0.name == "v" })?.value,
+                   artworkURL: track.artworkURL)
     }
 
     private var detailLine: String {
@@ -643,5 +744,190 @@ extension AppPaths {
 
     static func discographyCatalogue(for sourceID: UUID) -> URL {
         discographies.appendingPathComponent("\(sourceID.uuidString).json")
+    }
+}
+
+// MARK: - Learn More (artist bio)
+
+/// What the Learn More sheet shows: the bio prose plus a Wikipedia link when
+/// the lookup found a real page. Cached in the browser's state so reopening
+/// the sheet doesn't re-run the model.
+struct ArtistBio: Equatable {
+    var text: String
+    var wikipediaTitle: String?
+    var wikipediaURL: String?
+}
+
+/// The header's **Learn More** sheet: a brief AI-written artist bio with a
+/// link to the Wikipedia entry when one exists.
+///
+/// Two sources, deliberately split: the *link* comes from Wikipedia's own
+/// search API — a page that actually exists, never a model-suggested URL (it
+/// hallucinates those) — and the *prose* comes from the Anthropic model,
+/// grounded on the page's summary when one was found. Without an AI key the
+/// Wikipedia summary itself stands in as the bio, so the button still works.
+struct ArtistBioSheet: View {
+    let artistName: String
+    @Binding var bio: ArtistBio?
+
+    @EnvironmentObject private var aiSettings: AISettingsStore
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var loadError: String?
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let bio {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            Text(bio.text)
+                                .font(.body)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            if let urlString = bio.wikipediaURL, let url = URL(string: urlString) {
+                                Link(destination: url) {
+                                    Label("Read more on Wikipedia", systemImage: "book")
+                                        .font(.subheadline.weight(.semibold))
+                                }
+                            }
+                        }
+                        .padding()
+                    }
+                } else if let loadError {
+                    ContentUnavailableViewCompat(
+                        title: "No bio available",
+                        systemImage: "text.book.closed",
+                        description: loadError
+                    )
+                } else {
+                    ProgressView("Reading up on \(artistName)…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .navigationTitle(artistName)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .task { await load() }
+        }
+    }
+
+    @MainActor
+    private func load() async {
+        guard bio == nil else { return }
+        let wiki = await WikipediaLookup.find(artistName)
+
+        if aiSettings.isAuthenticated {
+            do {
+                let client = AnthropicClient(apiKey: aiSettings.apiKey, model: aiSettings.model)
+                var userText = "Artist: \(artistName)"
+                if let wiki, !wiki.extract.isEmpty {
+                    userText += "\n\nWikipedia's summary, for grounding:\n\(wiki.extract)"
+                }
+                let text = try await client.complete(
+                    system: Self.systemPrompt,
+                    userText: userText,
+                    maxTokens: 1024
+                )
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { throw BrowseFetchError.badInput("Empty response.") }
+                bio = ArtistBio(text: trimmed,
+                                wikipediaTitle: wiki?.title,
+                                wikipediaURL: wiki?.url)
+                return
+            } catch {
+                if isCancellation(error) { return }
+                appLog("Artist bio failed for \"\(artistName)\": \(error.localizedDescription)",
+                       level: .warning, category: "Browse")
+                // Fall through to the Wikipedia summary, if there is one.
+            }
+        }
+
+        if let wiki, !wiki.extract.isEmpty {
+            bio = ArtistBio(text: wiki.extract,
+                            wikipediaTitle: wiki.title,
+                            wikipediaURL: wiki.url)
+        } else if aiSettings.isAuthenticated {
+            loadError = "Couldn't put together a bio for \(artistName). Try again in a moment."
+        } else {
+            loadError = "No Wikipedia entry was found, and AI bios need an Anthropic API key (Settings ▸ AI)."
+        }
+    }
+
+    private static let systemPrompt = """
+    You are a music writer. Write a brief biography of the musician or band \
+    the user names: who they are, where and when they emerged, what they \
+    sound like, and why they matter. About 120 words, at most two short \
+    paragraphs, plain prose — no headings, lists or markdown. If a Wikipedia \
+    summary is provided, treat it as ground truth. If you don't recognize \
+    the artist and no summary is provided, say so in one sentence instead \
+    of guessing.
+    """
+}
+
+/// Finds an artist's Wikipedia page — search first (so the page provably
+/// exists), then the summary endpoint for its extract and canonical URL.
+/// Best-effort: any failure is just "no page".
+enum WikipediaLookup {
+    struct Page {
+        let title: String
+        let url: String
+        let extract: String
+    }
+
+    static func find(_ query: String) async -> Page? {
+        guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let searchURL = URL(string: "https://en.wikipedia.org/w/rest.php/v1/search/page?q=\(encoded)&limit=1") else {
+            return nil
+        }
+        do {
+            var request = URLRequest(url: searchURL)
+            request.timeoutInterval = 15
+            let (data, _) = try await URLSession.shared.data(for: request)
+            guard let search = try? JSONDecoder().decode(SearchResponse.self, from: data),
+                  let hit = search.pages?.first, let key = hit.key, !key.isEmpty,
+                  let summaryURL = URL(string: "https://en.wikipedia.org/api/rest_v1/page/summary/\(key)") else {
+                return nil
+            }
+            let (summaryData, _) = try await URLSession.shared.data(from: summaryURL)
+            guard let summary = try? JSONDecoder().decode(Summary.self, from: summaryData) else {
+                return nil
+            }
+            let pageURL = summary.contentURLs?.desktop?.page ?? "https://en.wikipedia.org/wiki/\(key)"
+            return Page(title: summary.title ?? hit.title ?? query,
+                        url: pageURL,
+                        extract: summary.extract ?? "")
+        } catch {
+            return nil
+        }
+    }
+
+    private struct SearchResponse: Decodable {
+        let pages: [Hit]?
+        struct Hit: Decodable {
+            let key: String?
+            let title: String?
+        }
+    }
+
+    private struct Summary: Decodable {
+        let title: String?
+        let extract: String?
+        let contentURLs: ContentURLs?
+
+        enum CodingKeys: String, CodingKey {
+            case title, extract
+            case contentURLs = "content_urls"
+        }
+
+        struct ContentURLs: Decodable {
+            let desktop: Desktop?
+            struct Desktop: Decodable {
+                let page: String?
+            }
+        }
     }
 }

@@ -53,6 +53,15 @@ enum AppPaths {
         return url
     }
 
+    /// Downloaded album art, one file per track (`<track-id>.jpg`). App-local
+    /// and never synced or exported — it's display metadata, not media; a
+    /// track whose art fetch failed simply keeps the placeholder.
+    static var artwork: URL {
+        let url = documents.appendingPathComponent("Artwork", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
     /// Where cover images for *unsynced* mixtape folders live (a synced
     /// mixtape's cover lives in its directory's `.mixtapedata` instead).
     static var mixtapeCovers: URL {
@@ -485,6 +494,10 @@ struct Track: Identifiable, Codable, Hashable {
     /// listening. The phone is the source of truth; the "Watch" virtual folder
     /// lists every track where this is set (see `LibraryStore.watchTracks`).
     var sentToWatch: Bool
+    /// The saved album-art file in `AppPaths.artwork` (nil when none was ever
+    /// fetched). Written best-effort after a download whose enqueue carried an
+    /// artwork URL — Spotify-sourced tracks, mostly.
+    var artworkFileName: String?
     /// True when the track is mirrored to a sync folder. Its file lives in
     /// that root's app-local sync store (`Documents/Synced/<root-id>/…`) and
     /// `fileName` is a path relative to that store (it may contain directory
@@ -510,6 +523,7 @@ struct Track: Identifiable, Codable, Hashable {
          originalTitle: String? = nil,
          chapters: [Chapter] = [],
          sentToWatch: Bool = false,
+         artworkFileName: String? = nil,
          isSynced: Bool = false,
          syncRootID: UUID? = nil) {
         self.id = id
@@ -528,12 +542,13 @@ struct Track: Identifiable, Codable, Hashable {
         self.originalTitle = originalTitle
         self.chapters = chapters
         self.sentToWatch = sentToWatch
+        self.artworkFileName = artworkFileName
         self.isSynced = isSynced
         self.syncRootID = syncRootID
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, artist, fileName, sourceURL, duration, dateAdded, isArchived, kind, lastPosition, isVideo, folderID, hasBeenPlayed, originalTitle, chapters, sentToWatch, isSynced, syncRootID
+        case id, title, artist, fileName, sourceURL, duration, dateAdded, isArchived, kind, lastPosition, isVideo, folderID, hasBeenPlayed, originalTitle, chapters, sentToWatch, artworkFileName, isSynced, syncRootID
     }
 
     // Custom decode so libraries saved before these fields existed still load.
@@ -555,6 +570,7 @@ struct Track: Identifiable, Codable, Hashable {
         originalTitle = try c.decodeIfPresent(String.self, forKey: .originalTitle)
         chapters = try c.decodeIfPresent([Chapter].self, forKey: .chapters) ?? []
         sentToWatch = try c.decodeIfPresent(Bool.self, forKey: .sentToWatch) ?? false
+        artworkFileName = try c.decodeIfPresent(String.self, forKey: .artworkFileName)
         isSynced = try c.decodeIfPresent(Bool.self, forKey: .isSynced) ?? false
         syncRootID = try c.decodeIfPresent(UUID.self, forKey: .syncRootID)
     }
@@ -568,6 +584,11 @@ struct Track: Identifiable, Codable, Hashable {
             return AppPaths.syncLocalStore(for: rootID).appendingPathComponent(fileName)
         }
         return AppPaths.documents.appendingPathComponent(fileName)
+    }
+
+    /// The track's saved album art on disk, nil when none was ever fetched.
+    var artworkFileURL: URL? {
+        artworkFileName.map { AppPaths.artwork.appendingPathComponent($0) }
     }
 
     /// On-disk size in bytes (0 when the file is missing/unreadable).
