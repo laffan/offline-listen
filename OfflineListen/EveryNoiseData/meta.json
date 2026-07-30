@@ -1,6 +1,11 @@
 {
   "version": 1,
-  "placeholder": true,
-  "genres": 0,
-  "note": "Run tools/everynoise/scrape.py to fill this folder with the one-time Every Noise dataset."
+  "source": "https://everynoise.com/",
+  "scraped": "2026-07-30",
+  "genres": 6291,
+  "canvas": {
+    "w": 1500,
+    "h": 22648
+  },
+  "partial": false
 }
