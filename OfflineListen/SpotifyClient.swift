@@ -145,6 +145,10 @@ struct SpotifyClient {
     private static let playlistPageSize = 100
     /// `/tracks?ids=` accepts up to 50 ids per call.
     private static let batchSize = 50
+    /// Runaway guard for the artist-albums `next` walk (a karaoke-factory
+    /// "artist" can list thousands of releases; at the default page size this
+    /// still covers 1,000+).
+    private static let maxAlbumPages = 50
 
     /// The market for `/artists/{id}/top-tracks`, where it's a required
     /// parameter: the device's region, falling back to US.
@@ -273,8 +277,20 @@ struct SpotifyClient {
     /// ordinary paste pipeline when the user downloads an album.
     func artistAlbums(id: String) async throws -> [SpotifyAlbumSummary] {
         var albums: [SpotifyAlbumSummary] = []
-        var next: String? = "\(Self.apiBase)/artists/\(id)/albums?include_groups=album,single,compilation&limit=50"
+        // No explicit `limit`: this endpoint rejects values the docs say are
+        // fine ("Invalid limit" on limit=50 under a client-credentials app),
+        // so take the server's default page size and follow the `next` links
+        // it mints itself — those are valid by construction. A few more
+        // round-trips for a big catalogue, never a 400.
+        var next: String? = "\(Self.apiBase)/artists/\(id)/albums?include_groups=album,single,compilation"
+        var pages = 0
         while let link = next, let url = URL(string: link) {
+            pages += 1
+            if pages > Self.maxAlbumPages {
+                appLog("Spotify artist \(id): catalogue runs past \(Self.maxAlbumPages) pages — stopping there.",
+                       level: .warning, category: Self.category)
+                break
+            }
             let data = try await get(url, describing: "artist's albums")
             guard let page = try? JSONDecoder().decode(APIPage<APIAlbumSummary>.self, from: data) else {
                 throw SpotifyError.malformedResponse
