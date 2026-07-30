@@ -40,6 +40,20 @@ pages are listed at the end (just re-run to retry only those).
 After a full scrape, commit the contents of `OfflineListen/EveryNoiseData/`;
 the Xcode project already bundles that folder, so the next build ships it.
 
+## The global artist-search index
+
+```sh
+python3 tools/everynoise/build_artist_index.py
+```
+
+derives `OfflineListen/EveryNoiseData/artists.idx.z` from the shards already
+on disk (no network) — the flat index behind the browser's **Find Artist**
+mode. Each unique artist (~470k) is one text line, led by a case/diacritic
+folded copy of the name so the app can search it as raw bytes; an artist in
+several genres keeps only the genre where they're drawn biggest, and lines are
+ordered by that size so the first matches of a scan are the most popular. Run
+it again only if the shards are ever regenerated, and commit the result.
+
 > **Network note:** managed Claude Code environments may block everynoise.com
 > by egress policy. Run this anywhere with ordinary internet access (a laptop
 > with Python 3 is enough), or allow `everynoise.com` in the environment's
