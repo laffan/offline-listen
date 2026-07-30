@@ -151,6 +151,7 @@ struct BrowseView: View {
             }
         }
         .listStyle(.insetGrouped)
+        .miniPlayerClearance()
         .refreshable { await browse.refreshAll() }
     }
 }

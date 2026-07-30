@@ -9,12 +9,21 @@ import SwiftUI
 /// them into Browse as a regular Artist source (Top 10 or Search Discography).
 struct EveryNoiseView: View {
     @EnvironmentObject private var playback: PlaybackManager
+    /// The maps ignore the bottom safe area, so the mini player's height is
+    /// handed to them as extra content inset (UIKit can't see the SwiftUI bar).
+    @Environment(\.miniPlayerHeight) private var miniPlayerHeight
 
     @StateObject private var store = EveryNoiseStore()
     @StateObject private var player = ENPreviewPlayer()
 
     @State private var mode: ENBrowseMode = .map
     @State private var query = ""
+    /// What the root Find field searches: the genre index, or **every artist
+    /// in the dataset** via the flat global index (`ENArtistIndex`).
+    @State private var findMode: ENFindMode = .genre
+    /// Global artist search results, and whether a scan is still in flight.
+    @State private var artistHits: [ENArtistHit] = []
+    @State private var artistSearching = false
     /// List mode's order, and the genre a similarity sort is anchored on.
     @State private var listSort: ENListSort = .alphabetical
     @State private var listAnchor: String?
@@ -99,22 +108,28 @@ struct EveryNoiseView: View {
 
     private var browser: some View {
         VStack(spacing: 0) {
-            ENModeBar(mode: $mode, query: $query, sort: $listSort)
+            ENModeBar(mode: $mode, query: $query, sort: $listSort, findMode: $findMode)
             ZStack(alignment: .top) {
                 switch mode {
                 case .map, .scan:
                     genreMap
                 case .list:
-                    ENGenreListView(genres: store.genres, query: query,
+                    // Artist find works as a dropdown over any mode, so the
+                    // genre-scoped list/history filters step aside for it.
+                    ENGenreListView(genres: store.genres, query: findMode == .artist ? "" : query,
                                     sort: listSort, anchorKey: $listAnchor) { genre in
                         push(genre)
                     }
                 case .history:
-                    ENHistoryView(query: query) { entry in
+                    ENHistoryView(query: findMode == .artist ? "" : query) { entry in
                         open(entry)
                     }
                 }
-                if mode == .map || mode == .scan, !query.isEmpty {
+                if findMode == .artist, artistQuery.count >= 2 {
+                    ENFindResults(entries: artistMatches, searching: artistSearching) { entry in
+                        jumpToArtist(entry.id)
+                    }
+                } else if findMode == .genre, mode == .map || mode == .scan, !query.isEmpty {
                     ENFindResults(entries: matches) { entry in
                         jump(to: entry)
                     }
@@ -134,6 +149,47 @@ struct EveryNoiseView: View {
         .onChange(of: mode) { newMode in
             if newMode != .scan { player.stop() }
         }
+        // The global artist search: debounced (the scan reads ~470k names),
+        // re-run when the query or the Find target changes.
+        .task(id: "\(findMode.rawValue)|\(query)") {
+            guard findMode == .artist, artistQuery.count >= 2 else {
+                artistHits = []
+                artistSearching = false
+                return
+            }
+            artistSearching = true
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+            let hits = await ENArtistIndex.shared.search(artistQuery)
+            guard !Task.isCancelled else { return }
+            artistHits = hits
+            artistSearching = false
+        }
+    }
+
+    private var artistQuery: String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Artist hits as find rows, each carrying its home genre as the detail
+    /// line (the genre a tap opens, with the artist selected there).
+    private var artistMatches: [ENFindEntry] {
+        artistHits.map { hit in
+            ENFindEntry(id: hit.id, label: hit.name, colorHex: hit.color,
+                        detail: store.genres.first(where: { $0.key == hit.genreKey })?.name
+                            ?? hit.genreKey)
+        }
+    }
+
+    /// Opens the hit's home genre with the artist selected, centered and
+    /// previewing — the same route a History artist row takes.
+    private func jumpToArtist(_ hitID: String) {
+        guard let hit = artistHits.first(where: { $0.id == hitID }),
+              let genre = store.genres.first(where: { $0.key == hit.genreKey }) else { return }
+        query = ""
+        artistHits = []
+        pushedArtistID = hit.artistID
+        pushedGenre = genre
     }
 
     // MARK: Genre map
@@ -146,7 +202,8 @@ struct EveryNoiseView: View {
                                       colorHex: $0.color, size: $0.size)
                      },
                      highlightedID: player.currentID ?? flashID,
-                     centerRequest: centerRequest) { key in
+                     centerRequest: centerRequest,
+                     bottomInset: miniPlayerHeight) { key in
             guard let genre = store.genres.first(where: { $0.key == key }) else { return }
             if mode == .scan {
                 // Scanning: a tap retunes the scan there instead of leaving.
@@ -201,25 +258,52 @@ enum ENBrowseMode: String, CaseIterable, Identifiable {
 /// How list mode orders its rows. Similarity is the site's own list behavior:
 /// map distance *is* the similarity measure, so "sort from here" surfaces an
 /// item's sonic neighbors — each row grows a resort button that re-anchors
-/// the order on itself.
+/// the order on itself. Popularity reads the scraped font-size percent — the
+/// site's popularity cue — biggest names first.
 enum ENListSort: String, CaseIterable, Identifiable {
-    case alphabetical, similarity
+    case alphabetical, similarity, popularity
     var id: String { rawValue }
     var displayName: String {
         switch self {
         case .alphabetical: return "Alphabetical"
         case .similarity: return "Similarity"
+        case .popularity: return "Popularity"
+        }
+    }
+}
+
+/// What the root-level Find field searches: the genre index, or every artist
+/// in the dataset (the global index — see `ENArtistIndex`). Toggled by the
+/// icons inside the field's trailing edge.
+enum ENFindMode: String, CaseIterable, Identifiable {
+    case genre, artist
+    var id: String { rawValue }
+    /// The same glyphs the rest of the app uses for the two kinds.
+    var icon: String {
+        switch self {
+        case .genre: return "guitars"
+        case .artist: return "music.mic"
+        }
+    }
+    var placeholder: String {
+        switch self {
+        case .genre: return "Find Genre"
+        case .artist: return "Find Artist"
         }
     }
 }
 
 /// The mode picker and Find field — the site's header controls. List mode
-/// adds the sort menu beside Find.
+/// adds the sort menu beside Find; the root level adds the genre/artist
+/// toggle inside the field.
 struct ENModeBar: View {
     @Binding var mode: ENBrowseMode
     @Binding var query: String
     /// The list sort, shown only in list mode (map/scan don't sort).
     var sort: Binding<ENListSort>? = nil
+    /// The root level's genre/artist Find target. Nil (a genre's own page)
+    /// keeps the plain genre-scoped field with no toggle.
+    var findMode: Binding<ENFindMode>? = nil
     /// Which modes this level offers (History exists at the root only).
     var modes: [ENBrowseMode] = ENBrowseMode.allCases
 
@@ -236,7 +320,7 @@ struct ENModeBar: View {
                 HStack {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
-                    TextField("Find", text: $query)
+                    TextField(findMode?.wrappedValue.placeholder ?? "Find", text: $query)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
                     if !query.isEmpty {
@@ -246,6 +330,9 @@ struct ENModeBar: View {
                             Image(systemName: "xmark.circle.fill")
                                 .foregroundStyle(.secondary)
                         }
+                    }
+                    if let findMode {
+                        findModeToggle(findMode)
                     }
                 }
                 .padding(8)
@@ -270,6 +357,28 @@ struct ENModeBar: View {
         .padding(.horizontal)
         .padding(.bottom, 8)
     }
+
+    /// The genre/artist toggle riding inside the field's trailing edge: two
+    /// small icons, the active one filled with the accent color.
+    private func findModeToggle(_ binding: Binding<ENFindMode>) -> some View {
+        HStack(spacing: 4) {
+            ForEach(ENFindMode.allCases) { target in
+                Button {
+                    binding.wrappedValue = target
+                } label: {
+                    Image(systemName: target.icon)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(binding.wrappedValue == target ? Color.white : Color.secondary)
+                        .frame(width: 28, height: 22)
+                        .background(
+                            binding.wrappedValue == target ? Color.accentColor : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(target.placeholder)
+            }
+        }
+    }
 }
 
 /// Squared map distance — the similarity metric (closer on the map = more
@@ -284,19 +393,30 @@ struct ENFindEntry: Identifiable {
     let id: String
     let label: String
     let colorHex: String
+    /// A caption beneath the label — an artist hit's home genre.
+    var detail: String? = nil
 }
 
 /// The Find dropdown over the map: tap a match to fly there.
 struct ENFindResults: View {
     let entries: [ENFindEntry]
+    /// True while a (global artist) search is still running, so an empty list
+    /// reads as a spinner instead of a premature "No matches".
+    var searching: Bool = false
     let onPick: (ENFindEntry) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if entries.isEmpty {
-                Text("No matches")
-                    .foregroundStyle(.secondary)
-                    .padding(12)
+                if searching {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(12)
+                } else {
+                    Text("No matches")
+                        .foregroundStyle(.secondary)
+                        .padding(12)
+                }
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
@@ -305,8 +425,15 @@ struct ENFindResults: View {
                                 onPick(entry)
                             } label: {
                                 HStack {
-                                    Text(entry.label)
-                                        .foregroundStyle(Color(UIColor(noiseHex: entry.colorHex)))
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(entry.label)
+                                            .foregroundStyle(Color(UIColor(noiseHex: entry.colorHex)))
+                                        if let detail = entry.detail {
+                                            Text(detail)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
                                     Spacer()
                                     Image(systemName: "arrow.right.circle")
                                         .foregroundStyle(.secondary)
@@ -356,6 +483,12 @@ struct ENGenreListView: View {
             return base.sorted {
                 enDistanceSquared($0.x, $0.y, anchor.x, anchor.y)
                     < enDistanceSquared($1.x, $1.y, anchor.x, anchor.y)
+            }
+        case .popularity:
+            return base.sorted {
+                $0.size != $1.size
+                    ? $0.size > $1.size
+                    : $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
             }
         }
     }
@@ -409,6 +542,7 @@ struct ENGenreListView: View {
                 }
             }
             .listStyle(.plain)
+            .miniPlayerClearance()
             .onChange(of: anchorKey) { key in
                 guard sort == .similarity, let key else { return }
                 withAnimation { proxy.scrollTo(key, anchor: .top) }
@@ -490,6 +624,7 @@ struct ENHistoryView: View {
                 }
             }
             .listStyle(.plain)
+            .miniPlayerClearance()
         }
     }
 }
@@ -624,6 +759,9 @@ struct ENGenreView: View {
     @EnvironmentObject private var store: EveryNoiseStore
     @EnvironmentObject private var player: ENPreviewPlayer
     @EnvironmentObject private var playback: PlaybackManager
+    /// The artist map ignores the bottom safe area — the mini player's height
+    /// rides in as extra content inset, same as the genre map.
+    @Environment(\.miniPlayerHeight) private var miniPlayerHeight
 
     @State private var artists: [ENArtist]?
     @State private var mode: ENBrowseMode = .map
@@ -754,7 +892,8 @@ struct ENGenreView: View {
                                       colorHex: $0.color, size: $0.size)
                      },
                      highlightedID: player.currentID ?? flashID,
-                     centerRequest: centerRequest) { id in
+                     centerRequest: centerRequest,
+                     bottomInset: miniPlayerHeight) { id in
             guard let artist = artists.first(where: { $0.id == id }) else { return }
             if mode == .scan {
                 if let i = artists.firstIndex(of: artist) { scanIndex = i }
@@ -781,6 +920,12 @@ struct ENGenreView: View {
                 }
             } else {
                 shown = base
+            }
+        case .popularity:
+            shown = base.sorted {
+                $0.size != $1.size
+                    ? $0.size > $1.size
+                    : $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
             }
         }
         return ScrollViewReader { proxy in
@@ -818,6 +963,7 @@ struct ENGenreView: View {
                 }
             }
             .listStyle(.plain)
+            .miniPlayerClearance()
             .onChange(of: listAnchor) { key in
                 guard listSort == .similarity, let key else { return }
                 withAnimation { proxy.scrollTo(key, anchor: .top) }
@@ -992,6 +1138,8 @@ struct ENDiscographyView: View {
     let spotifyID: String
 
     @EnvironmentObject private var spotifySettings: SpotifySettingsStore
+    @EnvironmentObject private var aiSettings: AISettingsStore
+    @EnvironmentObject private var browse: BrowseStore
 
     var body: some View {
         if let client = spotifySettings.client {
@@ -999,7 +1147,24 @@ struct ENDiscographyView: View {
                 title: artistName,
                 provider: SpotifyDiscographyProvider(client: client,
                                                      artistName: artistName,
-                                                     artistID: spotifyID))
+                                                     artistID: spotifyID,
+                                                     aiSettings: aiSettings),
+                // "Add as Source" files this artist into Browse as a
+                // discography-mode Artist source (the same catalogue,
+                // persistently followed from the Browse tab).
+                addSource: DiscographyAddSource(
+                    isAdded: {
+                        browse.sources.contains {
+                            $0.kind == .artist
+                                && $0.artistSourceMode == .spotifyDiscography
+                                && $0.input.caseInsensitiveCompare(artistName) == .orderedSame
+                        }
+                    },
+                    add: {
+                        browse.addSource(kind: .artist, name: artistName,
+                                         input: artistName,
+                                         artistMode: .spotifyDiscography)
+                    }))
         } else {
             ContentUnavailableViewCompat(
                 title: "Couldn't load the discography",

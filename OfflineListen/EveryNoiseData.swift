@@ -236,6 +236,116 @@ final class EveryNoiseStore: ObservableObject {
     }
 }
 
+// MARK: - Global artist search
+
+/// One hit from the global artist search: enough to open the artist's home
+/// genre with them selected there (`ENGenreView.initialArtistID` matches the
+/// shard row's `name|x|y` id).
+struct ENArtistHit: Identifiable, Hashable {
+    let name: String
+    let genreKey: String
+    let x: Int
+    let y: Int
+    let color: String
+
+    /// The artist's id within their genre's shard.
+    var artistID: String { "\(name)|\(x)|\(y)" }
+    var id: String { "\(genreKey)|\(name)|\(x)|\(y)" }
+}
+
+/// Searches every artist in the dataset by name — the Find field's artist
+/// mode. ~470k unique names is far too many to decode into Swift values per
+/// keystroke, so the search never parses the index at all: the bundled
+/// `artists.idx.z` (derived from the shards by
+/// `tools/everynoise/build_artist_index.py`) inflates once into a cache file
+/// that is **memory-mapped** and scanned as raw bytes. Each record line leads
+/// with a pre-folded copy of the name; the query is folded the same way
+/// (case/diacritic/width), so matching is a plain byte search across the blob
+/// — no per-row allocation, and only the pages a scan touches ever become
+/// resident. Lines are ordered by the site's popularity cue, so the first N
+/// matches are automatically the most popular artists matching.
+actor ENArtistIndex {
+    static let shared = ENArtistIndex()
+
+    private var blob: Data?
+    private var unavailable = false
+
+    /// The most popular `limit` artists whose folded name contains `query`.
+    func search(_ query: String, limit: Int = 25) -> [ENArtistHit] {
+        guard let blob = loadIfNeeded() else { return [] }
+        let folded = query.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
+                                   locale: nil)
+        guard let needle = folded.data(using: .utf8), !needle.isEmpty else { return [] }
+
+        let newline = UInt8(ascii: "\n")
+        var hits: [ENArtistHit] = []
+        var cursor = blob.startIndex
+        while hits.count < limit, cursor < blob.endIndex,
+              let match = blob.range(of: needle, in: cursor..<blob.endIndex) {
+            // Expand the raw hit to its record line.
+            var lineStart = match.lowerBound
+            while lineStart > blob.startIndex, blob[lineStart - 1] != newline {
+                lineStart -= 1
+            }
+            var lineEnd = match.upperBound
+            while lineEnd < blob.endIndex, blob[lineEnd] != newline {
+                lineEnd += 1
+            }
+            cursor = min(blob.endIndex, lineEnd + 1)
+
+            guard let line = String(data: blob.subdata(in: lineStart..<lineEnd), encoding: .utf8) else {
+                continue
+            }
+            let fields = line.components(separatedBy: "\u{1f}")
+            // fields: folded, display, genreKey, x, y, color. Only a hit
+            // inside the *folded-name* field (the first) counts — the needle
+            // can also occur in the display name or the genre key.
+            guard fields.count == 6,
+                  match.upperBound - lineStart <= fields[0].utf8.count,
+                  let x = Int(fields[3]), let y = Int(fields[4]) else { continue }
+            hits.append(ENArtistHit(name: fields[1], genreKey: fields[2],
+                                    x: x, y: y, color: fields[5]))
+        }
+        return hits
+    }
+
+    /// The inflated index, memory-mapped. First use inflates the bundled
+    /// `.z` into Caches (keyed by the packed size, so a rebuilt dataset can't
+    /// serve a stale cache); every use after that maps the cache file.
+    private func loadIfNeeded() -> Data? {
+        if let blob { return blob }
+        if unavailable { return nil }
+        guard let packedURL = Bundle.main.url(forResource: "artists.idx", withExtension: "z",
+                                              subdirectory: EveryNoiseStore.subdirectory) else {
+            unavailable = true
+            appLog("Every Noise: no artist index in the bundle — run tools/everynoise/build_artist_index.py and rebuild.",
+                   level: .warning, category: "Browse")
+            return nil
+        }
+        do {
+            let caches = try FileManager.default.url(for: .cachesDirectory, in: .userDomainMask,
+                                                     appropriateFor: nil, create: true)
+            let packedSize = (try packedURL.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? 0
+            let cacheURL = caches.appendingPathComponent("everynoise-artists-\(packedSize).idx")
+            if !FileManager.default.fileExists(atPath: cacheURL.path) {
+                let packed = try Data(contentsOf: packedURL)
+                let raw = try (packed as NSData).decompressed(using: .zlib) as Data
+                try raw.write(to: cacheURL, options: .atomic)
+                appLog("Every Noise: artist index inflated (\(raw.count / 1_000_000) MB).",
+                       level: .debug, category: "Browse")
+            }
+            let mapped = try Data(contentsOf: cacheURL, options: .mappedIfSafe)
+            blob = mapped
+            return mapped
+        } catch {
+            unavailable = true
+            appLog("Every Noise: couldn't load the artist index (\(error.localizedDescription)).",
+                   level: .warning, category: "Browse")
+            return nil
+        }
+    }
+}
+
 // MARK: - Preview player
 
 /// Plays the 30-second preview snippets (genre examples, artist top tracks).

@@ -176,8 +176,10 @@ struct LibraryView: View {
     /// once per keystroke.
     @State private var query = ""
 
+    /// The Tracks section shows **every** active track, filed or not — the
+    /// folders above are one way in, this list is the full flat view.
     private var filteredTracks: [Track] {
-        library.unfiledActiveTracks.filter { filter.matches($0) }
+        library.activeTracks.filter { filter.matches($0) }
     }
 
     private var isSearching: Bool {
@@ -290,9 +292,8 @@ struct LibraryView: View {
         )
     }
 
-    /// Search replaces the whole list rather than filtering it in place: the
-    /// normal list shows only *unfiled* tracks, but the question search answers
-    /// ("where is that track?") is usually about one that's already in a folder.
+    /// Search replaces the whole list rather than filtering it in place, so
+    /// matching *folders* can lead the results before the matching tracks.
     private var searchList: some View {
         // Resolved once per render pass, not once per row: `row(for:in:)` takes
         // the whole result list as the playback queue, and recomputing the
@@ -323,6 +324,7 @@ struct LibraryView: View {
             }
         }
         .listStyle(.plain)
+        .miniPlayerClearance()
     }
 
     private var libraryList: some View {
@@ -371,7 +373,7 @@ struct LibraryView: View {
                 ForEach(listed) { track in
                     row(for: track, in: listed)
                 }
-                if listed.isEmpty && !library.unfiledActiveTracks.isEmpty {
+                if listed.isEmpty && !library.activeTracks.isEmpty {
                     Text("Nothing in \(filter.displayName)")
                         .font(.callout)
                         .foregroundStyle(.secondary)
@@ -383,6 +385,7 @@ struct LibraryView: View {
             }
         }
         .listStyle(.plain)
+        .miniPlayerClearance()
     }
 
     /// "Folders" label with a trailing toggle to sort by name or User Order.
@@ -642,6 +645,7 @@ struct LibraryView: View {
                 SyncToLocalButton(track: track)
                 SendToWatchButton(track: track)
                 AIOrganizeButton(track: track)
+                GetAlbumArtButton(track: track)
                 if track.hasChapters {
                     Button {
                         splittingTrack = track
@@ -728,7 +732,7 @@ struct LibraryView: View {
                     }
                 }
             }
-            .disabled(library.unfiledActiveTracks.isEmpty && !editMode.isEditing)
+            .disabled(library.activeTracks.isEmpty && !editMode.isEditing)
         }
     }
 
@@ -805,6 +809,7 @@ struct SyncedFoldersView: View {
                     }
                 }
                 .listStyle(.plain)
+                .miniPlayerClearance()
             }
         }
         .navigationTitle("Synced")
@@ -901,6 +906,7 @@ struct ArchivedTracksView: View {
                     }
                 }
                 .listStyle(.plain)
+                .miniPlayerClearance()
             }
         }
         .navigationTitle("Archive")
@@ -1291,6 +1297,54 @@ struct AIOrganizeButton: View {
                 Label("AI Organize", systemImage: "sparkles")
             }
             .disabled(ai.inFlight.contains(track.id))
+        }
+    }
+}
+
+/// A context-menu button that finds a track's album cover on Spotify and
+/// attaches it — the same app-local artwork every Spotify-sourced download
+/// wears (Player, lock screen, mini player). Shows itself only when Spotify
+/// credentials are saved; best-effort like every artwork fetch, so a miss
+/// logs and changes nothing. Safe to drop into any track's `contextMenu`.
+struct GetAlbumArtButton: View {
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var spotifySettings: SpotifySettingsStore
+    let track: Track
+
+    var body: some View {
+        if let client = spotifySettings.client {
+            Button {
+                fetch(with: client)
+            } label: {
+                Label("Get Album Art", systemImage: "photo.on.rectangle")
+            }
+        }
+    }
+
+    /// Search Spotify by the track's (AI-cleaned when available) artist +
+    /// title, take the first hit that carries a cover, and hang it on the
+    /// track through the same fetcher downloads use.
+    private func fetch(with client: SpotifyClient) {
+        let hasArtist = !track.artist.isEmpty && track.artist.lowercased() != "unknown"
+        let query = hasArtist ? "\(track.artist) \(track.title)" : track.title
+        let trackID = track.id
+        let library = library
+        Task {
+            do {
+                let hits = try await client.searchTracks(query: query)
+                guard let cover = hits.first(where: { $0.albumImageURL != nil })?.albumImageURL else {
+                    appLog("Get Album Art: Spotify found no match for \"\(query)\".",
+                           level: .warning, category: "Spotify")
+                    return
+                }
+                await MainActor.run {
+                    ArtworkFetcher.attach(cover, to: trackID, library: library)
+                }
+            } catch {
+                if isCancellation(error) { return }
+                appLog("Get Album Art failed for \"\(query)\": \(error.localizedDescription)",
+                       level: .warning, category: "Spotify")
+            }
         }
     }
 }

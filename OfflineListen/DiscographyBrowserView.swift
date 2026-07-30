@@ -85,6 +85,12 @@ struct SpotifyDiscographyProvider: DiscographyProviding {
     /// Known Spotify artist id (the Every Noise data carries one per artist);
     /// nil makes `loadCatalogue` resolve the typed name via Spotify's search.
     var artistID: String? = nil
+    /// When set (and a key is verified), the pinned Top 10's tracklist comes
+    /// from the model (`DiscographyAgent.topTracks`) instead of Spotify's
+    /// `/top-tracks` endpoint — which answers 403 (Forbidden) under newer
+    /// client-credentials apps, and isn't needed just to *name* the songs.
+    /// Spotify remains the fallback when no AI key is configured.
+    var aiSettings: AISettingsStore? = nil
 
     func loadCatalogue() async throws -> DiscographyCatalogue {
         let resolvedID: String
@@ -134,6 +140,17 @@ struct SpotifyDiscographyProvider: DiscographyProviding {
         let collection: SpotifyCollection
         switch release.kind {
         case .topTen:
+            // Agent-listed when possible (see `aiSettings`); those tracks
+            // carry no ISRC or duration, so their YouTube match falls to the
+            // plain title search — the same rule the AI layout lives by.
+            if let aiSettings, await aiSettings.isAuthenticated {
+                let titles = try await DiscographyAgent.topTracks(artist: artistName,
+                                                                  settings: aiSettings)
+                return titles.enumerated().map { index, title in
+                    DiscographyTrackInfo(id: "top-\(index)", name: title, artist: artistName,
+                                         albumName: "", durationMS: nil, isrc: nil)
+                }
+            }
             collection = try await client.artistTopTracks(id: release.id)
         case .release, .highlights:
             collection = try await client.album(id: release.id)
@@ -235,6 +252,16 @@ struct AIDiscographyProvider: DiscographyProviding {
 
 // MARK: - The browser
 
+/// Wiring for the browser header's **Add as Source** button: how to file the
+/// browsed artist into Browse, and whether an equivalent source is already
+/// there (the button then reads as a checkmark instead of adding a copy).
+/// Passed by the Every Noise push only — a Browse source's own screen *is*
+/// a source, so it passes nothing and shows no button.
+struct DiscographyAddSource {
+    var isAdded: () -> Bool
+    var add: () -> Void
+}
+
 /// The shared album-first discography screen: sections of release rows, each
 /// expandable to its track names, each searchable to match those tracks
 /// against YouTube in place — matched tracks light up with Download/Preview
@@ -253,6 +280,8 @@ struct DiscographyBrowserView: View {
     /// neither and loads live, as it always has.
     var loadCached: (() -> DiscographyCatalogue?)? = nil
     var onFetched: ((DiscographyCatalogue) -> Void)? = nil
+    /// The header's Add as Source button (nil hides it — see the type).
+    var addSource: DiscographyAddSource? = nil
 
     @EnvironmentObject private var browse: BrowseStore
 
@@ -364,6 +393,7 @@ struct DiscographyBrowserView: View {
             }
         }
         .listStyle(.insetGrouped)
+        .miniPlayerClearance()
     }
 
     /// The page's masthead: the artist's portrait (when the catalogue carries
@@ -391,14 +421,35 @@ struct DiscographyBrowserView: View {
             Text(catalogue.artistName)
                 .font(.title.weight(.bold))
                 .multilineTextAlignment(.center)
-            Button {
-                showingBio = true
-            } label: {
-                Label("Learn More", systemImage: "text.book.closed")
-                    .font(.subheadline.weight(.semibold))
+            HStack(spacing: 10) {
+                Button {
+                    showingBio = true
+                } label: {
+                    Label("Learn More", systemImage: "text.book.closed")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+
+                // Files the artist into Browse as a discography-mode Artist
+                // source. `isAdded` reads the live source list, so the label
+                // flips to a checkmark the moment the source exists (and
+                // shows as one from the start if it already did).
+                if let addSource {
+                    let added = addSource.isAdded()
+                    Button {
+                        addSource.add()
+                    } label: {
+                        Label(added ? "In Browse" : "Add as Source",
+                              systemImage: added ? "checkmark.circle.fill" : "plus.circle")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .buttonBorderShape(.capsule)
+                    .disabled(added)
+                    .foregroundStyle(added ? Color.green : Color.accentColor)
+                }
             }
-            .buttonStyle(.bordered)
-            .buttonBorderShape(.capsule)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 8)
@@ -706,7 +757,8 @@ struct ArtistDiscographySourceView: View {
                 if let client = spotifySettings.client {
                     browser(for: source,
                             provider: SpotifyDiscographyProvider(client: client,
-                                                                 artistName: source.input))
+                                                                 artistName: source.input,
+                                                                 aiSettings: aiSettings))
                 } else {
                     ContentUnavailableViewCompat(
                         title: "Spotify isn't set up",

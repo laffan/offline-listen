@@ -6,7 +6,8 @@ import UIKit
 /// Loads a track's saved album art off disk, memoized so the player and mini
 /// player don't re-decode a JPEG on every render (NSCache is thread-safe and
 /// sheds under memory pressure). Keyed by file name — one artwork file per
-/// track id, written once, so entries can't go stale.
+/// track id — so an entry only goes stale when that file is *re*-written
+/// (Get Album Art over an existing cover), which is what `invalidate` is for.
 enum TrackArtwork {
     private static let cache = NSCache<NSString, UIImage>()
 
@@ -18,6 +19,12 @@ enum TrackArtwork {
         }
         cache.setObject(image, forKey: name as NSString)
         return image
+    }
+
+    /// Drops the memoized image for `fileName` so the next read re-decodes
+    /// the file — called when artwork is re-fetched over the same name.
+    static func invalidate(fileName: String) {
+        cache.removeObject(forKey: fileName as NSString)
     }
 }
 
@@ -646,6 +653,32 @@ extension View {
     /// the bottom safe area read `\.miniPlayerHeight` to clear it themselves.
     func miniPlayerBar(onOpen: @escaping () -> Void) -> some View {
         modifier(MiniPlayerBarModifier(onOpen: onOpen))
+    }
+
+    /// Bottom clearance equal to the mini player's current height, applied
+    /// **directly to a scrollable container** (List, Form, ScrollView).
+    ///
+    /// The bar itself rides as a safe-area inset *outside* each tab's
+    /// `NavigationStack`, and the UIKit-backed containers inside the stack
+    /// never pick that extra inset up (the navigation controller hosts its
+    /// screens in child hosting controllers that only see UIKit's own safe
+    /// area) — so their last rows hid behind the bar. Re-declaring the
+    /// published height as a local inset on the container is what actually
+    /// makes its content scroll clear; with nothing playing the height is 0
+    /// and this is a no-op.
+    func miniPlayerClearance() -> some View {
+        modifier(MiniPlayerClearanceModifier())
+    }
+}
+
+/// See `View.miniPlayerClearance()`.
+private struct MiniPlayerClearanceModifier: ViewModifier {
+    @Environment(\.miniPlayerHeight) private var miniPlayerHeight
+
+    func body(content: Content) -> some View {
+        content.safeAreaInset(edge: .bottom, spacing: 0) {
+            Color.clear.frame(height: miniPlayerHeight)
+        }
     }
 }
 

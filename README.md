@@ -108,11 +108,12 @@ Five screens (tabs):
    batch of items and download them all in one tap. An
    **Audio/Video toggle** beneath the Browse title — the same one the Download
    tab has — sets which mode both buttons (and the bulk download) act in.
-3. **Library** — downloaded tracks; tap to play. A **search** field sits under
+3. **Library** — downloaded tracks; tap to play. The **Tracks** section lists
+   **every** track — filed into a folder or not — so it's the full flat view
+   of the library (folders are one way in, not the only one). A **search**
+   field sits under
    the title: type anything and the list becomes results — matching **folders**
-   first, then every track whose **title or artist** matches, *including tracks
-   inside folders* (the normal list shows only unfiled ones, but "where did I
-   put that track" is the question search exists to answer). Matching ignores
+   first, then every track whose **title or artist** matches. Matching ignores
    case and accents, so "beyonce" finds "Beyoncé", and the media-type filter
    still applies. Results come back **as you type** — see
    [Why the library is fast](#why-the-library-is-fast) for what that costs.
@@ -164,7 +165,9 @@ Five screens (tabs):
    is itself a move target — moving a track there returns it to unlistened.
    Touch-and-hold also offers **Edit Metadata**, a modal for hand-editing the
    track **title and artist** (handy when AI Organize doesn't get it quite
-   right), with **Reset to Original Title** to restore the download title. Swipe
+   right), with **Reset to Original Title** to restore the download title —
+   and, with Spotify credentials saved, **Get Album Art**, which finds the
+   track's cover on Spotify and attaches it (see [Album art](#album-art)). Swipe
    a folder row for its slide menu: **Delete** (the folder only — its tracks
    return to the library),
    **Rename**, and **Archive** (move the whole folder, tracks and all, into the
@@ -220,12 +223,16 @@ Five screens (tabs):
    *every other screen*: a hairline progress line, what's playing, play/pause
    and next — so you can keep browsing or searching without going back to the
    Player. Tapping the title opens the Player. It's attached as a safe-area
-   inset, so lists scroll clear of it, and with nothing loaded it takes up no
-   room at all. A screen that pins its *own* bar to the bottom while opting out
-   of the safe area — the Every Noise maps, which run edge to edge under the tab
-   bar — doesn't get that for free: its scan and artist-preview bars read the
-   mini player's measured height from `\.miniPlayerHeight` and lift themselves
-   clear of it.
+   inset outside each tab's `NavigationStack`, and with nothing loaded it
+   takes up no room at all. That inset draws the bar but does **not** reach
+   the UIKit-backed containers *inside* the stack (the navigation controller
+   hosts each screen in its own hosting controller, which sees only UIKit's
+   safe area) — left alone, every List/Form's last row hides behind the bar.
+   So the bar publishes its measured height as `\.miniPlayerHeight`, and each
+   scrollable screen re-declares it locally via `.miniPlayerClearance()` —
+   that's what actually makes content scroll clear. The Every Noise maps take
+   the same height as extra scroll inset, and their scan/artist-preview bars
+   pad themselves by it, since the maps run edge to edge under the tab bar.
 5. **Settings** — AI configuration on top, then **Spotify** credentials, a
    **Local Sync** section, a
    **Blog Agent** section (posts per
@@ -320,6 +327,12 @@ error) into `Documents/Artwork/<track-id>.jpg` and recorded on the track
   loaded once per track change — never on the 2 Hz tick);
 - as a small cover in the **mini player**.
 
+Tracks that arrived *without* a cover aren't stuck with the placeholder:
+with Spotify credentials saved, touch-and-hold any track and **Get Album
+Art** searches Spotify by the track's (AI-cleaned) artist + title and
+attaches the best hit's cover through the same fetcher — best-effort like
+every artwork fetch, so a miss logs and changes nothing.
+
 Artwork is app-local display metadata: it's never synced or exported with the
 file, it's deleted with the track, and tracks without it (YouTube feeds,
 searches, plain pastes) simply keep the placeholder. Decoded images are
@@ -403,7 +416,7 @@ Seven **source types**, in two families:
 | **YouTube Playlist** | Scrape/RSS: watches the playlist's feed. Accepts a playlist URL (anything with `list=`) or a bare playlist id. |
 | **RSS Feed** | RSS reader: parses any RSS/Atom feed and keeps **only the posts that contain YouTube links** (a music blog's roundups, a newsletter's song-of-the-day). A post with several links yields one item per video. |
 | **Blog Agent** | AI agent: RSS-reader behaviour for blogs **without a feed**. The agent fetches the homepage, asks the model which of the page's links are individual recent articles (telling posts apart from nav/category/about links is exactly the judgement call heuristics get wrong — and the model may only *pick from* the links found on the page, never invent one), then reads the most recent ones. Each article becomes a **post** — a section headed by its title + date, with three parts: a one-or-two-sentence **summary**, the **YouTube tracks** actually linked in the article (Download/Preview like any Browse item), and a list of the **artists it names**. Tapping an artist opens a popup to spin up a new **Artist** source — Top 10 or Search Discography — for that name on the spot — so a text-only write-up with no embedded videos still turns into something to follow. (This replaces the earlier "guess the songs and search YouTube for each" step, which resolved unreliably.) **Settings ▸ Blog Agent** caps how many **posts per refresh** are read and how many **songs per post** are taken (defaults 5 and 5), so a link-heavy blog can't flood the list. |
-| **Artist** | One of three **modes** picked when the source is added. **Top 10** (AI): the model lists the artist's **top 10 most popular tracks**, ranked, digging deeper on each refresh — the ordinary item list. **Search Discography** (AI) and **Spotify Discography** both open the **album-first discography browser** instead (the same screen the Every Noise browser's Browse Discography uses): the first pass shows just **albums and song names** — a model call laying out the catalogue (Highlights pinned on top), or Spotify's real release list (a pinned **Top 10** with its **Search Top 10** button, then Albums / Singles & EPs / Compilations) — and each release's **search** button matches its tracks against YouTube on demand, right in the list (matched tracks light up with Download/Preview; misses dim). Nothing is resolved up front, so opening a big catalogue is instant and a refresh no longer costs a search per track. The first pass is **cached per source** (`Documents/Discographies/`); the screen's toolbar refresh re-fetches it. Downloads file into a folder named after the source, like every Browse download. The browser opens on the **artist page**: their Spotify portrait up top, name beneath it in large type, and a **Learn More** button — an AI-written brief bio, grounded on (and linking to) the artist's Wikipedia entry when one exists. Albums show their **cover art** as a row thumbnail and full-size when twirled open, and every download from here carries that art along (see [Album art](#album-art)). The Spotify mode needs the Settings ▸ Spotify credentials (and no AI key); the typed name is resolved to the artist via Spotify's search. (Discography was a separate source type once; sources created back then keep working as Artist sources in Search Discography mode.) |
+| **Artist** | One of three **modes** picked when the source is added. **Top 10** (AI): the model lists the artist's **top 10 most popular tracks**, ranked, digging deeper on each refresh — the ordinary item list. **Search Discography** (AI) and **Spotify Discography** both open the **album-first discography browser** instead (the same screen the Every Noise browser's Browse Discography uses): the first pass shows just **albums and song names** — a model call laying out the catalogue (Highlights pinned on top), or Spotify's real release list (a pinned **Top 10** with its **Search Top 10** button — agent-listed when an AI key is saved, since Spotify's top-tracks endpoint 403s newer apps — then Albums / Singles & EPs / Compilations) — and each release's **search** button matches its tracks against YouTube on demand, right in the list (matched tracks light up with Download/Preview; misses dim). Nothing is resolved up front, so opening a big catalogue is instant and a refresh no longer costs a search per track. The first pass is **cached per source** (`Documents/Discographies/`); the screen's toolbar refresh re-fetches it. Downloads file into a folder named after the source, like every Browse download. The browser opens on the **artist page**: their Spotify portrait up top, name beneath it in large type, and a **Learn More** button — an AI-written brief bio, grounded on (and linking to) the artist's Wikipedia entry when one exists. Albums show their **cover art** as a row thumbnail and full-size when twirled open, and every download from here carries that art along (see [Album art](#album-art)). The Spotify mode needs the Settings ▸ Spotify credentials (and no AI key); the typed name is resolved to the artist via Spotify's search. (Discography was a separate source type once; sources created back then keep working as Artist sources in Search Discography mode.) |
 | **Genre** | AI: popular songs in a genre, across artists. |
 | **Country** | AI: popular songs from a country (by artists from that country). The country field has a **globe button** that opens a searchable modal of every country (built from the system's localized ISO region list) in case the right name isn't obvious. |
 
@@ -471,21 +484,34 @@ a **Find** field — at both levels:
 - **Map** is the genre scatter-plot itself: every genre in the site's own
   position, color and size (nearby genres really do sound alike). Tapping a
   genre reveals its **constituent artists**, likewise positioned in rough
-  relation to one another on the genre's own map.
+  relation to one another on the genre's own map. Both maps **open centered**
+  on their canvas rather than at the top-left corner, and a **scroll pill** —
+  a draggable white dot hugging the right edge — maps onto the full vertical
+  scroll, so the ~15-screen-tall genre map can be traversed in one drag
+  (the system scroll indicator can't be grabbed).
 - **List** is the same set alphabetically, each genre in its map color with a
   per-row preview play button. A **sort menu** beside the Find field switches
   the order to **Similarity** — the site's own list behavior, since map
   distance *is* the similarity measure. In similarity mode every row grows a
   **resort button**: tap it and the list re-orders around that entry (it
   lands on top, its sonic neighbors follow), exactly like clicking a genre
-  on the site. The artist list inside a genre sorts the same two ways.
+  on the site. A third order, **Popularity**, reads the scraped font-size
+  percent — the site's popularity cue — biggest names first. The artist list
+  inside a genre sorts the same three ways.
 - **Scan** auto-plays through the example tracks in map order — the site's
   scan mode as a bottom transport bar (prev / play-pause / next), with the map
   following along and the current entry drawn inverted. It works on the genre
   map and inside any genre's artist map, remembers where it left off on the
   genre level, and skips entries with no preview.
 - **Find** filters: in list mode it narrows the list; over a map it drops down
-  the matches and tapping one flies the map there.
+  the matches and tapping one flies the map there. At the root the field has a
+  **genre/artist toggle** inside its trailing edge (the placeholder follows —
+  "Find Genre" / "Find Artist"): artist mode searches **every artist in the
+  dataset** (~470k unique names) and drops down the most popular matches, each
+  with its home genre beneath — tapping one opens that genre with the artist
+  selected, centered and previewing. Searching that many rows per keystroke
+  is what the bundled **artist index** exists for (see the "Why it isn't
+  laggy" notes below).
 - **History** (root level, an addition of ours) is the visit log, newest
   first: every genre you've opened (guitars icon) and every artist you've
   tapped (mic icon, with their genre beneath), each in its map color with a
@@ -503,11 +529,18 @@ saved (Settings ▸ Spotify), the "+" goes **straight to Browse Discography** �
 no chooser popup — the artist's *real* catalogue read live from Spotify (the
 scraped data carries every artist's Spotify id, but no discographies). A
 pinned **Top 10** row with a **Search Top 10** button sits at the top —
-Spotify's most-played for the artist, matched against YouTube on tap, which is
-where the popup's old Top 10 option went; beneath it, releases group into
+the artist's most popular tracks, matched against YouTube on tap, which is
+where the popup's old Top 10 option went. With an Anthropic key saved the
+tracklist comes from the **AI agent** (the same judgement the Top 10 source
+mode uses); without one it falls back to Spotify's top-tracks endpoint —
+which newer client-credentials apps find 403-gated, one more reason the
+agent path leads. Beneath it, releases group into
 Albums / Singles & EPs / Compilations, newest first — each with its **cover
-art** beside it, and the artist's portrait, name and **Learn More** bio button
-heading the page. Expanding a release shows its cover full-size and lists
+art** beside it, and the artist's portrait, name, **Learn More** bio button
+and an **Add as Source** button heading the page — the latter files the
+artist into Browse as a discography-mode **Artist source** on the spot (it
+reads "In Browse" once an equivalent source exists, so it never files a
+duplicate). Expanding a release shows its cover full-size and lists
 its track names, and its **magnifier** matches them against YouTube in place
 (ISRC-first, duration-gated — the pasted-link machinery), with live progress
 in the row; when the search settles, the **matched tracks light up with
@@ -534,8 +567,22 @@ only the labels intersecting the visible rect (plus a margin), recycling them
 from a pool as the map pans — a few hundred live views at most, whatever the
 dataset size (`NoiseMapView`). The maps render with the **vertical axis
 reversed** relative to the scraped page coordinates (the site's y grows
-downward, CSS-style; the renderer flips it once, at layout). The repo carries the scraped dataset (6,291
-genres, ~630k artist rows, ~57 MB of shards), so a fresh clone builds with the
+downward, CSS-style; the renderer flips it once, at layout).
+
+The **global artist search** (Find Artist) gets the same treatment: ~470k
+names is far too many to decode into Swift values per keystroke, so it never
+parses anything. `tools/everynoise/build_artist_index.py` derives a flat text
+index from the shards (`EveryNoiseData/artists.idx.z`, ~12 MB packed) — one
+line per unique artist, led by a case/diacritic-folded copy of the name, kept
+in the genre where they're drawn biggest and ordered by that size. On first
+search the app inflates it once into Caches and **memory-maps** it
+(`ENArtistIndex`); each keystroke (debounced) is then a raw byte scan whose
+first N hits are automatically the most popular matches — tens of
+milliseconds, no allocation per row, and only touched pages ever resident.
+
+The repo carries the scraped dataset (6,291
+genres, ~630k artist rows, ~57 MB of shards, plus the derived artist index),
+so a fresh clone builds with the
 whole map included; a build somehow missing it shows a clear explanation
 instead of an empty map.
 
@@ -550,9 +597,9 @@ do — the maps ignore the bottom safe area, so the mini player's inset doesn't
 push bottom bars up on its own.
 
 Ideas deliberately left on the table: pinch-zoom on the maps (the site has
-none either); a global artist search (needs a reverse index the shards don't
-carry); per-release "download all matched"; scan continuing to play beneath a
-pushed genre view.
+none either); per-release "download all matched"; scan continuing to play
+beneath a pushed genre view. (A global artist search used to sit on this
+list — the derived artist index is what crossed it off.)
 
 Preview downloads run through the **same pipeline** as the download queue but
 jump ahead of queued jobs, since the user is sitting in the modal waiting.
@@ -917,6 +964,26 @@ if you ever want to regenerate it).
 > **First download is slow:** YoutubeDL-iOS fetches the `yt-dlp` Python module
 > (tens of MB) on first use, then caches it. A network connection is required
 > for that step and for every download; playback is fully offline.
+
+### Running on macOS
+
+macOS is an official build target — as **Mac (Designed for iPad)**, which
+runs the iOS build natively on Apple silicon. The project declares it
+(`SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES`), so on an Apple silicon Mac
+the destination **My Mac (Designed for iPad)** appears in Xcode's run
+menu — select it and Build & Run; everything ships in the one app: the whole
+Every Noise dataset, the embedded Python / yt-dlp pipeline, background audio.
+
+Why not Mac Catalyst (deliberately `SUPPORTS_MACCATALYST = NO`): the
+extraction stack's native dependencies — YoutubeDL-iOS's embedded Python
+above all — are compiled for the **iOS** SDK, and a Catalyst build would need
+every one of them rebuilt against the Mac Catalyst SDK, which the dormant
+YoutubeDL-iOS doesn't provide. Designed-for-iPad sidesteps that entirely by
+running the untouched iOS binaries, so the whole download pipeline works on
+the Mac exactly as it does on the phone. (Intel Macs can't run
+Designed-for-iPad; there this stays an iPhone/iPad app.) The Share Extension
+and the watch app remain platform-specific, and Local Sync's folder picker
+reads Mac folders through the same Files-provider flow.
 
 ## Background / lock-screen playback (the success criterion)
 

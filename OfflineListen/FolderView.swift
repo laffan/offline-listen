@@ -143,6 +143,7 @@ struct FolderDetailView: View {
             }
         }
         .listStyle(.plain)
+        .miniPlayerClearance()
     }
 
     private func subfolderRow(_ subfolder: Folder) -> some View {
@@ -255,6 +256,7 @@ struct FolderDetailView: View {
                 SyncToLocalButton(track: track)
                 SendToWatchButton(track: track)
                 AIOrganizeButton(track: track)
+                GetAlbumArtButton(track: track)
                 if track.hasChapters {
                     Button {
                         splittingTrack = track
@@ -369,6 +371,7 @@ struct InboxView: View {
                                 SyncToLocalButton(track: track)
                                 SendToWatchButton(track: track)
                                 AIOrganizeButton(track: track)
+                                GetAlbumArtButton(track: track)
                                 if track.hasChapters {
                                     Button {
                                         splittingTrack = track
@@ -387,6 +390,7 @@ struct InboxView: View {
                     }
                 }
                 .listStyle(.plain)
+                .miniPlayerClearance()
             }
         }
         .navigationTitle("Inbox")
@@ -477,10 +481,12 @@ struct RecentTracksView: View {
                                 }
                                 SendToWatchButton(track: pair.track)
                                 AIOrganizeButton(track: pair.track)
+                                GetAlbumArtButton(track: pair.track)
                             }
                     }
                 }
                 .listStyle(.plain)
+                .miniPlayerClearance()
             }
         }
         .navigationTitle("Recent")

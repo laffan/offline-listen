@@ -53,7 +53,54 @@ enum DiscographyAgent {
         return discography
     }
 
+    /// The pinned **Top 10** as an agent call: the model lists the artist's
+    /// ten most popular tracks, names only — YouTube matching stays the
+    /// browser's on-demand search step, exactly like an album's tracks. This
+    /// is what the Spotify-backed discography's "Search Top 10" runs on:
+    /// Spotify's own `/top-tracks` endpoint answers 403 (Forbidden) under
+    /// newer client-credentials apps, and no Spotify call is needed to *name*
+    /// the songs anyway.
+    static func topTracks(artist rawArtist: String, settings: AISettingsStore) async throws -> [String] {
+        guard await settings.isAuthenticated else { throw BrowseFetchError.aiNotConfigured }
+
+        let artist = rawArtist.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !artist.isEmpty else { throw BrowseFetchError.badInput("Enter an artist's name.") }
+
+        let client = await AnthropicClient(apiKey: settings.apiKey, model: settings.model)
+        appLog("AI prompt → Top 10 \"\(artist)\":\n--- system ---\n\(topTracksSystemPrompt)\n--- user ---\nArtist: \(artist)",
+               level: .debug, category: "Browse")
+        let raw = try await client.complete(
+            system: topTracksSystemPrompt,
+            userText: "Artist: \(artist)",
+            maxTokens: 600
+        )
+        appLog("Top 10 response for \"\(artist)\":\n\(raw.prefix(600))",
+               level: .debug, category: "Browse")
+
+        let titles = parseTitles(raw)
+        appLog("Top 10 for \"\(artist)\": model returned \(titles.count) track(s).",
+               category: "Browse")
+        guard !titles.isEmpty else {
+            throw BrowseFetchError.badInput("The AI couldn't list top tracks for \"\(artist)\". Check the spelling and try again.")
+        }
+        return Array(titles.prefix(10))
+    }
+
     // MARK: - Prompt
+
+    private static let topTracksSystemPrompt = """
+    You are a music encyclopedia. Given an artist, list that artist's 10 most \
+    popular, best-known songs, ranked from most to least popular.
+
+    Respond with ONLY a JSON array of song-title strings and nothing else — \
+    no markdown, no commentary:
+    ["Song", ...]
+
+    Rules:
+    - Real song titles only — never invent tracks.
+    - Song titles only — no "Artist -" prefix and no "(feat. ...)" credits.
+    - If you don't recognize the artist, return [].
+    """
 
     private static let systemPrompt = """
     You are a music encyclopedia. Given an artist, lay out that artist's \
@@ -110,6 +157,18 @@ enum DiscographyAgent {
         let albums = (object["albums"] as? [Any])?
             .compactMap { ($0 as? [String: Any]).flatMap(Self.parseAlbum) } ?? []
         return Discography(highlights: highlights, albums: albums)
+    }
+
+    /// Parses a bare array of song titles (the Top 10 answer), tolerating
+    /// surrounding text by extracting the outermost `[ … ]` span.
+    static func parseTitles(_ raw: String) -> [String] {
+        guard let start = raw.firstIndex(of: "["),
+              let end = raw.lastIndex(of: "]"), start < end,
+              let data = String(raw[start...end]).data(using: .utf8),
+              let array = try? JSONSerialization.jsonObject(with: data) else {
+            return []
+        }
+        return stringList(array)
     }
 
     /// Reads a list of song titles, accepting `"Song"` or `{"title": "Song"}`

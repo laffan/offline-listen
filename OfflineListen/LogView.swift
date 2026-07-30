@@ -69,6 +69,7 @@ struct LogView: View {
                 .padding(.vertical, 8)
                 .textSelection(.enabled)
             }
+            .miniPlayerClearance()
             .onChange(of: log.entries.count) { _ in
                 if let last = log.entries.last {
                     withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }

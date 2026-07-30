@@ -307,6 +307,19 @@ struct SpotifyClient {
         return (id, resolved)
     }
 
+    /// The top track-search hits for a free-text query. Backs the Library's
+    /// **Get Album Art**: a downloaded track's artist + title comes in, the
+    /// best hit's album cover goes out.
+    func searchTracks(query: String, limit: Int = 5) async throws -> [SpotifyTrack] {
+        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        let data = try await get(path: "/search?q=\(encoded)&type=track&limit=\(limit)",
+                                 describing: "track search")
+        guard let response = try? JSONDecoder().decode(APITrackSearch.self, from: data) else {
+            throw SpotifyError.malformedResponse
+        }
+        return (response.tracks?.items ?? []).compactMap { Self.normalize($0, albumFallback: nil) }
+    }
+
     /// An artist's releases — albums, singles/EPs and compilations, without
     /// the "appears on" clutter — paginated to completion. This backs the
     /// Every Noise browser's discography view; each row's `url` re-enters the
@@ -574,6 +587,11 @@ private struct APIImage: Decodable {
 /// The `/search?type=artist` envelope: a paging object under an "artists" key.
 private struct APIArtistSearch: Decodable {
     let artists: APIPage<APIArtist>?
+}
+
+/// The `/search?type=track` envelope: a paging object under a "tracks" key.
+private struct APITrackSearch: Decodable {
+    let tracks: APIPage<APITrack>?
 }
 
 private struct APIAlbum: Decodable {

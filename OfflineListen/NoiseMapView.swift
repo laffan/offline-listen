@@ -29,6 +29,11 @@ struct NoiseMapCenter: Equatable {
 /// only labels intersecting the visible rect (plus a margin) exist as views,
 /// recycled from a pool as the map pans. A few hundred live labels at most,
 /// whatever the dataset size.
+///
+/// Two navigation aids ride on top: the map **opens centered** on its canvas
+/// (not the top-left corner), and a **scroll pill** hugs the right edge — a
+/// draggable dot mapped onto the full vertical scroll, since the genre map is
+/// ~15 screens tall and the system indicator can't be grabbed.
 struct NoiseMapView: UIViewRepresentable {
     /// Identity of the dataset — rebuild only when this changes, never on
     /// ordinary SwiftUI re-renders.
@@ -37,15 +42,25 @@ struct NoiseMapView: UIViewRepresentable {
     /// The item drawn inverted (its color as background), e.g. what's playing.
     var highlightedID: String?
     var centerRequest: NoiseMapCenter?
+    /// Extra bottom content inset. The map ignores the bottom safe area (it
+    /// runs edge to edge under the tab bar), so UIKit's inset adjustment never
+    /// learns about the SwiftUI mini player — the caller passes its measured
+    /// height here so the lowest rows can still scroll clear of it.
+    var bottomInset: CGFloat = 0
     var onTap: (String) -> Void
 
-    func makeUIView(context: Context) -> UIScrollView {
+    func makeUIView(context: Context) -> UIView {
+        let container = UIView()
+
         let scroll = NoiseScrollView()
         scroll.backgroundColor = .systemBackground
         scroll.delegate = context.coordinator
         scroll.showsVerticalScrollIndicator = true
         scroll.showsHorizontalScrollIndicator = true
         scroll.contentInsetAdjustmentBehavior = .always
+        scroll.frame = container.bounds
+        scroll.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        container.addSubview(scroll)
 
         let content = UIView()
         scroll.addSubview(content)
@@ -61,12 +76,41 @@ struct NoiseMapView: UIViewRepresentable {
         let tap = UITapGestureRecognizer(target: context.coordinator,
                                          action: #selector(Coordinator.handleTap(_:)))
         content.addGestureRecognizer(tap)
-        return scroll
+
+        // The scroll pill: a generous grab area with the visible dot centered
+        // in it, overlaid on the container (not the scroll view) so it never
+        // scrolls with the canvas.
+        let pill = UIView(frame: CGRect(x: 0, y: 0,
+                                        width: Coordinator.pillHitSize,
+                                        height: Coordinator.pillHitSize))
+        let dot = UIView(frame: CGRect(
+            x: (Coordinator.pillHitSize - Coordinator.pillSize) / 2,
+            y: (Coordinator.pillHitSize - Coordinator.pillSize) / 2,
+            width: Coordinator.pillSize, height: Coordinator.pillSize))
+        dot.backgroundColor = .white
+        dot.layer.cornerRadius = Coordinator.pillSize / 2
+        dot.layer.borderWidth = 0.5
+        dot.layer.borderColor = UIColor.separator.cgColor
+        dot.layer.shadowColor = UIColor.black.cgColor
+        dot.layer.shadowOpacity = 0.35
+        dot.layer.shadowRadius = 3
+        dot.layer.shadowOffset = CGSize(width: 0, height: 1)
+        dot.isUserInteractionEnabled = false
+        pill.addSubview(dot)
+        pill.isHidden = true
+        let pan = UIPanGestureRecognizer(target: context.coordinator,
+                                         action: #selector(Coordinator.handlePillPan(_:)))
+        pill.addGestureRecognizer(pan)
+        container.addSubview(pill)
+        context.coordinator.pillView = pill
+
+        return container
     }
 
-    func updateUIView(_ scroll: UIScrollView, context: Context) {
+    func updateUIView(_ container: UIView, context: Context) {
         let c = context.coordinator
         c.onTap = onTap
+        c.setBottomInset(bottomInset)
         if c.mapID != mapID {
             c.rebuild(mapID: mapID, items: items)
         }
@@ -84,6 +128,7 @@ struct NoiseMapView: UIViewRepresentable {
     final class Coordinator: NSObject, UIScrollViewDelegate {
         weak var scrollView: UIScrollView?
         weak var contentView: UIView?
+        weak var pillView: UIView?
         var onTap: (String) -> Void = { _ in }
         var lastCenterToken: UUID?
 
@@ -97,6 +142,13 @@ struct NoiseMapView: UIViewRepresentable {
         /// Spatial grid: cell key → item indices, for O(visible) lookups.
         private var grid: [Int: [Int]] = [:]
         private var highlightedID: String?
+        /// Set by `rebuild`, honored on the first layout pass with real
+        /// bounds: the map opens centered on its canvas, not the top-left.
+        private var pendingInitialCenter = false
+        /// A `center(on:)` that arrived before the first layout (a History
+        /// artist re-open) — applied once bounds exist, instead of being
+        /// computed against a zero-sized viewport.
+        private var pendingCenterID: String?
 
         /// Live labels keyed by item index, plus the recycle pool.
         private var visible: [Int: UILabel] = [:]
@@ -105,6 +157,12 @@ struct NoiseMapView: UIViewRepresentable {
         private static let cell: CGFloat = 256
         private static let margin: CGFloat = 300
         private static let padding: CGFloat = 40
+
+        /// The visible scroll-pill dot, and the (larger) draggable area it
+        /// sits in — a 20pt dot alone is a fiddly drag target.
+        static let pillSize: CGFloat = 20
+        static let pillHitSize: CGFloat = 44
+        private static let pillMargin: CGFloat = 6
 
         func rebuild(mapID: String, items: [NoiseMapItem]) {
             self.mapID = mapID
@@ -158,8 +216,12 @@ struct NoiseMapView: UIViewRepresentable {
             contentView?.frame = CGRect(origin: .zero, size: contentSize)
             if let scroll = scrollView {
                 scroll.contentSize = contentSize
-                let inset = scroll.adjustedContentInset
-                scroll.setContentOffset(CGPoint(x: -inset.left, y: -inset.top), animated: false)
+                // Land in the middle of the canvas, not the top-left corner.
+                // Bounds may still be zero here (first update runs before
+                // layout), in which case the first real layout pass applies it.
+                pendingCenterID = nil
+                pendingInitialCenter = true
+                applyInitialCenterIfReady(scroll)
             }
             updateVisible()
         }
@@ -172,6 +234,7 @@ struct NoiseMapView: UIViewRepresentable {
         /// resized (layoutSubviews also fires on every scroll tick).
         func viewportChanged() {
             guard let scroll = scrollView else { return }
+            applyInitialCenterIfReady(scroll)
             let rect = CGRect(origin: scroll.contentOffset, size: scroll.bounds.size)
             if rect != lastViewport {
                 updateVisible()
@@ -180,12 +243,29 @@ struct NoiseMapView: UIViewRepresentable {
 
         private var lastViewport = CGRect.null
 
+        private func applyInitialCenterIfReady(_ scroll: UIScrollView) {
+            guard scroll.bounds.width > 0 else { return }
+            if let id = pendingCenterID {
+                pendingCenterID = nil
+                pendingInitialCenter = false
+                center(on: id, animated: false)
+                return
+            }
+            guard pendingInitialCenter else { return }
+            pendingInitialCenter = false
+            let target = CGPoint(x: scroll.contentSize.width / 2,
+                                 y: scroll.contentSize.height / 2)
+            scroll.setContentOffset(clampedOffset(centering: target, in: scroll),
+                                    animated: false)
+        }
+
         /// Materializes labels intersecting the viewport (+margin), retires
         /// the rest into the pool.
         private func updateVisible() {
             guard let scroll = scrollView, let content = contentView,
                   !items.isEmpty, scroll.bounds.width > 0 else { return }
             lastViewport = CGRect(origin: scroll.contentOffset, size: scroll.bounds.size)
+            updatePill()
             let view = lastViewport
                 .insetBy(dx: -Self.margin, dy: -Self.margin)
 
@@ -256,17 +336,93 @@ struct NoiseMapView: UIViewRepresentable {
             }
         }
 
+        /// Applies the caller's extra bottom inset (the mini player's height —
+        /// see `NoiseMapView.bottomInset`) on top of UIKit's own adjustment.
+        func setBottomInset(_ inset: CGFloat) {
+            guard let scroll = scrollView, scroll.contentInset.bottom != inset else { return }
+            scroll.contentInset.bottom = inset
+            scroll.verticalScrollIndicatorInsets.bottom = inset
+            // The pill's track just changed length — resettle it now rather
+            // than on the next scroll tick.
+            updatePill()
+        }
+
         func center(on id: String, animated: Bool) {
             guard let scroll = scrollView, let i = indexByID[id] else { return }
+            // An explicit target supersedes the open-centered default; before
+            // the first layout it can only be deferred, not computed.
+            pendingInitialCenter = false
+            guard scroll.bounds.width > 0 else {
+                pendingCenterID = id
+                return
+            }
             let frame = frames[i]
+            scroll.setContentOffset(
+                clampedOffset(centering: CGPoint(x: frame.midX, y: frame.midY), in: scroll),
+                animated: animated)
+        }
+
+        /// The content offset that puts `point` (content coordinates) in the
+        /// middle of the visible area, clamped to the scrollable range.
+        private func clampedOffset(centering point: CGPoint, in scroll: UIScrollView) -> CGPoint {
             let inset = scroll.adjustedContentInset
             let viewW = scroll.bounds.width - inset.left - inset.right
             let viewH = scroll.bounds.height - inset.top - inset.bottom
-            var offset = CGPoint(x: frame.midX - viewW / 2 - inset.left,
-                                 y: frame.midY - viewH / 2 - inset.top)
+            var offset = CGPoint(x: point.x - viewW / 2 - inset.left,
+                                 y: point.y - viewH / 2 - inset.top)
             offset.x = max(-inset.left, min(offset.x, scroll.contentSize.width - viewW - inset.left))
             offset.y = max(-inset.top, min(offset.y, scroll.contentSize.height - viewH - inset.top))
-            scroll.setContentOffset(offset, animated: animated)
+            return offset
+        }
+
+        // MARK: Scroll pill
+
+        /// The pill's vertical travel within the container: clear of the bars
+        /// the safe area describes, with a small margin.
+        private func pillTrack(_ scroll: UIScrollView) -> (top: CGFloat, height: CGFloat) {
+            let inset = scroll.adjustedContentInset
+            let top = inset.top + Self.pillMargin
+            let bottom = scroll.bounds.height - inset.bottom - Self.pillMargin
+            return (top, max(0, bottom - top - Self.pillHitSize))
+        }
+
+        /// How far down the scrollable range the viewport currently sits, 0–1.
+        private func scrollFraction(_ scroll: UIScrollView) -> CGFloat? {
+            let inset = scroll.adjustedContentInset
+            let range = scroll.contentSize.height + inset.top + inset.bottom - scroll.bounds.height
+            guard range > 1 else { return nil }
+            return max(0, min(1, (scroll.contentOffset.y + inset.top) / range))
+        }
+
+        /// Keeps the pill mirroring the scroll position (and hides it when the
+        /// whole canvas fits the viewport).
+        private func updatePill() {
+            guard let scroll = scrollView, let pill = pillView else { return }
+            guard let fraction = scrollFraction(scroll) else {
+                pill.isHidden = true
+                return
+            }
+            pill.isHidden = false
+            let track = pillTrack(scroll)
+            pill.frame.origin = CGPoint(
+                x: scroll.bounds.width - Self.pillHitSize - Self.pillMargin,
+                y: track.top + track.height * fraction)
+        }
+
+        /// Dragging the pill scrolls the map: the finger's position on the
+        /// track maps straight onto the scrollable range, like a scrollbar.
+        @objc func handlePillPan(_ gesture: UIPanGestureRecognizer) {
+            guard let scroll = scrollView, let container = pillView?.superview else { return }
+            let track = pillTrack(scroll)
+            guard track.height > 0 else { return }
+            let y = gesture.location(in: container).y - track.top - Self.pillHitSize / 2
+            let fraction = max(0, min(1, y / track.height))
+            let inset = scroll.adjustedContentInset
+            let range = scroll.contentSize.height + inset.top + inset.bottom - scroll.bounds.height
+            guard range > 0 else { return }
+            scroll.setContentOffset(
+                CGPoint(x: scroll.contentOffset.x, y: fraction * range - inset.top),
+                animated: false)
         }
 
         /// Tap: the label under the finger — nearest center among generous

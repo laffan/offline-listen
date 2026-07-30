@@ -42,6 +42,7 @@ struct SettingsView: View {
                 blogAgentSection
                 logSection
             }
+            .miniPlayerClearance()
             .navigationTitle("Settings")
             .fileImporter(isPresented: $showFolderPicker, allowedContentTypes: [.folder]) { result in
                 if case .success(let url) = result {

@@ -62,6 +62,7 @@ struct WatchFolderView: View {
                     }
                 }
                 .listStyle(.plain)
+                .miniPlayerClearance()
             }
         }
         .navigationTitle("Watch")

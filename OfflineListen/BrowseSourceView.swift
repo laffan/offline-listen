@@ -140,6 +140,7 @@ struct BrowseSourceView: View {
                     moreSection
                 }
                 .listStyle(.plain)
+                .miniPlayerClearance()
                 .environment(\.editMode, $editMode)
                 .refreshable { await refreshAsync() }
             }

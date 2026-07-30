@@ -943,6 +943,9 @@ enum ArtworkFetcher {
                 let fileName = "\(trackID.uuidString).jpg"
                 try data.write(to: AppPaths.artwork.appendingPathComponent(fileName),
                                options: .atomic)
+                // Re-fetches overwrite the same file name; drop the decoded
+                // copy so the new cover shows instead of the memoized old one.
+                TrackArtwork.invalidate(fileName: fileName)
                 await MainActor.run {
                     library.setArtwork(for: trackID, fileName: fileName)
                 }

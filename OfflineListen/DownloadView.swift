@@ -52,6 +52,7 @@ struct DownloadView: View {
                         }
                     }
                     .listStyle(.plain)
+                    .miniPlayerClearance()
                 }
             }
             .padding(.top)
