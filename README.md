@@ -101,7 +101,8 @@ Five screens (tabs):
    **Preview** (a listen-first modal with **Save** / **Discard**). A **world
    button** beside the "+" opens the **Every Noise browser** — the whole
    [Every Noise at Once](https://everynoise.com) genre map, bundled into the
-   app, browsable offline, and wired straight into the Artist sources (see
+   app and browsable offline; tapping an artist there leads to their live
+   Spotify discography, or files them into Browse as an Artist source (see
    [The Every Noise browser](#the-every-noise-browser)). A **Select**
    button in a source's list flips it into multi-select, so you can tick a
    batch of items and download them all in one tap. An
@@ -197,22 +198,22 @@ Five screens (tabs):
    title font. **Convert to Folder** turns it back. See
    [Mixtape folders](#mixtape-folders).
 4. **Player** — artwork, scrubber, play/pause, skip, next/previous — the same
-   control suite for audio and video. A track downloaded with **album art**
-   (anything Spotify-sourced — see [Album art](#album-art)) shows its real
-   cover in place of the gradient placeholder, on the **lock screen and in
-   Control Center** too, and as a tiny cover in the mini player. **Tap anywhere on the scrub bar to jump
-   there**; dragging works as before, so you never have to drag the playhead
-   across a track just to skip ahead. Beneath the transport, the **previous
-   track** is named on the left and the **next track** on the right (labelled
-   as such, with artist under title) — tap either to go straight to it. Video
-   is edge-to-edge in portrait, and **tapping the picture hands it the whole
+   control suite for audio and video, and it drives the lock screen and
+   Control Center. A track downloaded with **album art** (anything
+   Spotify-sourced — see [Album art](#album-art)) shows its real cover in
+   place of the gradient placeholder — on the lock screen and in the mini
+   player too. **Tap anywhere on the scrub bar to jump there**; dragging
+   works as before, so you never have to drag the playhead across a track
+   just to skip ahead. Beneath the transport, the **previous track** is named
+   on the left and the **next track** on the right (labelled as such, with
+   artist under title) — tap either to go straight to it. Video is
+   edge-to-edge in portrait, and **tapping the picture hands it the whole
    screen**: title, transport, nav and tab bars all step aside, and a tap
-   brings back the floating controls with a button to shrink it again. It also
-   goes fullscreen on its own when the phone rotates to landscape. Drives the
-   lock screen and Control Center. For a chaptered track, small **dots** sit
-   along the scrubber at each chapter's start and the **current chapter
-   title** shows on its own line beneath the title/artist, updating as playback
-   crosses a marker.
+   brings back the floating controls with a button to shrink it again. It
+   also goes fullscreen on its own when the phone rotates to landscape. For a
+   chaptered track, small **dots** sit along the scrubber at each chapter's
+   start and the **current chapter title** shows on its own line beneath the
+   title/artist, updating as playback crosses a marker.
 
    **The mini player.** Whenever a track is loaded — playing, paused, or the
    one restored at launch — a low-profile bar rides just above the tab bar on
@@ -537,6 +538,21 @@ downward, CSS-style; the renderer flips it once, at layout). The repo carries th
 genres, ~630k artist rows, ~57 MB of shards), so a fresh clone builds with the
 whole map included; a build somehow missing it shows a clear explanation
 instead of an empty map.
+
+**A sharp edge for future work here:** the browser sits inside Browse's
+`NavigationStack`, and `navigationDestination` content is hosted by that
+stack — so a pushed screen inherits the app-level environment objects but
+*not* ones injected locally inside the browser. Hand the browser's own
+`store`/`player` to pushed destinations explicitly (a missed one crashes at
+first push). Relatedly, anything new pinned to the bottom of these screens
+must read `\.miniPlayerHeight` and pad itself, as the scan and artist bars
+do — the maps ignore the bottom safe area, so the mini player's inset doesn't
+push bottom bars up on its own.
+
+Ideas deliberately left on the table: pinch-zoom on the maps (the site has
+none either); a global artist search (needs a reverse index the shards don't
+carry); per-release "download all matched"; scan continuing to play beneath a
+pushed genre view.
 
 Preview downloads run through the **same pipeline** as the download queue but
 jump ahead of queued jobs, since the user is sitting in the modal waiting.

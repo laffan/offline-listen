@@ -4,8 +4,9 @@ import SwiftUI
 /// site's genre map, faithfully — **Map**, **List** and **Scan** modes plus a
 /// **Find** field, at both levels. Tapping a genre reveals its constituent
 /// artists positioned in rough relation to one another; tapping an artist
-/// plays their 30-second top-track preview and offers a **+** that creates a
-/// regular Artist source (Top 10 or Discography) back in Browse.
+/// plays their 30-second top-track preview and offers a **+** that opens
+/// their live Spotify discography — or, when Spotify isn't configured, files
+/// them into Browse as a regular Artist source (Top 10 or Search Discography).
 struct EveryNoiseView: View {
     @EnvironmentObject private var playback: PlaybackManager
 
