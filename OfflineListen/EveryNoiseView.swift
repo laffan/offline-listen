@@ -45,7 +45,14 @@ struct EveryNoiseView: View {
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(isPresented: genreIsPushed) {
             if let pushedGenre {
+                // Pushed destinations are hosted by Browse's NavigationStack,
+                // which sits *outside* this view — so they inherit the app's
+                // environment but not objects injected here. Hand the local
+                // ones over explicitly or the genre view dies looking for
+                // its ENPreviewPlayer.
                 ENGenreView(genre: pushedGenre, initialArtistID: pushedArtistID)
+                    .environmentObject(store)
+                    .environmentObject(player)
             }
         }
         .environmentObject(store)
