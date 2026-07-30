@@ -92,7 +92,7 @@ struct EveryNoiseView: View {
         ContentUnavailableViewCompat(
             title: "No Every Noise data",
             systemImage: "globe",
-            description: "This build doesn't bundle the Every Noise dataset. Run tools/everynoise/scrape.py once (see its README) and rebuild — the map, every genre's artists and their preview snippets are baked in from then on."
+            description: "Run tools/everynoise/scrape.py and rebuild to bundle the genre map."
         )
     }
 
@@ -438,7 +438,7 @@ struct ENHistoryView: View {
             ContentUnavailableViewCompat(
                 title: "No history yet",
                 systemImage: "clock",
-                description: "Genres and artists you open land here, newest first."
+                description: "Genres and artists you open land here."
             )
             .frame(maxHeight: .infinity)
         } else {
@@ -895,9 +895,11 @@ struct ENArtistBar: View {
                 Text(artist.name)
                     .font(.headline)
                     .lineLimit(1)
-                Text(artist.preview == nil ? "No preview in the data" : "Top-song preview")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if artist.preview == nil {
+                    Text("No preview available")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Spacer()
@@ -928,16 +930,12 @@ struct ENArtistBar: View {
         .padding(.horizontal)
         .padding(.vertical, 10)
         .background(.regularMaterial)
-        .confirmationDialog("Follow this artist", isPresented: $choosingMode, titleVisibility: .visible) {
+        .confirmationDialog("", isPresented: $choosingMode) {
             Button("Top 10") { add(.topTracks) }
             Button("Discography") { add(.discography) }
             if offersLiveDiscography, let onBrowseDiscography {
                 Button("Browse Discography") { onBrowseDiscography() }
             }
-        } message: {
-            Text(offersLiveDiscography
-                 ? "Add “\(artist.name)” as a new Artist source in Browse — or browse their real discography from Spotify."
-                 : "Add “\(artist.name)” as a new Artist source in Browse.")
         }
         .onChange(of: artist.id) { _ in added = nil }
     }
@@ -1030,10 +1028,6 @@ struct ENDiscographyView: View {
             releaseSection("Albums", albums.filter { $0.group == "album" })
             releaseSection("Singles & EPs", albums.filter { $0.group == "single" })
             releaseSection("Compilations", albums.filter { $0.group == "compilation" })
-            Section {
-            } footer: {
-                Text("The magnifier searches a release's tracks on YouTube (ISRC first, then title, duration-checked). Matched tracks light up with Download and Preview — both in \(browse.downloadMode.displayName) mode. Downloads land in the Library's track list and Inbox.")
-            }
         }
         .listStyle(.insetGrouped)
     }
@@ -1120,7 +1114,7 @@ private struct ENAlbumRow: View {
                 .foregroundStyle(.orange)
         } else if let tracks {
             if searching {
-                Text("Matching \(progress.done) of \(progress.total) on YouTube…")
+                Text("Matching \(progress.done) of \(progress.total)…")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

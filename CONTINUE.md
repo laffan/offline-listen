@@ -1,122 +1,49 @@
-# Every Noise integration — session handoff
+# Every Noise integration — handoff notes
 
-Branch: `claude/every-noise-integration-djodwl`. This file is a snapshot for
-whoever (human or agent) picks the work up next. The feature is **functionally
-complete and the dataset is committed**; what remains is build verification
-and small polish.
+Branch: `claude/every-noise-integration-djodwl`. The feature is **complete and
+verified on-device**: the bundled genre map (Map/List/Scan/History + Find at
+the root, Map/List/Scan + Find inside a genre), similarity sorting, artist
+previews, the "+" → Artist source flow, and the live-from-Spotify Browse
+Discography with inline YouTube matching have all been exercised on a phone,
+end to end (album track → YouTube match → download → AI organize).
 
-## State of play
+The `README.md` section **"The Every Noise browser"** is the authoritative
+feature description; `tools/everynoise/README.md` covers the (one-time,
+already-run) scraper. What follows is only what a future session benefits
+from knowing.
 
-**Done and pushed:**
+## Architecture in one breath
 
-- `tools/everynoise/` — working Python 3 scraper (rewrite of the dead
-  Python 2 notebooks in laffan/everynoise-scrape). Captures genre + artist
-  map positions, colors, sizes, preview URLs, Spotify ids. Offline fixture
-  tests: `python3 tools/everynoise/test_parser.py`.
-- `OfflineListen/EveryNoiseData/` — the **real scraped dataset** (commit
-  `8f780f1`, scraped 2026-07-30): 6,291 genres, 631,768 artist rows, 57 MB.
-  Validated in-session: zero missing/empty/duplicate shards, every genre has
-  a preview URL, only 4% of artists lack one, all shard keys are `[a-z0-9]`,
-  every shard inflates (raw DEFLATE, `wbits=-15`) and decodes against the
-  app's models. Largest decoded shard ~0.25 MB (`animecv`).
-- App integration, all wired into `project.pbxproj`:
-  - `EveryNoiseData.swift` — models (`ENGenre`/`ENArtist`), lazy shard store
-    (LRU of 12, `NSData.decompressed(using: .zlib)`), `ENPreviewPlayer`
-    (AVPlayer over the p.scdn.co URLs; pauses `PlaybackManager` via the same
-    `togglePlayPause()` courtesy the Browse preview modal uses).
-  - `NoiseMapView.swift` — virtualized UIScrollView scatter map (spatial
-    grid + recycled UILabels; only viewport-adjacent labels exist).
-  - `EveryNoiseView.swift` — Map/List/Scan modes + Find at both levels;
-    genre tap → artist map; artist tap → preview + "+" → creates an Artist
-    source (Top 10/Discography) via `browse.addSource` + first refresh.
-  - `BrowseView.swift` — `globe.americas` toolbar button beside "+", opens
-    the browser as a `fullScreenCover`.
-- README: feature section ("The Every Noise browser"), source-layout rows,
-  setup note.
+`tools/everynoise/scrape.py` (Python 3, no deps) scraped everynoise.com into
+`OfflineListen/EveryNoiseData/` — a `genres.json` index (6,291 genres, map
+positions/colors/sizes/preview URLs) plus one raw-DEFLATE artist shard per
+genre (631k artist rows, 57 MB), bundled as an Xcode folder reference.
+`EveryNoiseData.swift` loads the index once off-main and inflates shards
+lazily behind a small LRU; `NoiseMapView.swift` is a virtualized UIScrollView
+(spatial grid, recycled labels) that keeps both maps smooth; the site froze
+in late 2024, so the data never needs re-scraping. No Spotify API key is
+needed for previews (static p.scdn.co URLs in the data); Browse Discography
+does need the Settings ▸ Spotify credentials.
 
-**Pushed via GitHub API at the end of this session** (native `git push` broke
-mid-session — see quirks): a docs catch-up commit (README placeholder-era
-text updated, real dataset numbers in the `EveryNoiseData.swift` header
-comment, `EveryNoiseData/genres/README.txt` keeper deleted) and this file.
-If any of that is missing from the branch, the intended contents are in this
-session's local checkout at `/home/user/offline-listen` (local commit
-"Docs catch up with the bundled Every Noise dataset").
+## Sharp edges worth remembering
 
-## Not yet verified (the actual next steps)
+- **Pushed destinations lose locally-injected environment objects.** The
+  browser sits inside Browse's NavigationStack; `navigationDestination`
+  content is hosted by that stack, so it inherits app-level environment
+  objects but *not* ones injected inside the browser — hand `store`/`player`
+  to destinations explicitly (a missed one crashes at first push).
+- **Spotify's `/artists/{id}/albums` 400s an explicit `limit`** under a
+  client-credentials app. Request the default page size and follow the
+  server-minted `next` links.
+- **Discography downloads are per-track picks and enqueue *unfiled*** —
+  album-folder filing hid them from the Library's root Tracks list, which
+  read as a bug.
+- The Top 10 / Discography agents log full prompts/responses at debug level
+  (Log, category `Browse`); Discography's `maxTokens` is 8192 because 4096
+  truncated big catalogues mid-JSON.
 
-1. **No Swift compile has ever run** — this environment has no Swift
-   toolchain (the repo has always been authored this way). The first Xcode
-   build is the syntax gate for the three new files + the `BrowseView` edit.
-   Expect at most small fixes (an overload label, an iOS-16 availability
-   nit); nothing structural should be wrong.
-2. **On-device behavior checklist:**
-   - Globe button → map renders ~6,300 genres, pans smoothly both axes.
-   - Tap genre → artist map loads (shard inflate ~instant), positions sane.
-   - Tap artist → 30s preview plays (needs network — previews stream from
-     Spotify's CDN; everything else is offline), main player pauses.
-   - "+" on artist bar → Top 10 / Discography → source appears in Browse
-     and refreshes.
-   - Scan mode: auto-advances on preview end, map follows, resumes position
-     (genre level persists via `@AppStorage("everyNoiseScanIndex")`).
-   - Find: list filtering, map dropdown + fly-to + 2s highlight flash.
-   - Missing-preview artists: bar says so, play button disabled, scan skips.
-3. **Perf on iPad**: the map is virtualized specifically for the M1-iPad
-   lag complaint; if label churn stutters at high fling speeds, raise
-   `Coordinator.margin` (prefetch band) or pool more aggressively.
-4. **Possible polish**, deliberately not done: pinch-zoom on the map (site
-   has none either); a global artist search (would need a reverse index —
-   the scraper's per-genre shards don't carry one); genre "similar genres"
-   sidebar links (not scraped).
+## Ideas deliberately left on the table
 
-**Round 2 (after the first on-device build succeeded):** list mode gained a
-sort menu (Alphabetical / Similarity, with per-row "resort from here"
-anchoring — map distance is the similarity metric); the artist "+" dialog
-gained **Browse Discography** (live from Spotify via the artist id in the
-dataset + `SpotifyClient.artistAlbums`; per-release Download rides
-`enqueueSpotify`, with the selection popup presented inside the sheet); and
-the Top 10 / Discography agents now log their full prompts/responses at
-debug level, report cap-drops precisely, and Discography's `maxTokens` rose
-4096 → 8192 (truncated JSON was reading as an incomplete catalogue). These
-are build-checked only up to round 1 — the round-2 diff itself has not been
-compiled yet.
-
-**Round 3 (after round 2 shipped and worked on-device):** the browser moved
-from a fullScreenCover to a **push inside Browse's navigation** (tab bar
-visible; genre and discography pushes use `navigationDestination(isPresented:)`
-since the stack isn't path-bound); the discography's per-release action became
-a **magnifier** that matches tracks on YouTube inline (`SpotifyResolver.
-youTubeURL` per track, live progress, matched rows gain Download/Preview,
-misses dim — the PlaylistPicker popup is gone from this flow); per-track
-downloads enqueue **unfiled** so they appear in the Library's Tracks list, not
-an album folder (that folder-invisibility was reported as a bug); and
-`artistAlbums` dropped its explicit `limit=50` (Spotify 400s it now) in favor
-of server-default paging via `next` links.
-
-## Design decisions worth knowing
-
-- **No Spotify API anywhere.** Preview URLs are static p.scdn.co links
-  embedded in the site's HTML; the site froze in late 2024, so the data is
-  final. Re-scraping is never needed (but `scrape.py` resumes and is
-  idempotent if you do).
-- **Shards, not one blob**: per-genre raw-DEFLATE files keep git happy
-  (no >100 MB file), let the app inflate exactly one genre at a time, and
-  make partial scrapes/resumes natural. `genres.json` (1.4 MB) is the only
-  thing read eagerly, off-main, on first open.
-- **Site coordinates are used as-is** (1500×22648 canvas, top/left pixels →
-  points). Genre keys are the site's page slugs — they're the shard
-  filenames and the stable ids throughout.
-- The dataset folder ships as an Xcode **folder reference** (like `ytdlp/`),
-  so replacing/updating data never touches the project file.
-
-## Environment quirks hit this session (for agents, not humans)
-
-- Egress policy allows only GitHub-family hosts: everynoise.com and
-  p.scdn.co are blocked here (previews can't be played/tested from the
-  container; the scrape ran on the user's laptop).
-- After a container resume, the baked-in git-proxy credentials rotated:
-  `git pull/push origin` fails with username/password prompts. Workaround
-  used: **fetch** via
-  `GIT_CONFIG_GLOBAL=/dev/null git -c http.proxy="$HTTPS_PROXY" -c http.sslCAInfo=/root/.ccr/ca-bundle.crt fetch https://github.com/laffan/offline-listen.git <branch>`
-  (works because the repo is public); **push** only works through the
-  GitHub MCP tools (`push_files`/`delete_file`/`create_or_update_file`) in
-  that state. A fresh session should have working git again.
+Pinch-zoom on the maps (the site has none either); a global artist search
+(needs a reverse index the shards don't carry); per-release "download all
+matched"; scan continuing to play beneath a pushed genre view.
