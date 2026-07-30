@@ -21,6 +21,10 @@ struct DiscographyTrackInfo: Identifiable, Codable, Hashable {
     /// The track's album-cover URL, when known — handed to the download so
     /// the finished track wears its art.
     var artworkURL: String? = nil
+    /// A pre-matched watch URL, for tracks that *came from* YouTube (the
+    /// search-ranked Top 10 backup) — the provider returns it directly
+    /// instead of running a search that would only rediscover it.
+    var youTubeURL: String? = nil
 }
 
 /// What a release row is, beyond an ordinary album: the pinned **Top 10**
@@ -140,15 +144,17 @@ struct SpotifyDiscographyProvider: DiscographyProviding {
         let collection: SpotifyCollection
         switch release.kind {
         case .topTen:
-            // Three sources, in order of preference. The **agent** knows the
+            // Four sources, in order of preference. The **agent** knows the
             // popular canon and costs one call — but it answers [] for
             // artists it doesn't know, which is most of the Every Noise
             // map's long tail, so an empty answer isn't a failure: the
             // **catalogue itself** is read next, ranked by Spotify's
-            // per-track popularity score (endpoints that still work). The
-            // dedicated **top-tracks endpoint** stays as the last resort —
-            // it answers 403 under newer client-credentials apps, but
-            // remains correct where it works.
+            // per-track popularity score (endpoints that still work). When
+            // Spotify has nothing to rank either, **YouTube's own search
+            // ranking** stands in — the long tail very often lives there —
+            // and the dedicated **top-tracks endpoint** stays as the final
+            // resort (it answers 403 under newer client-credentials apps,
+            // but remains correct where it works).
             if let aiSettings, await aiSettings.isAuthenticated {
                 let titles = (try? await DiscographyAgent.topTracks(artist: artistName,
                                                                     settings: aiSettings)) ?? []
@@ -168,6 +174,8 @@ struct SpotifyDiscographyProvider: DiscographyProviding {
                !derived.isEmpty {
                 collection = SpotifyCollection(name: "Top 10", tracks: derived)
             } else {
+                let fromYouTube = await YouTubeTopTracks.fetch(artist: artistName)
+                if !fromYouTube.isEmpty { return fromYouTube }
                 collection = try await client.artistTopTracks(id: release.id)
             }
         case .release, .highlights:
@@ -185,7 +193,8 @@ struct SpotifyDiscographyProvider: DiscographyProviding {
     }
 
     func youTubeURL(for track: DiscographyTrackInfo) async -> String? {
-        await SpotifyResolver.youTubeURL(for: SpotifyTrack(
+        if let direct = track.youTubeURL { return direct }
+        return await SpotifyResolver.youTubeURL(for: SpotifyTrack(
             id: track.id,
             name: track.name,
             artists: track.artist.isEmpty ? [] : [track.artist],
@@ -194,6 +203,42 @@ struct SpotifyDiscographyProvider: DiscographyProviding {
             isrc: track.isrc,
             trackNumber: nil,
             albumImageURL: track.artworkURL))
+    }
+}
+
+/// The straight-from-YouTube Top 10: the artist's top organic search results,
+/// taken as the tracklist directly. This is what serves the Every Noise
+/// long tail — an artist too obscure for the model *and* too unstreamed for
+/// a usable Spotify catalogue very often still has a healthy YouTube
+/// presence, and the search page's own ranking is a popularity signal. Each
+/// row arrives pre-matched (it *is* a video), so the Search step resolves
+/// instantly.
+enum YouTubeTopTracks {
+    /// Song-length gate: an artist query's results include full-album uploads
+    /// and hour-long compilations, which a "top tracks" list shouldn't be.
+    private static let maxDuration: TimeInterval = 12 * 60
+
+    static func fetch(artist: String, limit: Int = 10) async -> [DiscographyTrackInfo] {
+        // Over-fetch so the length gate doesn't leave the list short.
+        let results = await YouTubeSearchResolver.topVideos(matching: artist, limit: limit + 8)
+        var tracks: [DiscographyTrackInfo] = []
+        for result in results {
+            if let length = result.durationSeconds, length > maxDuration { continue }
+            // Artist deliberately empty: video titles almost always carry the
+            // artist's name already, so prefixing it again would double up.
+            tracks.append(DiscographyTrackInfo(
+                id: "yt-\(result.videoID)",
+                name: result.title,
+                artist: "",
+                albumName: "",
+                durationMS: result.durationSeconds.map { Int($0 * 1000) },
+                isrc: nil,
+                youTubeURL: result.url))
+            if tracks.count == limit { break }
+        }
+        appLog("Top 10 via YouTube search for \"\(artist)\": \(tracks.count) of \(results.count) result(s) kept.",
+               level: tracks.isEmpty ? .warning : .info, category: "Browse")
+        return tracks
     }
 }
 
@@ -258,6 +303,7 @@ struct AIDiscographyProvider: DiscographyProviding {
     }
 
     func youTubeURL(for track: DiscographyTrackInfo) async -> String? {
+        if let direct = track.youTubeURL { return direct }
         let query = "\(track.artist) \(track.name)"
         guard let videoID = await YouTubeSearchResolver.firstVideoID(matching: query) else {
             appLog("No YouTube result for \"\(query)\" — skipping.",
