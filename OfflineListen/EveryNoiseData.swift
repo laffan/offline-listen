@@ -4,9 +4,9 @@ import AVFoundation
 /// The Every Noise at Once dataset the app bundles (`EveryNoiseData/`, written
 /// by `tools/everynoise/scrape.py`) and the stores that read it.
 ///
-/// The dataset is big — ~6,300 genres, over a million artist rows — and the
-/// browser has to stay smooth on modest hardware, so nothing is ever loaded
-/// wholesale: the genre **index** (`genres.json`, under a megabyte) is read
+/// The dataset is big — 6,291 genres, ~630k artist rows — and the browser has
+/// to stay smooth on modest hardware, so nothing is ever loaded wholesale:
+/// the genre **index** (`genres.json`, ~1.4 MB) is read
 /// once, off the main thread, the first time the browser opens; each genre's
 /// **artist shard** (`genres/<key>.z`, raw DEFLATE) is inflated only when that
 /// genre is opened, and a small LRU keeps recently opened genres warm so

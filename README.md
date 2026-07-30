@@ -394,8 +394,8 @@ Browse as a regular **Artist source** — **Top 10** or **Discography**, the
 same two depths offered everywhere else — with the first refresh kicked off
 immediately.
 
-**Why it isn't laggy.** The dataset is big (~6,300 genres, on the order of a
-million artist rows), and the site itself chugs on an iPad, so nothing is ever
+**Why it isn't laggy.** The dataset is big (6,291 genres, ~630k artist rows),
+and the site itself chugs on an iPad, so nothing is ever
 loaded or laid out wholesale. The genre **index** (`genres.json`) is read once,
 off the main thread, when the browser opens. Each genre's **artist shard**
 (`EveryNoiseData/genres/<key>.z`, raw-DEFLATE-compressed JSON) is inflated only
@@ -403,10 +403,10 @@ when that genre is opened, with a small LRU keeping recent genres warm. And the
 maps are **virtualized**: a `UIScrollView` with a spatial grid materializes
 only the labels intersecting the visible rect (plus a margin), recycling them
 from a pool as the map pans — a few hundred live views at most, whatever the
-dataset size (`NoiseMapView`). A build without the dataset (the repo ships a
-placeholder until the one-time scrape is run — see
-`tools/everynoise/README.md`) shows a clear explanation instead of an empty
-map.
+dataset size (`NoiseMapView`). The repo carries the scraped dataset (6,291
+genres, ~630k artist rows, ~57 MB of shards), so a fresh clone builds with the
+whole map included; a build somehow missing it shows a clear explanation
+instead of an empty map.
 
 Preview downloads run through the **same pipeline** as the download queue but
 jump ahead of queued jobs, since the user is sitting in the modal waiting.
@@ -760,12 +760,12 @@ on your own device).
 4. Set your **Signing Team** under *Signing & Capabilities* and adjust
    `PRODUCT_BUNDLE_IDENTIFIER` (default `com.offlinelisten.app`) if needed.
 5. Build & run.
-6. *(Optional, once)* Fill in the **Every Noise browser's** dataset:
-   `python3 tools/everynoise/scrape.py` scrapes everynoise.com straight into
-   `OfflineListen/EveryNoiseData/` (already wired into the project as a folder
-   reference), and the next build bundles it. Until then the world button
-   explains what's missing instead of showing an empty map. See
-   `tools/everynoise/README.md`.
+
+The **Every Noise browser's** dataset ships in the repo
+(`OfflineListen/EveryNoiseData/`, bundled via a folder reference) — nothing to
+set up. It came from the one-time `tools/everynoise/scrape.py` run; the site's
+data is frozen, so it never needs re-scraping (see `tools/everynoise/README.md`
+if you ever want to regenerate it).
 
 > **First download is slow:** YoutubeDL-iOS fetches the `yt-dlp` Python module
 > (tens of MB) on first use, then caches it. A network connection is required
