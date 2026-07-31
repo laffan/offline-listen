@@ -599,7 +599,19 @@ extend it), and it's keyed to the **client id** that earned it: a newly
 created Spotify app starts with a clean quota, so pasting fresh
 credentials is the honest shortcut out of a long window (verification
 with new credentials bypasses the old app's block automatically).
-Settings ▸ Spotify shows the countdown whenever a window is in force.
+Settings ▸ Spotify shows the countdown whenever a window is in force,
+along with **Forget the wait and retry** — an escape hatch that drops
+only the app's *memory* of the window, so the next tap tests reality:
+it either works (the record was stale) or re-records a fresh 429.
+
+The Log tells the two failure shapes apart: *"N min left of the recorded
+rate-limit window — the … request was not sent"* is the app waiting out
+its own record, while *"rate limited reading the … — Retry-After Ns"* is
+Spotify answering 429 to a real request. If a brand-new app's credentials
+draw the second line immediately, the throttle is upstream of the client
+id — Spotify also meters by network address when it's been hammered —
+and the cure is waiting, or switching networks (Wi-Fi ↔ cellular changes
+the address).
 
 **Why it isn't laggy.** The dataset is big (6,291 genres, ~630k artist rows),
 and the site itself chugs on an iPad, so nothing is ever

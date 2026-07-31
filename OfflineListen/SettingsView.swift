@@ -277,6 +277,18 @@ struct SettingsView: View {
                           systemImage: "hourglass")
                         .font(.footnote)
                         .foregroundStyle(.orange)
+                    // The escape hatch: drops only the app's *memory* of the
+                    // window. The next Spotify tap then either works (the
+                    // record was stale) or re-records a fresh 429.
+                    Button {
+                        Task {
+                            await SpotifyRateLimiter.shared.reset()
+                            await refreshSpotifyCooldown()
+                        }
+                    } label: {
+                        Label("Forget the wait and retry", systemImage: "arrow.clockwise")
+                            .font(.footnote)
+                    }
                 }
             } else {
                 spotifyCredentialEntry

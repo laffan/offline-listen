@@ -188,6 +188,17 @@ actor SpotifyRateLimiter {
         UserDefaults.standard.set(clientID, forKey: Self.ownerKey)
     }
 
+    /// Drops the recorded window without waiting it out — Settings' escape
+    /// hatch. The next request then tests reality: it either succeeds (the
+    /// recorded window was stale or wrong) or comes straight back with a
+    /// fresh 429 that re-records it. Harmless either way, since one request
+    /// is also all a wrongly-forgotten window costs.
+    func reset() {
+        clear()
+        appLog("Spotify: recorded rate-limit window cleared by the user.",
+               category: "Spotify")
+    }
+
     private func clear() {
         retryAt = nil
         owner = nil
@@ -706,6 +717,11 @@ struct SpotifyClient {
         let cooldown = await SpotifyRateLimiter.shared.remainingCooldown(for: clientID)
         if cooldown > 0 {
             guard cooldown <= Self.maxRateLimitWait else {
+                // Logged distinctly from a server 429, so "the app is
+                // waiting out a recorded window" and "Spotify answered 429
+                // again" can't be confused in the Log.
+                appLog("Spotify: \(Int(max(1, (cooldown / 60).rounded()))) min left of the recorded rate-limit window — the \(what) request was not sent.",
+                       level: .warning, category: Self.category)
                 throw SpotifyError.http(429, Self.rateLimitMessage(wait: cooldown))
             }
             appLog("Spotify: holding \(Int(cooldown.rounded()))s for the rate limit before reading the \(what).",
