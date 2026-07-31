@@ -257,6 +257,7 @@ struct FolderDetailView: View {
                 SendToWatchButton(track: track)
                 AIOrganizeButton(track: track)
                 GetAlbumArtButton(track: track)
+                ConvertFormatButton(track: track)
                 if track.hasChapters {
                     Button {
                         splittingTrack = track
@@ -372,6 +373,7 @@ struct InboxView: View {
                                 SendToWatchButton(track: track)
                                 AIOrganizeButton(track: track)
                                 GetAlbumArtButton(track: track)
+                                ConvertFormatButton(track: track)
                                 if track.hasChapters {
                                     Button {
                                         splittingTrack = track
@@ -482,6 +484,7 @@ struct RecentTracksView: View {
                                 SendToWatchButton(track: pair.track)
                                 AIOrganizeButton(track: pair.track)
                                 GetAlbumArtButton(track: pair.track)
+                                ConvertFormatButton(track: pair.track)
                             }
                     }
                 }

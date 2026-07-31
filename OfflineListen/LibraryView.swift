@@ -646,6 +646,7 @@ struct LibraryView: View {
                 SendToWatchButton(track: track)
                 AIOrganizeButton(track: track)
                 GetAlbumArtButton(track: track)
+                ConvertFormatButton(track: track)
                 if track.hasChapters {
                     Button {
                         splittingTrack = track
@@ -1297,6 +1298,32 @@ struct AIOrganizeButton: View {
                 Label("AI Organize", systemImage: "sparkles")
             }
             .disabled(ai.inFlight.contains(track.id))
+        }
+    }
+}
+
+/// A context-menu button that re-downloads a track from its source in the
+/// **other** format — audio becomes video, video becomes audio. The fresh
+/// download files into the same folder, and the original is replaced only
+/// once it has fully landed (a failed conversion costs nothing — check the
+/// Download tab's row). Needs the original's source link, so tracks without
+/// one (local-sync imports) don't offer it. Safe to drop into any track's
+/// `contextMenu`.
+struct ConvertFormatButton: View {
+    @EnvironmentObject private var downloads: DownloadManager
+    let track: Track
+
+    var body: some View {
+        if track.sourceURL.lowercased().hasPrefix("http") {
+            Button {
+                downloads.enqueue(urlString: track.sourceURL,
+                                  mode: track.isVideo ? .audio : .video,
+                                  folderID: track.folderID,
+                                  replacesTrackID: track.id)
+            } label: {
+                Label(track.isVideo ? "Convert to Audio" : "Convert to Video",
+                      systemImage: track.isVideo ? "music.note" : "film")
+            }
         }
     }
 }

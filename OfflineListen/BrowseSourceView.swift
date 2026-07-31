@@ -262,6 +262,19 @@ struct BrowseSourceView: View {
                 previewItem = item
             }
         )
+        // Touch and hold to (re-)download in the current Audio/Video mode —
+        // the way back for an item grabbed in the wrong format, whose row
+        // button has already given way to the dealt-with marker.
+        .contextMenu {
+            Button {
+                download(item)
+            } label: {
+                Label(item.status == .new
+                        ? "Download (\(browse.downloadMode.displayName))"
+                        : "Download Again (\(browse.downloadMode.displayName))",
+                      systemImage: "arrow.down.circle")
+            }
+        }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(role: .destructive) {
                 browse.markDiscarded(item)
@@ -474,30 +487,29 @@ struct BrowseSourceView: View {
         }
     }
 
-    /// Queues every selected item that hasn't been dealt with yet (still-new
-    /// rows — the ones that would show a Download button), then leaves select
-    /// mode. Already-downloaded/saved picks are skipped, mirroring the per-row
-    /// behaviour where their button is gone.
+    /// Queues every selected item — **including** already-downloaded or saved
+    /// rows, which is how a batch mistakenly grabbed as audio gets re-pulled
+    /// as video: flip the toggle, tick them again, Download. The selection is
+    /// explicit, so what's ticked is what's queued.
     ///
     /// The status change is applied in one batch (`markDownloaded(_:)`) — a
-    /// single save and a single published mutation — before select mode is torn
-    /// down, mirroring the Library's bulk-action order. The per-item mark would
-    /// otherwise rewrite `browse.json` once per pick, stalling the main thread
-    /// on a big selection (a whole discography), which is what crashed the app.
+    /// single save and a single published mutation. Select mode is torn down
+    /// *first*, in its own transaction, and the data work lands on the next
+    /// main-actor turn: ending the animated edit transition in the same
+    /// update as dozens of row-status mutations is what crashed the List
+    /// (the UIKit diff underneath doesn't survive the combination).
     private func downloadSelected() {
         let picks = browse.visibleItems(for: sourceID)
-            .filter { selection.contains($0.id) && $0.status == .new }
-        guard !picks.isEmpty else {
-            selection.removeAll()
-            withAnimation { editMode = .inactive }
-            return
-        }
-        for item in picks {
-            enqueue(item)
-        }
-        browse.markDownloaded(picks)
+            .filter { selection.contains($0.id) }
         selection.removeAll()
         withAnimation { editMode = .inactive }
+        guard !picks.isEmpty else { return }
+        Task { @MainActor in
+            for item in picks {
+                enqueue(item)
+            }
+            browse.markDownloaded(picks)
+        }
     }
 }
 

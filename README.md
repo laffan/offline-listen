@@ -167,7 +167,13 @@ Five screens (tabs):
    track **title and artist** (handy when AI Organize doesn't get it quite
    right), with **Reset to Original Title** to restore the download title —
    and, with Spotify credentials saved, **Get Album Art**, which finds the
-   track's cover on Spotify and attaches it (see [Album art](#album-art)). Swipe
+   track's cover on Spotify and attaches it (see [Album art](#album-art)).
+   A downloaded track also offers **Convert to Video** / **Convert to
+   Audio**: the file is re-downloaded from its source in the other format,
+   into the same folder, and the original is replaced only once the fresh
+   download has fully landed — a failed conversion costs nothing (the
+   attempt shows in the Download tab like any job). Tracks with no source
+   link (local-sync imports) don't offer it. Swipe
    a folder row for its slide menu: **Delete** (the folder only — its tracks
    return to the library),
    **Rename**, and **Archive** (move the whole folder, tracks and all, into the
@@ -405,15 +411,23 @@ Browse root, so the mode can be changed where the Download/Preview buttons are.
 multi-select (the same edit-mode selection the Library uses): the per-row
 Download/Preview buttons give way to selection circles, you tick as many items
 as you like — across albums or posts in a grouped list — and a **Download (N)**
-button queues the whole set at once, in the current Audio/Video mode. Picks that
-were already sent or saved are skipped, and **Done** leaves select mode.
+button queues the whole set at once, in the current Audio/Video mode.
+**Everything ticked is queued — already-downloaded and saved rows included**,
+which is how a batch mistakenly grabbed as audio gets re-pulled as video: flip
+the toggle, tick them again, Download. **Done** leaves select mode.
+
+**Re-downloading one item.** Touch and hold any row for **Download** /
+**Download Again** (in the current Audio/Video mode) — the way back for a
+single item whose row button has already given way to the dealt-with marker.
+(For a track already in the library, the Library's **Convert to
+Video/Audio** does the same job while also replacing the original file.)
 
 Seven **source types**, in two families:
 
 | Type | How it works |
 |------|--------------|
 | **YouTube Channel** | Scrape/RSS: watches the channel's upload feed (`/feeds/videos.xml`). Accepts a channel URL, `@handle`, bare `UC…` id, or plain channel name — see [Resolving a channel](#resolving-a-channel). |
-| **YouTube Playlist** | Scrape/RSS: watches the playlist's feed. Accepts a playlist URL (anything with `list=`) or a bare playlist id. |
+| **YouTube Playlist** | Scrape/RSS: watches the playlist's feed. Accepts a playlist URL (anything with `list=`) or a bare playlist id. Items keep the **playlist page's own order** — a playlist is curated, so unlike every other source its list isn't sorted newest-first. |
 | **RSS Feed** | RSS reader: parses any RSS/Atom feed and keeps **only the posts that contain YouTube links** (a music blog's roundups, a newsletter's song-of-the-day). A post with several links yields one item per video. |
 | **Blog Agent** | AI agent: RSS-reader behaviour for blogs **without a feed**. The agent fetches the homepage, asks the model which of the page's links are individual recent articles (telling posts apart from nav/category/about links is exactly the judgement call heuristics get wrong — and the model may only *pick from* the links found on the page, never invent one), then reads the most recent ones. Each article becomes a **post** — a section headed by its title + date, with three parts: a one-or-two-sentence **summary**, the **YouTube tracks** actually linked in the article (Download/Preview like any Browse item), and a list of the **artists it names**. Tapping an artist opens a popup to spin up a new **Artist** source — Top 10 or Search Discography — for that name on the spot — so a text-only write-up with no embedded videos still turns into something to follow. (This replaces the earlier "guess the songs and search YouTube for each" step, which resolved unreliably.) **Settings ▸ Blog Agent** caps how many **posts per refresh** are read and how many **songs per post** are taken (defaults 5 and 5), so a link-heavy blog can't flood the list. |
 | **Artist** | One of three **modes** picked when the source is added. **Top 10** (AI): the model lists the artist's **top 10 most popular tracks**, ranked, digging deeper on each refresh — the ordinary item list. **Search Discography** (AI) and **Spotify Discography** both open the **album-first discography browser** instead (the same screen the Every Noise browser's Browse Discography uses): the first pass shows just **albums and song names** — a model call laying out the catalogue (Highlights pinned on top), or Spotify's real release list (a pinned **Top 10** with its **Search Top 10** button — agent-listed when an AI key is saved, catalogue-ranked by Spotify's per-track popularity for artists the model doesn't know, YouTube's own search ranking when Spotify has nothing to rank, the 403-gated top-tracks endpoint only as a final resort — then Albums / Singles & EPs / Compilations) — and each release's **search** button matches its tracks against YouTube on demand, right in the list (matched tracks light up with Download/Preview; misses dim). Nothing is resolved up front, so opening a big catalogue is instant and a refresh no longer costs a search per track. The first pass is **cached per source** (`Documents/Discographies/`); the screen's toolbar refresh re-fetches it. Downloads file into a folder named after the source, like every Browse download. The browser opens on the **artist page**: their Spotify portrait up top, name beneath it in large type, and a **Learn More** button — an AI-written brief bio, grounded on (and linking to) the artist's Wikipedia entry when one exists. Albums show their **cover art** as a row thumbnail and full-size when twirled open, and every download from here carries that art along (see [Album art](#album-art)). The Spotify mode needs the Settings ▸ Spotify credentials (and no AI key); the typed name is resolved to the artist via Spotify's search. (Discography was a separate source type once; sources created back then keep working as Artist sources in Search Discography mode.) |

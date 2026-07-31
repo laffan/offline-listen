@@ -315,6 +315,11 @@ struct BrowseItem: Identifiable, Codable, Hashable {
     /// is folded into `dedupKey` so those stay separate items. Nil elsewhere
     /// (Blog Agent keeps collapsing a video shared across posts to one item).
     var groupKey: String?
+    /// The item's position in the source's last fetch (0-based). What keeps a
+    /// **YouTube Playlist** source in the playlist page's own curated order —
+    /// its entries' upload dates are arbitrary, so a date sort scrambles it.
+    /// Refreshed on every merge; nil on items saved before it existed.
+    var feedPosition: Int?
 
     init(id: UUID = UUID(),
          sourceID: UUID,
@@ -329,7 +334,8 @@ struct BrowseItem: Identifiable, Codable, Hashable {
          postURL: String? = nil,
          previewed: Bool? = nil,
          artworkURL: String? = nil,
-         groupKey: String? = nil) {
+         groupKey: String? = nil,
+         feedPosition: Int? = nil) {
         self.id = id
         self.sourceID = sourceID
         self.title = title
@@ -344,6 +350,7 @@ struct BrowseItem: Identifiable, Codable, Hashable {
         self.previewed = previewed
         self.artworkURL = artworkURL
         self.groupKey = groupKey
+        self.feedPosition = feedPosition
     }
 
     /// Whether this item has been auditioned in the preview modal.

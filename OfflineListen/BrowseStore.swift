@@ -42,12 +42,20 @@ final class BrowseStore: ObservableObject {
         sources.filter { $0.kind == kind }
     }
 
-    /// A source's items, newest first (feed publish date when known, fetch
-    /// date otherwise), discarded ones excluded.
+    /// A source's items, discarded ones excluded. Most kinds read newest
+    /// first (feed publish date when known, fetch date otherwise) — but a
+    /// **YouTube Playlist** is a curated order, not a feed of dated uploads,
+    /// so its items keep the position the playlist's page gives them
+    /// (`feedPosition`; items from before that field existed sort last, in
+    /// the order they were first seen, until the next refresh stamps them).
     func visibleItems(for sourceID: UUID) -> [BrowseItem] {
-        items
-            .filter { $0.sourceID == sourceID && $0.status != .discarded }
-            .sorted { ($0.datePublished ?? $0.dateFetched) > ($1.datePublished ?? $1.dateFetched) }
+        let shown = items.filter { $0.sourceID == sourceID && $0.status != .discarded }
+        if sources.first(where: { $0.id == sourceID })?.kind == .youtubePlaylist {
+            return shown.sorted {
+                ($0.feedPosition ?? Int.max, $0.dateFetched) < ($1.feedPosition ?? Int.max, $1.dateFetched)
+            }
+        }
+        return shown.sorted { ($0.datePublished ?? $0.dateFetched) > ($1.datePublished ?? $1.dateFetched) }
     }
 
     /// How many not-yet-acted-on items a source has (the badge in the list).
@@ -316,7 +324,7 @@ final class BrowseStore: ObservableObject {
         }
 
         var added = 0
-        for candidate in fetched {
+        for (position, candidate) in fetched.enumerated() {
             let key = candidate.dedupKey
             if let index = known[key] {
                 items[index].title = candidate.title
@@ -324,6 +332,7 @@ final class BrowseStore: ObservableObject {
                 if let published = candidate.datePublished { items[index].datePublished = published }
                 if let postTitle = candidate.postTitle { items[index].postTitle = postTitle }
                 if let postURL = candidate.postURL { items[index].postURL = postURL }
+                items[index].feedPosition = position
             } else {
                 let item = BrowseItem(sourceID: sourceID,
                                       title: candidate.title,
@@ -333,7 +342,8 @@ final class BrowseStore: ObservableObject {
                                       datePublished: candidate.datePublished,
                                       postTitle: candidate.postTitle,
                                       postURL: candidate.postURL,
-                                      groupKey: candidate.groupKey)
+                                      groupKey: candidate.groupKey,
+                                      feedPosition: position)
                 items.append(item)
                 known[key] = items.count - 1
                 added += 1

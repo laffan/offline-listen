@@ -21,6 +21,11 @@ final class DownloadJob: ObservableObject, Identifiable {
     /// Album-art URL to fetch (best-effort) once the track lands — carried by
     /// Spotify-sourced enqueues, where the album cover is known up front.
     let artworkURL: String?
+    /// The library track this download **replaces** once it lands — set by
+    /// the Library's Convert to Video/Audio, which re-downloads a track's
+    /// source in the other format. Replacement happens only on success, so a
+    /// failed conversion never costs the original.
+    let replacesTrackID: UUID?
 
     @Published var title: String
     /// A live sub-status shown in place of the state label while a long
@@ -38,13 +43,14 @@ final class DownloadJob: ObservableObject, Identifiable {
 
     init(url: String, mode: DownloadMode, isPlaylist: Bool = false,
          spotifyRef: SpotifyRef? = nil, folderID: UUID? = nil,
-         artworkURL: String? = nil) {
+         artworkURL: String? = nil, replacesTrackID: UUID? = nil) {
         self.url = url
         self.mode = mode
         self.isPlaylist = isPlaylist
         self.spotifyRef = spotifyRef
         self.folderID = folderID
         self.artworkURL = artworkURL
+        self.replacesTrackID = replacesTrackID
         if let spotifyRef {
             self.title = DownloadJob.spotifyPlaceholder(for: spotifyRef)
         } else {
@@ -389,11 +395,13 @@ final class DownloadManager: ObservableObject {
 
     /// Adds a URL to the queue. Newest jobs show at the top; processing is FIFO.
     /// A `folderID` files the finished track into that folder (used for the child
-    /// jobs a playlist expands into).
+    /// jobs a playlist expands into); `replacesTrackID` marks a format
+    /// conversion — the named track leaves the library once this lands.
     func enqueue(urlString: String, mode: DownloadMode, folderID: UUID? = nil,
-                 artworkURL: String? = nil) {
+                 artworkURL: String? = nil, replacesTrackID: UUID? = nil) {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        let job = DownloadJob(url: trimmed, mode: mode, folderID: folderID, artworkURL: artworkURL)
+        let job = DownloadJob(url: trimmed, mode: mode, folderID: folderID,
+                              artworkURL: artworkURL, replacesTrackID: replacesTrackID)
         if URL(string: trimmed) == nil || !trimmed.lowercased().hasPrefix("http") {
             job.state = .failed(ExtractorError.invalidURL.localizedDescription)
             jobs.insert(job, at: 0)
@@ -465,6 +473,10 @@ final class DownloadManager: ObservableObject {
         let wasPlaylist = job.isPlaylist
         let folderID = job.folderID
         let artworkURL = job.artworkURL
+        // A live failed conversion keeps its replacement intent on retry.
+        // (History rows restored from disk carry none — deliberately, so a
+        // stale restart after a relaunch can never delete a track.)
+        let replacesTrackID = job.replacesTrackID
         remove(job)
         appLog("Restarting: \(url)", category: "Queue")
         // Re-read the reference from the URL rather than trusting the job's:
@@ -474,7 +486,8 @@ final class DownloadManager: ObservableObject {
         } else if wasPlaylist {
             enqueuePlaylist(urlString: url, mode: mode)
         } else {
-            enqueue(urlString: url, mode: mode, folderID: folderID, artworkURL: artworkURL)
+            enqueue(urlString: url, mode: mode, folderID: folderID, artworkURL: artworkURL,
+                    replacesTrackID: replacesTrackID)
         }
     }
 
@@ -669,6 +682,12 @@ final class DownloadManager: ObservableObject {
             // cover URL — fetch it and hang it on the track. Never blocks the
             // queue, never fatal.
             ArtworkFetcher.attach(job.artworkURL, to: track.id, library: library)
+            // A format conversion (Library ▸ Convert to Video/Audio): only
+            // now that the replacement has fully landed does the original —
+            // file and all — leave the library.
+            if let replacedID = job.replacesTrackID {
+                library.replaceAfterConversion(originalID: replacedID, with: track.id)
+            }
             job.trackID = track.id
             job.title = track.title
             job.artist = track.artist.lowercased() == "unknown" ? nil : track.artist

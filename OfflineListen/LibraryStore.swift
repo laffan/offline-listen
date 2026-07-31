@@ -1428,6 +1428,31 @@ final class LibraryStore: ObservableObject {
         save()
     }
 
+    /// Finishes a **Convert to Video/Audio** re-download: the replacement
+    /// track — already added, and filed into the original's folder at enqueue
+    /// time — inherits the original's album art, and the original (file and
+    /// all) leaves the library. Called only after the fresh download has
+    /// fully landed, so a failed conversion never costs the original.
+    func replaceAfterConversion(originalID: UUID, with newID: UUID) {
+        guard originalID != newID,
+              let original = tracks.first(where: { $0.id == originalID }),
+              tracks.contains(where: { $0.id == newID }) else { return }
+        if let artworkName = original.artworkFileName,
+           tracks.first(where: { $0.id == newID })?.artworkFileName == nil {
+            // Copy (not move): `delete` below removes the original's file.
+            let newName = "\(newID.uuidString).jpg"
+            let source = AppPaths.artwork.appendingPathComponent(artworkName)
+            let destination = AppPaths.artwork.appendingPathComponent(newName)
+            try? FileManager.default.removeItem(at: destination)
+            if (try? FileManager.default.copyItem(at: source, to: destination)) != nil {
+                setArtwork(for: newID, fileName: newName)
+            }
+        }
+        delete(original)
+        appLog("Converted \"\(original.title)\" to \(original.isVideo ? "audio" : "video") — the \(original.isVideo ? "video" : "audio") original was replaced.",
+               level: .success, category: "Queue")
+    }
+
     /// Removes a track from the library and deletes its audio file from disk.
     /// A synced track's replica copy is queued for removal too.
     func delete(_ track: Track) {
