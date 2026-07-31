@@ -129,7 +129,7 @@ Five screens (tabs):
 
    **Autoplay.** When a track finishes, playback advances to the next track in
    the same list and keeps going to the end — it doesn't loop. In the
-   **auto-aggregated** lists (the unfiled root and the Inbox), where media types
+   **auto-aggregated** lists (the Tracks root and the Inbox), where media types
    are mixed together, autoplay **stays within the media type** you started: pick
    a song and only songs play on (podcasts and videos are skipped until the next
    song or the list ends), and likewise for podcasts and videos. A **folder is a
@@ -264,7 +264,10 @@ Five screens (tabs):
      in as *itself*, not as you, so it reads **public** metadata only — no liked
      songs, no private or collaborative playlists, no user library. A private
      playlist's link fails with a message saying so rather than silently
-     returning nothing.
+     returning nothing. When Spotify is rate limiting the app, this section
+     shows the **countdown** until the window clears, plus **Forget the wait
+     and retry** (see the Spotify-politeness notes under
+     [The Every Noise browser](#the-every-noise-browser)).
    - **Log** — a row that opens the timestamped, copyable stream of every
      pipeline step (queue, yt-dlp, conversion, AI) with light colour coding, for
      diagnosing downloads.
@@ -810,7 +813,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `AISettings.swift` | `AISettingsStore` (model/key/assist, Keychain-backed), `AIModel`, `Keychain` helper. |
 | `AnthropicClient.swift` | Minimal Anthropic Messages API client (verify + single-shot completion) over URLSession. |
 | `SpotifyRef.swift` | Parses `spotify:` URIs / `open.spotify.com` links into a (kind, id) pair; resolves `spotify.link` short links by redirect. |
-| `SpotifyClient.swift` | Spotify Web API client: Client Credentials token (cached, 401-refreshing) + the track/album/playlist/artist metadata reads, paginated. |
+| `SpotifyClient.swift` | Spotify Web API client: Client Credentials token (cached, 401-refreshing) + the track/album/playlist/artist metadata reads, paginated and **batched** (`/albums?ids=`, cross-album `/tracks?ids=`). Also `SpotifyRateLimiter` (the persisted, per-client-id `Retry-After` window), `SpotifyMetadataCache` (the ten-minute catalogue cache), and the popularity-ranked `derivedTopTracks`. |
 | `SpotifySettings.swift` | `SpotifySettingsStore` — the Keychain-backed client id/secret (mirrors `AISettingsStore`). |
 | `SpotifyResolver.swift` | Spotify metadata → `ResolvedPlaylist`: ISRC-first YouTube matching with a duration gate, bounded and concurrent. |
 | `AIOrganizer.swift` | Builds the prompt, calls the API, writes music/podcast + clean metadata back to the library. |
@@ -823,10 +826,10 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `DiscographyAgent.swift` | The AI catalogue layout behind Search Discography mode: albums + track names + a Highlights list, one model call, no YouTube work (matching moved into the browser, on demand). |
 | `DiscographyBrowserView.swift` | The shared album-first discography browser — artist header (portrait, name, Learn More bio), cover thumbnails/full art, names first, per-release YouTube search, pinned Top 10 — plus its two catalogue providers (Spotify live / AI layout), the Wikipedia lookup + AI bio sheet, and the Browse-source wrapper that caches the first pass. |
 | `BrowseView.swift` | The Browse tab: sources grouped by type, add-source sheet, refresh, and the world button into the Every Noise browser. |
-| `EveryNoiseData.swift` | The bundled Every Noise dataset: models, the lazy/LRU shard-loading store, and the 30-second preview player. |
-| `NoiseMapView.swift` | The virtualized `UIScrollView` scatter map (spatial grid + recycled labels) both noise maps render through. |
-| `EveryNoiseView.swift` | The Every Noise browser: Map/List/Scan modes + Find at both levels, the scan transport, and the artist bar whose "+" opens the live discography (or creates Artist sources when Spotify isn't set up). |
-| `EveryNoiseData/` | Bundled (folder reference): `genres.json` index + per-genre artist shards, written by the one-time `tools/everynoise/scrape.py`. |
+| `EveryNoiseData.swift` | The bundled Every Noise dataset: models, the lazy/LRU shard-loading store, the memory-mapped global artist search (`ENArtistIndex`), and the 30-second preview player. |
+| `NoiseMapView.swift` | The virtualized `UIScrollView` scatter map (spatial grid + recycled labels) both noise maps render through — opens centered on its canvas, with the draggable scroll-pill ring on the right edge. |
+| `EveryNoiseView.swift` | The Every Noise browser: Map/List/Scan modes + Find at both levels (with the root's genre/artist toggle), the scan transport, and the artist bar whose "+" opens the live discography (or creates Artist sources when Spotify isn't set up). |
+| `EveryNoiseData/` | Bundled (folder reference): `genres.json` index + per-genre artist shards from the one-time `tools/everynoise/scrape.py`, plus the derived `artists.idx.z` from `build_artist_index.py`. |
 | `BrowseSourceView.swift` | One source's items with per-row Download/Preview/Discard, plus a **Select** mode for bulk download; also `BrowseTrackStatusButton`, the green play button every browse list shows once a download is in the library. |
 | `BrowsePreviewView.swift` | The preview modal: pipeline download, mini player, Save/Discard. |
 | `*View.swift` | The five SwiftUI screens (Download, Browse, Library, Player, Settings — which embeds the Log). `PlayerView.swift` also holds the tap-to-seek scrubber and the `MiniPlayerBar` the other tabs inset above the tab bar. |
