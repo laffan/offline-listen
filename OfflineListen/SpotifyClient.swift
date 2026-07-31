@@ -133,6 +133,95 @@ actor SpotifyTokenCache {
     }
 }
 
+/// Tracks Spotify's rate-limit state **app-wide**. A 429 arrives with a
+/// `Retry-After`, and honoring it globally is what matters: Spotify keeps
+/// extending the penalty window while requests keep landing, so a client
+/// that fires the next call immediately turns a few seconds of limit into
+/// minutes of 429s — including on screens that only cost two requests.
+/// Every request first waits out (or fails fast against) the recorded
+/// cooldown. An actor because requests run from several tasks at once.
+actor SpotifyRateLimiter {
+    static let shared = SpotifyRateLimiter()
+
+    private var retryAt: Date?
+
+    /// Seconds left of a recorded rate-limit window (0 = clear to send).
+    func remainingCooldown() -> TimeInterval {
+        guard let retryAt else { return 0 }
+        let remaining = retryAt.timeIntervalSinceNow
+        if remaining <= 0 {
+            self.retryAt = nil
+            return 0
+        }
+        return remaining
+    }
+
+    /// Records a 429's Retry-After — never shortening a window already known.
+    func noteRateLimited(for seconds: TimeInterval) {
+        let until = Date().addingTimeInterval(max(1, seconds))
+        if let retryAt, retryAt >= until { return }
+        retryAt = until
+    }
+}
+
+/// Session-lived cache for the catalogue reads the discography browser
+/// repeats: the same artist's portrait and album list (opening their page,
+/// then Search Top 10), the same album's tracklist (a Top 10 derivation,
+/// then expanding that album). It's public, effectively-static metadata, so
+/// a short TTL costs nothing in freshness — the point is that browsing the
+/// same artist twice must not bill the API twice. An actor: reads come from
+/// several concurrent tasks.
+actor SpotifyMetadataCache {
+    static let shared = SpotifyMetadataCache()
+
+    private let ttl: TimeInterval = 10 * 60
+    private let maxArtists = 30
+    private let maxCollections = 100
+
+    private var artistsByID: [String: (value: (name: String, imageURL: String?), at: Date)] = [:]
+    private var albumsByArtist: [String: (value: [SpotifyAlbumSummary], at: Date)] = [:]
+    private var collectionsByAlbum: [String: (value: SpotifyCollection, at: Date)] = [:]
+
+    func artist(forID id: String) -> (name: String, imageURL: String?)? {
+        fresh(artistsByID[id])
+    }
+
+    func storeArtist(_ value: (name: String, imageURL: String?), forID id: String) {
+        artistsByID[id] = (value, Date())
+        trim(&artistsByID, to: maxArtists)
+    }
+
+    func albums(forArtist id: String) -> [SpotifyAlbumSummary]? {
+        fresh(albumsByArtist[id])
+    }
+
+    func storeAlbums(_ value: [SpotifyAlbumSummary], forArtist id: String) {
+        albumsByArtist[id] = (value, Date())
+        trim(&albumsByArtist, to: maxArtists)
+    }
+
+    func collection(forAlbum id: String) -> SpotifyCollection? {
+        fresh(collectionsByAlbum[id])
+    }
+
+    func storeCollection(_ value: SpotifyCollection, forAlbum id: String) {
+        collectionsByAlbum[id] = (value, Date())
+        trim(&collectionsByAlbum, to: maxCollections)
+    }
+
+    private func fresh<T>(_ entry: (value: T, at: Date)?) -> T? {
+        guard let entry, Date().timeIntervalSince(entry.at) < ttl else { return nil }
+        return entry.value
+    }
+
+    private func trim<T>(_ table: inout [String: (value: T, at: Date)], to cap: Int) {
+        while table.count > cap,
+              let oldest = table.min(by: { $0.value.at < $1.value.at }) {
+            table.removeValue(forKey: oldest.key)
+        }
+    }
+}
+
 /// Thin wrapper around the Spotify Web API's public metadata endpoints, spoken
 /// directly over URLSession (there's no Swift SDK, and this needs four reads).
 /// Authorization is the **Client Credentials** flow: the app's own id/secret
@@ -200,6 +289,9 @@ struct SpotifyClient {
     /// to recover both. That's one extra request per 50 tracks, and the ISRC is
     /// what keeps the YouTube match on the right recording.
     func album(id: String) async throws -> SpotifyCollection {
+        if let cached = await SpotifyMetadataCache.shared.collection(forAlbum: id) {
+            return cached
+        }
         let data = try await get(path: "/albums/\(id)", describing: "album")
         guard let album = try? JSONDecoder().decode(APIAlbum.self, from: data) else {
             throw SpotifyError.malformedResponse
@@ -219,7 +311,9 @@ struct SpotifyClient {
 
         let tracks = try await fullTracks(for: simplified, albumFallback: name, imageFallback: cover)
         appLog("Spotify album \"\(name)\": \(tracks.count) track(s).", category: Self.category)
-        return SpotifyCollection(name: name, tracks: tracks)
+        let collection = SpotifyCollection(name: name, tracks: tracks)
+        await SpotifyMetadataCache.shared.storeCollection(collection, forAlbum: id)
+        return collection
     }
 
     /// A playlist's tracks, in playlist order. Items are wrapped and can be
@@ -305,7 +399,20 @@ struct SpotifyClient {
         var best: [String: SpotifyTrack] = [:]
         var order: [String] = []
         for release in considered {
-            guard let collection = try? await album(id: release.id) else { continue }
+            let collection: SpotifyCollection
+            do {
+                collection = try await album(id: release.id)
+            } catch SpotifyError.http(let code, _) where code == 429 {
+                // Reaching here means the limiter's polite retry already
+                // failed — pressing on would only extend the penalty window.
+                // Rank whatever has been read so far instead.
+                appLog("Spotify artist \(artistID): rate limited mid-derivation — ranking the \(order.count) track(s) already read.",
+                       level: .warning, category: Self.category)
+                break
+            } catch {
+                if isCancellation(error) { break }
+                continue
+            }
             for track in collection.tracks {
                 let key = track.name.lowercased()
                 if let existing = best[key] {
@@ -329,11 +436,17 @@ struct SpotifyClient {
     /// An artist's display metadata — name and portrait — from `/artists/{id}`.
     /// Backs the discography browser's header.
     func artist(id: String) async throws -> (name: String, imageURL: String?) {
+        if let cached = await SpotifyMetadataCache.shared.artist(forID: id) {
+            return cached
+        }
         let data = try await get(path: "/artists/\(id)", describing: "artist")
         guard let artist = try? JSONDecoder().decode(APIArtist.self, from: data) else {
             throw SpotifyError.malformedResponse
         }
-        return (artist.name ?? "Artist", artist.images?.first?.url)
+        let value: (name: String, imageURL: String?) = (artist.name ?? "Artist",
+                                                        artist.images?.first?.url)
+        await SpotifyMetadataCache.shared.storeArtist(value, forID: id)
+        return value
     }
 
     /// Resolves an artist's name to their Spotify id — what makes a typed-in
@@ -374,6 +487,9 @@ struct SpotifyClient {
     /// Every Noise browser's discography view; each row's `url` re-enters the
     /// ordinary paste pipeline when the user downloads an album.
     func artistAlbums(id: String) async throws -> [SpotifyAlbumSummary] {
+        if let cached = await SpotifyMetadataCache.shared.albums(forArtist: id) {
+            return cached
+        }
         var albums: [SpotifyAlbumSummary] = []
         // No explicit `limit`: this endpoint rejects values the docs say are
         // fine ("Invalid limit" on limit=50 under a client-credentials app),
@@ -412,6 +528,7 @@ struct SpotifyClient {
             seen.insert("\($0.name.lowercased())|\($0.year)|\($0.group)").inserted
         }
         appLog("Spotify artist \(id): \(unique.count) release(s) in the catalogue.", category: Self.category)
+        await SpotifyMetadataCache.shared.storeAlbums(unique, forArtist: id)
         return unique
     }
 
@@ -542,40 +659,89 @@ struct SpotifyClient {
         return minted.accessToken
     }
 
+    /// How long a request will *wait out* a rate-limit window (sleep, then
+    /// proceed) before giving up and surfacing the 429 instead.
+    private static let maxRateLimitWait: TimeInterval = 30
+
     /// A bearer GET. Refreshes the token and retries **once** on a 401 (the
-    /// cached token can expire between the check and the call), then maps the
-    /// status onto a typed error.
+    /// cached token can expire between the check and the call); waits out —
+    /// or fails fast against — any rate-limit window `SpotifyRateLimiter`
+    /// knows about, records the `Retry-After` of any 429 it meets (and
+    /// retries once when it's short); then maps the status onto a typed error.
     private func get(_ url: URL, describing what: String) async throws -> Data {
+        // Sending during a known window is what makes Spotify extend it —
+        // hold here instead, however unrelated this particular read is.
+        let cooldown = await SpotifyRateLimiter.shared.remainingCooldown()
+        if cooldown > 0 {
+            guard cooldown <= Self.maxRateLimitWait else {
+                throw SpotifyError.http(429, Self.rateLimitMessage(wait: cooldown))
+            }
+            appLog("Spotify: holding \(Int(cooldown.rounded()))s for the rate limit before reading the \(what).",
+                   level: .debug, category: Self.category)
+            try await Task.sleep(nanoseconds: UInt64(cooldown * 1_000_000_000))
+        }
+
         var bearer = try await token()
-        var (data, status) = try await send(url, bearer: bearer)
+        var (data, status, response) = try await send(url, bearer: bearer)
         if status == 401 {
             await SpotifyTokenCache.shared.invalidate()
             bearer = try await token(forceRefresh: true)
-            (data, status) = try await send(url, bearer: bearer)
+            (data, status, response) = try await send(url, bearer: bearer)
+        }
+        if status == 429 {
+            let retryAfter = Self.retryAfterSeconds(from: response) ?? 5
+            await SpotifyRateLimiter.shared.noteRateLimited(for: retryAfter)
+            appLog("Spotify rate limited reading the \(what) — Retry-After \(Int(retryAfter))s.",
+                   level: .warning, category: Self.category)
+            if retryAfter <= Self.maxRateLimitWait {
+                try await Task.sleep(nanoseconds: UInt64((retryAfter + 1) * 1_000_000_000))
+                (data, status, response) = try await send(url, bearer: bearer)
+                if status == 429 {
+                    let again = Self.retryAfterSeconds(from: response) ?? retryAfter
+                    await SpotifyRateLimiter.shared.noteRateLimited(for: again)
+                }
+            }
         }
         guard (200..<300).contains(status) else {
             switch status {
             case 401: throw SpotifyError.credentialsRejected
             case 404: throw SpotifyError.notFound(what)
-            case 429: throw SpotifyError.http(429, "rate limited by Spotify — wait a moment and try again")
+            case 429:
+                let wait = await SpotifyRateLimiter.shared.remainingCooldown()
+                throw SpotifyError.http(429, Self.rateLimitMessage(wait: wait))
             default: throw SpotifyError.http(status, Self.errorMessage(from: data))
             }
         }
         return data
     }
 
-    private func send(_ url: URL, bearer: String) async throws -> (Data, Int) {
+    private func send(_ url: URL, bearer: String) async throws -> (Data, Int, HTTPURLResponse?) {
         var request = URLRequest(url: url)
         request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 30
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            return (data, (response as? HTTPURLResponse)?.statusCode ?? 200)
+            let http = response as? HTTPURLResponse
+            return (data, http?.statusCode ?? 200, http)
         } catch {
             if isCancellation(error) { throw error }
             throw SpotifyError.network(error.localizedDescription)
         }
+    }
+
+    /// The `Retry-After` header of a 429, in seconds, when Spotify sent one.
+    private static func retryAfterSeconds(from response: HTTPURLResponse?) -> TimeInterval? {
+        guard let raw = response?.value(forHTTPHeaderField: "Retry-After"),
+              let seconds = TimeInterval(raw), seconds > 0 else { return nil }
+        return seconds
+    }
+
+    /// The user-facing 429 line, with the actual wait when it's known.
+    private static func rateLimitMessage(wait: TimeInterval) -> String {
+        if wait <= 1 { return "rate limited by Spotify — wait a moment and try again" }
+        if wait < 90 { return "rate limited by Spotify — try again in about \(Int(wait.rounded())) seconds" }
+        return "rate limited by Spotify — try again in about \(Int((wait / 60).rounded())) minutes"
     }
 
     /// Pulls the human-readable message out of an error body, falling back to

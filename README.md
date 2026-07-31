@@ -563,6 +563,21 @@ for), the "+" keeps the old popup: file the artist into Browse as a regular
 **Artist source** — **Top 10** or **Search Discography** — with the first
 refresh kicked off immediately.
 
+**Spotify politeness.** The browser is careful with the modest quota a free
+developer app gets. Catalogue reads are **cached app-wide for ten minutes**
+(`SpotifyMetadataCache`): an artist's portrait and album list, and each
+album's tracklist, are fetched once — opening a page, searching its Top 10
+and expanding a release share those reads instead of repeating them, and
+re-opening an artist costs nothing. And the client honors Spotify's rate
+limiting properly (`SpotifyRateLimiter`): a 429's `Retry-After` is recorded
+**globally**, short windows are quietly waited out (with one polite retry),
+and long ones fail fast with the actual wait in the message. That global
+part matters — Spotify *extends* the penalty window while requests keep
+arriving, so a client that pressed on (as this one used to) turned one
+burst into minutes of 429s, surfacing on screens that only cost two
+requests. A Top 10 derivation likewise stops at the first 429 and ranks
+what it already has, rather than marching on through the window.
+
 **Why it isn't laggy.** The dataset is big (6,291 genres, ~630k artist rows),
 and the site itself chugs on an iPad, so nothing is ever
 loaded or laid out wholesale. The genre **index** (`genres.json`) is read once,
