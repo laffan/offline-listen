@@ -578,19 +578,23 @@ for), the "+" keeps the old popup: file the artist into Browse as a regular
 refresh kicked off immediately.
 
 **Spotify politeness.** The browser is careful with the modest quota a free
-developer app gets. Catalogue reads are **cached app-wide for ten minutes**
-(`SpotifyMetadataCache`): an artist's portrait and album list, and each
-album's tracklist, are fetched once — opening a page, searching its Top 10
-and expanding a release share those reads instead of repeating them, and
-re-opening an artist costs nothing. And the client honors Spotify's rate
-limiting properly (`SpotifyRateLimiter`): a 429's `Retry-After` is recorded
-**globally**, short windows are quietly waited out (with one polite retry),
-and long ones fail fast with the actual wait in the message. That global
-part matters — Spotify *extends* the penalty window while requests keep
-arriving, so a client that pressed on (as this one used to) turned one
-burst into minutes of 429s, surfacing on screens that only cost two
-requests. A Top 10 derivation likewise stops at the first 429 and ranks
-what it already has, rather than marching on through the window.
+developer app gets, three ways. **Batch endpoints**: a Top 10 derivation
+reads its releases through `/albums?ids=` (20 albums, tracklists included,
+in one request) and recovers ISRC/popularity with one `/tracks?ids=` sweep
+across *all* of them — ~5 requests where one-album-at-a-time cost ~24, so a
+whole artist (open + Top 10) runs ~6–8 requests instead of nearly 30.
+**Caching**: catalogue reads are cached app-wide for ten minutes
+(`SpotifyMetadataCache`) — an artist's portrait and album list, and each
+album's tracklist, are fetched once, so opening a page, searching its Top
+10 and expanding a release share those reads, and re-opening an artist
+costs nothing (a derivation also pre-warms every release it touched).
+**Rate-limit honesty** (`SpotifyRateLimiter`): a 429's `Retry-After` is
+recorded **globally**, short windows are quietly waited out (with one
+polite retry), and long ones fail fast with the actual wait in the
+message. That global part matters — Spotify *extends* the penalty window
+while requests keep arriving, so a client that pressed on (as this one
+used to) turned one burst into minutes of 429s, surfacing on screens that
+only cost two requests.
 
 Escalated penalties are real — a repeatedly tripped development-mode app
 can be timed out for an **hour** — so the recorded window also **persists

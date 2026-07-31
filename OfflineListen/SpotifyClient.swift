@@ -286,14 +286,17 @@ struct SpotifyClient {
     private static let playlistPageSize = 100
     /// `/tracks?ids=` accepts up to 50 ids per call.
     private static let batchSize = 50
+    /// `/albums?ids=` accepts up to 20 ids per call.
+    private static let albumBatchSize = 20
     /// Runaway guard for the artist-albums `next` walk (a karaoke-factory
     /// "artist" can list thousands of releases; at the default page size this
     /// still covers 1,000+).
     private static let maxAlbumPages = 50
     /// How many releases the catalogue-derived Top 10 reads tracklists for —
-    /// each costs an album read plus its `/tracks?ids=` batches, so a huge
-    /// catalogue is sampled rather than swept.
-    private static let maxDerivedTopReleases = 12
+    /// one full `/albums?ids=` batch. A huge catalogue is still sampled
+    /// rather than swept, but the sample is close to free: the batch read
+    /// plus its cross-album `/tracks?ids=` sweep is ~5 requests total.
+    private static let maxDerivedTopReleases = 20
 
     /// The market for `/artists/{id}/top-tracks`, where it's a required
     /// parameter: the device's region, falling back to US.
@@ -357,6 +360,67 @@ struct SpotifyClient {
         let collection = SpotifyCollection(name: name, tracks: tracks)
         await SpotifyMetadataCache.shared.storeCollection(collection, forAlbum: id)
         return collection
+    }
+
+    /// Several albums as collections keyed by id, using the **batch** albums
+    /// endpoint — `/albums?ids=` returns up to 20 full albums (first tracks
+    /// page inline) in ONE request, exactly the "reduce your API requests by
+    /// calling the batch APIs" the docs advise. The ISRC/popularity re-read
+    /// then sweeps every album's tracks together through `/tracks?ids=`
+    /// (batches of 50), so a 12-release Top 10 derivation costs ~4 requests
+    /// where the one-album-at-a-time path cost ~24. Cache-aware on both
+    /// ends: already-cached albums aren't refetched, and everything fetched
+    /// is stored — expanding any of these releases afterwards costs nothing.
+    func albums(ids: [String]) async throws -> [String: SpotifyCollection] {
+        var result: [String: SpotifyCollection] = [:]
+        var missing: [String] = []
+        for id in ids where result[id] == nil {
+            if let cached = await SpotifyMetadataCache.shared.collection(forAlbum: id) {
+                result[id] = cached
+            } else {
+                missing.append(id)
+            }
+        }
+        guard !missing.isEmpty else { return result }
+
+        var pending: [(id: String, name: String, cover: String?, simplified: [APITrack])] = []
+        for chunk in stride(from: 0, to: missing.count, by: Self.albumBatchSize)
+            .map({ Array(missing[$0..<min($0 + Self.albumBatchSize, missing.count)]) }) {
+            let data = try await get(path: "/albums?ids=\(chunk.joined(separator: ","))",
+                                     describing: "albums")
+            guard let batch = try? JSONDecoder().decode(APIAlbumBatch.self, from: data) else {
+                throw SpotifyError.malformedResponse
+            }
+            for album in (batch.albums ?? []).compactMap({ $0 }) {
+                guard let id = album.id, !id.isEmpty else { continue }
+                var simplified = album.tracks?.items ?? []
+                // The inline page carries 50 tracks; follow `next` for the
+                // rare release that runs past it.
+                var next = album.tracks?.next
+                while let link = next, let url = URL(string: link) {
+                    let pageData = try await get(url, describing: "album tracks")
+                    guard let page = try? JSONDecoder().decode(APIPage<APITrack>.self, from: pageData) else { break }
+                    simplified.append(contentsOf: page.items ?? [])
+                    next = page.next
+                }
+                pending.append((id, album.name ?? "Album", album.images?.first?.url, simplified))
+            }
+        }
+
+        // One cross-album sweep recovers ISRC/popularity/art for everything.
+        let full = try await fullTrackTable(for: pending.flatMap { $0.simplified.compactMap(\.id) })
+        for entry in pending {
+            let tracks = entry.simplified.compactMap { api -> SpotifyTrack? in
+                if let id = api.id, let track = full[id] { return track }
+                return Self.normalize(api, albumFallback: entry.name, imageFallback: entry.cover)
+            }
+            let collection = SpotifyCollection(name: entry.name, tracks: tracks)
+            await SpotifyMetadataCache.shared.storeCollection(collection, forAlbum: entry.id)
+            result[entry.id] = collection
+        }
+        appLog("Spotify: \(pending.count) album(s) read in \((missing.count + Self.albumBatchSize - 1) / Self.albumBatchSize) batch request(s).",
+               category: Self.category)
+        return result
     }
 
     /// A playlist's tracks, in playlist order. Items are wrapped and can be
@@ -426,11 +490,12 @@ struct SpotifyClient {
     /// endpoint can't serve it (`/top-tracks` answers 403 under newer
     /// client-credentials apps, and the AI agent only knows well-known
     /// names): reads the tracklists of up to `maxDerivedTopReleases`
-    /// non-compilation releases and ranks every track by Spotify's own
-    /// per-track **popularity** score — which the full track objects carry,
-    /// and which the top-tracks endpoint is essentially a view over.
-    /// Same-named recordings (an album track re-issued as a single) collapse
-    /// to their most popular copy.
+    /// non-compilation releases — through the **batch** albums endpoint, so
+    /// the whole derivation costs a handful of requests — and ranks every
+    /// track by Spotify's own per-track **popularity** score, which the full
+    /// track objects carry and the top-tracks endpoint is essentially a view
+    /// over. Same-named recordings (an album track re-issued as a single)
+    /// collapse to their most popular copy.
     func derivedTopTracks(artistID: String, limit: Int = 10) async throws -> [SpotifyTrack] {
         let releases = try await artistAlbums(id: artistID)
         var considered = releases.filter { $0.group != "compilation" }
@@ -439,23 +504,12 @@ struct SpotifyClient {
             considered = Array(considered.prefix(Self.maxDerivedTopReleases))
         }
 
+        let collections = try await albums(ids: considered.map(\.id))
+
         var best: [String: SpotifyTrack] = [:]
         var order: [String] = []
         for release in considered {
-            let collection: SpotifyCollection
-            do {
-                collection = try await album(id: release.id)
-            } catch SpotifyError.http(let code, _) where code == 429 {
-                // Reaching here means the limiter's polite retry already
-                // failed — pressing on would only extend the penalty window.
-                // Rank whatever has been read so far instead.
-                appLog("Spotify artist \(artistID): rate limited mid-derivation — ranking the \(order.count) track(s) already read.",
-                       level: .warning, category: Self.category)
-                break
-            } catch {
-                if isCancellation(error) { break }
-                continue
-            }
+            guard let collection = collections[release.id] else { continue }
             for track in collection.tracks {
                 let key = track.name.lowercased()
                 if let existing = best[key] {
@@ -587,18 +641,14 @@ struct SpotifyClient {
         }
     }
 
-    /// Re-reads simplified album tracks as full track objects (in batches of
-    /// 50) so they carry an ISRC. Best-effort: if the batch call fails, the
-    /// simplified objects are used as-is with the album's name carried down.
-    private func fullTracks(for simplified: [APITrack], albumFallback: String,
-                            imageFallback: String? = nil) async throws -> [SpotifyTrack] {
-        let ids = simplified.compactMap { $0.id }
-        guard !ids.isEmpty else {
-            return simplified.compactMap {
-                Self.normalize($0, albumFallback: albumFallback, imageFallback: imageFallback)
-            }
-        }
-
+    /// Full track objects for arbitrary ids, keyed by id — `/tracks?ids=` in
+    /// batches of 50. This is the sweep that recovers what simplified album
+    /// tracks don't carry (ISRC, popularity, album art), and because the ids
+    /// can span **albums**, one sweep serves a whole Top 10 derivation
+    /// instead of one re-read per release. Best-effort per batch: a failed
+    /// chunk logs and drops out, and the caller falls back to its simplified
+    /// objects for anything missing.
+    private func fullTrackTable(for ids: [String]) async throws -> [String: SpotifyTrack] {
         var full: [String: SpotifyTrack] = [:]
         for chunk in stride(from: 0, to: ids.count, by: Self.batchSize).map({ Array(ids[$0..<min($0 + Self.batchSize, ids.count)]) }) {
             let joined = chunk.joined(separator: ",")
@@ -606,8 +656,7 @@ struct SpotifyClient {
                 let data = try await get(path: "/tracks?ids=\(joined)", describing: "tracks")
                 guard let response = try? JSONDecoder().decode(APITrackList.self, from: data) else { continue }
                 for api in response.tracks ?? [] {
-                    guard let track = Self.normalize(api, albumFallback: albumFallback,
-                                                     imageFallback: imageFallback) else { continue }
+                    guard let track = Self.normalize(api, albumFallback: nil) else { continue }
                     full[track.id] = track
                 }
             } catch {
@@ -616,9 +665,15 @@ struct SpotifyClient {
                        level: .warning, category: Self.category)
             }
         }
+        return full
+    }
 
-        // Keep the album's own order; fall back to the simplified object for
-        // anything the batch didn't return.
+    /// Re-reads simplified album tracks as full track objects so they carry
+    /// an ISRC (and popularity). Best-effort: anything the batch didn't
+    /// return keeps its simplified object with the album's name carried down.
+    private func fullTracks(for simplified: [APITrack], albumFallback: String,
+                            imageFallback: String? = nil) async throws -> [SpotifyTrack] {
+        let full = try await fullTrackTable(for: simplified.compactMap { $0.id })
         return simplified.compactMap { api in
             if let id = api.id, let track = full[id] { return track }
             return Self.normalize(api, albumFallback: albumFallback, imageFallback: imageFallback)
@@ -860,9 +915,18 @@ private struct APITrackSearch: Decodable {
 }
 
 private struct APIAlbum: Decodable {
+    /// Present on batch (`/albums?ids=`) entries, where it keys the result;
+    /// unused on the single-album read.
+    let id: String?
     let name: String?
     let images: [APIImage]?
     let tracks: APIPage<APITrack>?
+}
+
+/// The `/albums?ids=` envelope. Entries are positional and can be null (an
+/// unknown id), so the array is of optionals.
+private struct APIAlbumBatch: Decodable {
+    let albums: [APIAlbum?]?
 }
 
 /// A row of `/artists/{id}/albums` — the summary form, no tracklist.
