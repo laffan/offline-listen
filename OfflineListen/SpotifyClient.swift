@@ -140,27 +140,59 @@ actor SpotifyTokenCache {
 /// minutes of 429s — including on screens that only cost two requests.
 /// Every request first waits out (or fails fast against) the recorded
 /// cooldown. An actor because requests run from several tasks at once.
+///
+/// Two properties matter for the *long* penalties Spotify escalates to
+/// (an hour is real): the window **persists across relaunches** — a fresh
+/// launch that forgot it would re-trip the 429 and extend it — and it is
+/// **keyed by client id**, because the penalty belongs to the Spotify app
+/// that earned it: freshly minted credentials start with a clean quota and
+/// must not inherit the old app's timeout.
 actor SpotifyRateLimiter {
     static let shared = SpotifyRateLimiter()
 
-    private var retryAt: Date?
+    private static let untilKey = "spotifyRateLimitUntil"
+    private static let ownerKey = "spotifyRateLimitOwner"
 
-    /// Seconds left of a recorded rate-limit window (0 = clear to send).
-    func remainingCooldown() -> TimeInterval {
-        guard let retryAt else { return 0 }
+    /// The end of the current penalty window, and the client id it belongs to.
+    private var retryAt: Date?
+    private var owner: String?
+
+    init() {
+        let stored = UserDefaults.standard.double(forKey: Self.untilKey)
+        if stored > Date().timeIntervalSince1970 {
+            retryAt = Date(timeIntervalSince1970: stored)
+            owner = UserDefaults.standard.string(forKey: Self.ownerKey)
+        }
+    }
+
+    /// Seconds left of the recorded window **for these credentials**
+    /// (0 = clear to send — including under a different client id).
+    func remainingCooldown(for clientID: String) -> TimeInterval {
+        guard let retryAt, owner == clientID else { return 0 }
         let remaining = retryAt.timeIntervalSinceNow
         if remaining <= 0 {
-            self.retryAt = nil
+            clear()
             return 0
         }
         return remaining
     }
 
-    /// Records a 429's Retry-After — never shortening a window already known.
-    func noteRateLimited(for seconds: TimeInterval) {
+    /// Records a 429's Retry-After — never shortening a window already known
+    /// for the same client id.
+    func noteRateLimited(for seconds: TimeInterval, clientID: String) {
         let until = Date().addingTimeInterval(max(1, seconds))
-        if let retryAt, retryAt >= until { return }
+        if owner == clientID, let retryAt, retryAt >= until { return }
         retryAt = until
+        owner = clientID
+        UserDefaults.standard.set(until.timeIntervalSince1970, forKey: Self.untilKey)
+        UserDefaults.standard.set(clientID, forKey: Self.ownerKey)
+    }
+
+    private func clear() {
+        retryAt = nil
+        owner = nil
+        UserDefaults.standard.removeObject(forKey: Self.untilKey)
+        UserDefaults.standard.removeObject(forKey: Self.ownerKey)
     }
 }
 
@@ -671,7 +703,7 @@ struct SpotifyClient {
     private func get(_ url: URL, describing what: String) async throws -> Data {
         // Sending during a known window is what makes Spotify extend it —
         // hold here instead, however unrelated this particular read is.
-        let cooldown = await SpotifyRateLimiter.shared.remainingCooldown()
+        let cooldown = await SpotifyRateLimiter.shared.remainingCooldown(for: clientID)
         if cooldown > 0 {
             guard cooldown <= Self.maxRateLimitWait else {
                 throw SpotifyError.http(429, Self.rateLimitMessage(wait: cooldown))
@@ -690,7 +722,7 @@ struct SpotifyClient {
         }
         if status == 429 {
             let retryAfter = Self.retryAfterSeconds(from: response) ?? 5
-            await SpotifyRateLimiter.shared.noteRateLimited(for: retryAfter)
+            await SpotifyRateLimiter.shared.noteRateLimited(for: retryAfter, clientID: clientID)
             appLog("Spotify rate limited reading the \(what) — Retry-After \(Int(retryAfter))s.",
                    level: .warning, category: Self.category)
             if retryAfter <= Self.maxRateLimitWait {
@@ -698,7 +730,7 @@ struct SpotifyClient {
                 (data, status, response) = try await send(url, bearer: bearer)
                 if status == 429 {
                     let again = Self.retryAfterSeconds(from: response) ?? retryAfter
-                    await SpotifyRateLimiter.shared.noteRateLimited(for: again)
+                    await SpotifyRateLimiter.shared.noteRateLimited(for: again, clientID: clientID)
                 }
             }
         }
@@ -707,7 +739,7 @@ struct SpotifyClient {
             case 401: throw SpotifyError.credentialsRejected
             case 404: throw SpotifyError.notFound(what)
             case 429:
-                let wait = await SpotifyRateLimiter.shared.remainingCooldown()
+                let wait = await SpotifyRateLimiter.shared.remainingCooldown(for: clientID)
                 throw SpotifyError.http(429, Self.rateLimitMessage(wait: wait))
             default: throw SpotifyError.http(status, Self.errorMessage(from: data))
             }

@@ -19,6 +19,10 @@ struct SettingsView: View {
     @State private var spotifyIDInput = ""
     @State private var spotifySecretInput = ""
     @State private var spotifyVerifyState: VerifyState = .idle
+    /// Seconds left of Spotify's rate-limit window for the saved credentials
+    /// (0 = none) — drives the section's "rate limited" row, so "is it me or
+    /// Spotify" is answerable at a glance.
+    @State private var spotifyCooldown: TimeInterval = 0
 
     // The Blog Agent's limits — same keys `BlogAgentSettings` reads at
     // refresh time, so a change here applies to the next refresh.
@@ -49,7 +53,16 @@ struct SettingsView: View {
                     localSync.addRoot(url)
                 }
             }
+            .task(id: spotify.clientID) { await refreshSpotifyCooldown() }
+            .onAppear { Task { await refreshSpotifyCooldown() } }
         }
+    }
+
+    /// Re-reads the limiter on appearance (and when credentials change), so
+    /// the Spotify section's countdown reflects the live window.
+    @MainActor
+    private func refreshSpotifyCooldown() async {
+        spotifyCooldown = await SpotifyRateLimiter.shared.remainingCooldown(for: spotify.clientID)
     }
 
     // MARK: - Local Sync
@@ -259,6 +272,12 @@ struct SettingsView: View {
                     }
                     .font(.callout)
                 }
+                if spotifyCooldown > 1 {
+                    Label("Rate limited by Spotify — clears in about \(spotifyCooldownText). Credentials from a newly created Spotify app start with a fresh quota.",
+                          systemImage: "hourglass")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                }
             } else {
                 spotifyCredentialEntry
             }
@@ -309,6 +328,12 @@ struct SettingsView: View {
     private var spotifyCredentialsIncomplete: Bool {
         spotifyIDInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || spotifySecretInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var spotifyCooldownText: String {
+        spotifyCooldown < 90
+            ? "\(Int(spotifyCooldown.rounded())) seconds"
+            : "\(Int((spotifyCooldown / 60).rounded())) minutes"
     }
 
     private func verifyAndSaveSpotify() {

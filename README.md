@@ -592,6 +592,15 @@ burst into minutes of 429s, surfacing on screens that only cost two
 requests. A Top 10 derivation likewise stops at the first 429 and ranks
 what it already has, rather than marching on through the window.
 
+Escalated penalties are real — a repeatedly tripped development-mode app
+can be timed out for an **hour** — so the recorded window also **persists
+across launches** (a relaunch that forgot it would re-trip the 429 and
+extend it), and it's keyed to the **client id** that earned it: a newly
+created Spotify app starts with a clean quota, so pasting fresh
+credentials is the honest shortcut out of a long window (verification
+with new credentials bypasses the old app's block automatically).
+Settings ▸ Spotify shows the countdown whenever a window is in force.
+
 **Why it isn't laggy.** The dataset is big (6,291 genres, ~630k artist rows),
 and the site itself chugs on an iPad, so nothing is ever
 loaded or laid out wholesale. The genre **index** (`genres.json`) is read once,
