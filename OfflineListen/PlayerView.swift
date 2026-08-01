@@ -28,6 +28,28 @@ enum TrackArtwork {
     }
 }
 
+/// The same memoized loader for **folder** covers (`AppPaths.folderArtwork`) —
+/// an album downloaded whole from a discography wears its release cover as the
+/// thumbnail on its Library row, and the folder list redraws often enough that
+/// re-reading the JPEG per row would show.
+enum FolderArtwork {
+    private static let cache = NSCache<NSString, UIImage>()
+
+    static func image(for folder: Folder) -> UIImage? {
+        guard let name = folder.artworkFileName else { return nil }
+        if let hit = cache.object(forKey: name as NSString) { return hit }
+        guard let image = UIImage(contentsOfFile: AppPaths.folderArtwork.appendingPathComponent(name).path) else {
+            return nil
+        }
+        cache.setObject(image, forKey: name as NSString)
+        return image
+    }
+
+    static func invalidate(fileName: String) {
+        cache.removeObject(forKey: fileName as NSString)
+    }
+}
+
 struct PlayerView: View {
     @EnvironmentObject private var playback: PlaybackManager
     @EnvironmentObject private var library: LibraryStore

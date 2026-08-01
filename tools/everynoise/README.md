@@ -14,7 +14,10 @@ artist's Spotify id.
 embedded in the site's HTML, and the app plays them directly.
 
 Every Noise froze in late 2024 when Spotify revoked the API access that fed it,
-so the data is static: this scrape is genuinely one-time.
+so the data is static: this scrape is genuinely one-time. The *genre space*
+kept moving, though — see
+[Topping the dataset up](#topping-the-dataset-up-merge_updatespy) for the
+in-app harvest that catches what the frozen page never listed.
 
 ## Running the scrape
 
@@ -58,6 +61,55 @@ it again only if the shards are ever regenerated, and commit the result.
 > by egress policy. Run this anywhere with ordinary internet access (a laptop
 > with Python 3 is enough), or allow `everynoise.com` in the environment's
 > network policy first.
+
+## Topping the dataset up (`merge_updates.py`)
+
+The scrape is frozen; the catalogue isn't. Artists debut, and Spotify files
+them under labels the 2024 page never listed. The app can notice that as you
+browse — **Settings ▸ Every Noise Data ▸ Collect updates as I browse** (needs
+Spotify credentials, off by default). Opening a genre in the Every Noise
+browser then also asks Spotify, **once per genre**, which artists it currently
+files under that label, and records the names the bundled shard is missing.
+**Download New Data** in the same section hands the collected file off the
+device; this folds it in:
+
+```sh
+python3 tools/everynoise/merge_updates.py ~/Downloads/everynoise-updates.jsonl
+python3 tools/everynoise/build_artist_index.py     # the index is derived from the shards
+```
+
+It does two things. **New artists** are appended to their genre's shard, with
+their Spotify id (so the artist's "+" opens their live discography) and a
+`size` mapped from Spotify's popularity onto the range that shard already
+uses — the site's font-size cue meant the same thing. **New genres** — a label
+carried by harvested artists that `genres.json` has no row for at all — get a
+row plus a shard, once at least `--min-artists` (default 3) artists stand
+behind them, positioned at the centroid of the known genres those artists were
+found under (a co-occurring label is a neighbour, which is precisely what the
+map's geometry encodes).
+
+Two honest limits, both recorded in `meta.json` under `merged`:
+
+- **Positions are synthetic.** The site's layout came from Spotify's
+  audio-feature API, which was withdrawn along with everything else. New rows
+  are hashed deterministically into the spread their genre's map already
+  occupies — they sit *among* the right artists, not at a meaningful point
+  within them.
+- **No preview snippets.** Spotify stopped serving `preview_url` to apps
+  created after November 2024, so harvested artists arrive with
+  `preview: null` and no 30-second sample. Their discography still works.
+
+`--dry-run` reports without writing, and re-merging the same export is a
+no-op, so it's safe to run twice. Commit `OfflineListen/EveryNoiseData/`
+afterwards, as with a scrape.
+
+**Why it can't get the app rate limited.** The harvest is one request per
+genre *visit*, and it is skipped entirely when the genre was harvested in the
+last 30 days, when 150 requests have already gone out today, when fewer than
+20 seconds have passed since the last one, or when `SpotifyRateLimiter` knows
+of *any* live 429 window (sending during one is what makes Spotify extend it).
+Practically it costs less than opening a couple of artists in the discography
+browser.
 
 ## Checking the parser without the network
 

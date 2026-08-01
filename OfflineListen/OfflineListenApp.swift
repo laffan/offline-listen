@@ -10,6 +10,10 @@ struct OfflineListenApp: App {
     @StateObject private var spotifySettings: SpotifySettingsStore
     @StateObject private var browse: BrowseStore
     @StateObject private var localSync: LocalSyncStore
+    /// App-level so both the Every Noise browser (which feeds it) and Settings
+    /// (which exports it) see the same store — a browser-local one would be
+    /// invisible to Settings.
+    @StateObject private var everyNoiseUpdates: ENUpdateStore
 
     @Environment(\.scenePhase) private var scenePhase
 
@@ -29,6 +33,7 @@ struct OfflineListenApp: App {
                                                               aiOrganizer: aiOrganizer,
                                                               spotifySettings: spotifySettings))
         _browse = StateObject(wrappedValue: BrowseStore(aiSettings: aiSettings))
+        _everyNoiseUpdates = StateObject(wrappedValue: ENUpdateStore())
         let playback = PlaybackManager(library: library)
         _playback = StateObject(wrappedValue: playback)
 
@@ -67,6 +72,7 @@ struct OfflineListenApp: App {
                 .environmentObject(spotifySettings)
                 .environmentObject(browse)
                 .environmentObject(localSync)
+                .environmentObject(everyNoiseUpdates)
                 .environmentObject(LogStore.shared)
                 .task { playback.restoreLastSession() }
                 .onAppear { importShared() }

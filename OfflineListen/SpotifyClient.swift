@@ -76,6 +76,24 @@ struct SpotifyTrack: Sendable, Equatable {
 
 /// One release in an artist's catalogue, as `/artists/{id}/albums` lists it —
 /// enough to browse a discography and hand an album to the download pipeline.
+/// One artist as the live catalogue describes them — what an artist search
+/// hit carries beyond a name. The Every Noise harvest records these for names
+/// the bundled (frozen) scrape doesn't have under a genre.
+///
+/// There is no preview URL here on purpose: artist objects never carried one,
+/// and Spotify stopped serving `preview_url` on *tracks* to newly created apps
+/// in November 2024 — so a harvested artist arrives without a snippet, and the
+/// merge tool records that rather than inventing one.
+struct SpotifyArtistHit: Sendable, Hashable {
+    let id: String
+    let name: String
+    /// Spotify's own 0–100 score — the stand-in for the site's font-size cue.
+    let popularity: Int
+    /// Every genre label Spotify files this artist under.
+    let genres: [String]
+    let imageURL: String?
+}
+
 struct SpotifyAlbumSummary: Sendable, Identifiable, Hashable {
     let id: String
     let name: String
@@ -566,6 +584,34 @@ struct SpotifyClient {
         return (id, resolved)
     }
 
+    /// The artists Spotify currently files under a genre label — one page of
+    /// `/search?q=genre:"…"&type=artist`, which is *the* request the Every
+    /// Noise dataset harvest makes (one per genre you open, and never more
+    /// than that — see `ENUpdateStore`). Search hits are full artist objects,
+    /// so each carries its popularity, its own genre labels and a portrait.
+    ///
+    /// It is not a catalogue read and deliberately isn't cached: the whole
+    /// point is to see what the live catalogue says *now* versus what the
+    /// 2024-frozen scrape recorded.
+    func searchArtists(genre: String, limit: Int = 50, offset: Int = 0) async throws -> [SpotifyArtistHit] {
+        // The quotes matter: `genre:deep house` filters on "deep" and searches
+        // for "house", `genre:"deep house"` filters on the whole label.
+        let raw = "genre:\"\(genre)\""
+        let encoded = raw.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? raw
+        let data = try await get(path: "/search?q=\(encoded)&type=artist&limit=\(limit)&offset=\(offset)",
+                                 describing: "artists in \"\(genre)\"")
+        guard let response = try? JSONDecoder().decode(APIArtistSearch.self, from: data) else {
+            throw SpotifyError.malformedResponse
+        }
+        return (response.artists?.items ?? []).compactMap { api in
+            guard let id = api.id, !id.isEmpty, let name = api.name, !name.isEmpty else { return nil }
+            return SpotifyArtistHit(id: id, name: name,
+                                    popularity: api.popularity ?? 0,
+                                    genres: api.genres ?? [],
+                                    imageURL: api.images?.first?.url)
+        }
+    }
+
     /// The top track-search hits for a free-text query. Backs the Library's
     /// **Get Album Art**: a downloaded track's artist + title comes in, the
     /// best hit's album cover goes out.
@@ -895,6 +941,11 @@ private struct APIArtist: Decodable {
     /// Present on full artist objects (`/artists/{id}`, search hits), largest
     /// first; absent on the slim artist stubs inside track objects.
     let images: [APIImage]?
+    /// Full artist objects only: Spotify's own 0–100 popularity score and the
+    /// genre labels it files the artist under. Both feed the Every Noise
+    /// dataset harvest; nil everywhere the object is a stub.
+    let popularity: Int?
+    let genres: [String]?
 }
 
 /// One entry of Spotify's `images` arrays (albums, artists, playlists).

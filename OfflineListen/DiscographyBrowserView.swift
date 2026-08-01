@@ -352,8 +352,11 @@ struct DiscographyBrowserView: View {
     @State private var catalogue: DiscographyCatalogue?
     @State private var loadError: String?
     @State private var loading = false
-    /// The track being auditioned — the same preview modal Browse rows use.
+    /// The track being auditioned — the same preview modal Browse rows use —
+    /// and the release's other matched tracks, so the modal's next/previous
+    /// buttons walk the record rather than dead-ending on one song.
     @State private var previewItem: BrowseItem?
+    @State private var previewQueue: [BrowseItem] = []
     /// The header's Learn More sheet, and its once-per-visit cached result.
     @State private var showingBio = false
     @State private var bio: ArtistBio?
@@ -407,7 +410,7 @@ struct DiscographyBrowserView: View {
             }
         }
         .sheet(item: $previewItem) { item in
-            BrowsePreviewView(item: item, mode: browse.downloadMode)
+            BrowsePreviewView(item: item, mode: browse.downloadMode, queue: previewQueue)
         }
         .sheet(isPresented: $showingBio) {
             ArtistBioSheet(artistName: catalogue?.artistName ?? title, bio: $bio)
@@ -449,7 +452,9 @@ struct DiscographyBrowserView: View {
                     ForEach(section.releases) { release in
                         DiscographyReleaseRow(release: release,
                                               provider: provider,
-                                              downloadFolderName: downloadFolderName) { item in
+                                              artistName: catalogue.artistName,
+                                              downloadFolderName: downloadFolderName) { item, queue in
+                            previewQueue = queue
                             previewItem = item
                         }
                     }
@@ -539,15 +544,21 @@ struct DiscographyBrowserView: View {
 
 /// One release row: name, year and track count, plus a **search** button that
 /// matches the tracklist against YouTube (labelled **Search Top 10** on the
-/// pinned Top 10 row). Expanding shows the track names; after a search,
+/// pinned Top 10 row). Expanding shows the cover full-size, a **Download
+/// Album** button beneath it, and then the track names; after a search,
 /// matched tracks carry Download/Preview and misses are dimmed. The Download
 /// button becomes the shared green play button once its track lands in the
 /// library.
 private struct DiscographyReleaseRow: View {
     let release: DiscographyRelease
     let provider: any DiscographyProviding
+    /// The catalogue's artist, for naming the folder a Top 10 / Highlights
+    /// bulk download files into (a release names its own).
+    let artistName: String
     let downloadFolderName: String?
-    let onPreview: (BrowseItem) -> Void
+    /// The tapped track and the release's other matched tracks — the queue the
+    /// preview modal walks with next/previous.
+    let onPreview: (BrowseItem, [BrowseItem]) -> Void
 
     @EnvironmentObject private var downloads: DownloadManager
     @EnvironmentObject private var browse: BrowseStore
@@ -565,10 +576,19 @@ private struct DiscographyReleaseRow: View {
     @State private var sent: Set<String> = []
     /// The tracklist fetch in flight, if any — see `loadTracks`.
     @State private var loadTask: Task<Void, Never>?
+    /// The YouTube match pass in flight, if any — see `runSearch`. Single-flight
+    /// for the same reason `loadTask` is: **Download Album** needs the search's
+    /// results, and pressing it mid-search must join that pass rather than
+    /// start a second one (or read a half-filled `matches`).
+    @State private var searchTask: Task<Void, Never>?
+    /// The whole-release download: in flight, and how many tracks it queued.
+    @State private var queueing = false
+    @State private var queuedCount: Int?
 
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
             expandedCover
+            downloadAllButton
             trackRows
         } label: {
             HStack(spacing: 12) {
@@ -654,6 +674,71 @@ private struct DiscographyReleaseRow: View {
         }
     }
 
+    /// **Download Album** — one tap for the whole record: it runs the YouTube
+    /// match first when the release hasn't been searched yet, then queues every
+    /// track that matched into a library folder named after the release (with
+    /// the cover attached to it). Sits directly under the cover and above the
+    /// tracklist, which is where an action on the *whole* release belongs — the
+    /// per-track buttons stay exactly where they were.
+    @ViewBuilder
+    private var downloadAllButton: some View {
+        Button {
+            downloadAll()
+        } label: {
+            HStack(spacing: 8) {
+                if queueing {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: queuedCount == nil ? "arrow.down.circle.fill" : "checkmark.circle.fill")
+                }
+                Text(downloadAllLabel)
+                    .font(.subheadline.weight(.semibold))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.capsule)
+        .tint(queuedCount == nil ? Color.accentColor : .green)
+        // Nothing to queue while it's working, once it has queued, or when the
+        // search came back with no usable match at all.
+        .disabled(queueing || queuedCount != nil || (searched && matches.isEmpty))
+        .padding(.vertical, 4)
+    }
+
+    private var downloadAllLabel: String {
+        if let queuedCount {
+            return "Queued \(queuedCount) track\(queuedCount == 1 ? "" : "s")"
+        }
+        if queueing {
+            return progress.total > 0 && progress.done < progress.total
+                ? "Matching \(progress.done) of \(progress.total)…"
+                : "Queueing…"
+        }
+        if searched {
+            return matches.isEmpty
+                ? "Nothing matched on YouTube"
+                : "Download \(bulkNoun) (\(matches.count))"
+        }
+        return "Download \(bulkNoun)"
+    }
+
+    /// What the bulk button calls this release: a real album is an "Album",
+    /// while the pinned Top 10 / Highlights rows are lists, not records.
+    private var bulkNoun: String {
+        release.kind == .release ? "Album" : "All"
+    }
+
+    /// The library folder a bulk download files into. A release names its own;
+    /// Top 10 / Highlights are qualified by the artist, since "Top 10" alone
+    /// would collide across every artist you ever browse.
+    private var bulkFolderName: String {
+        guard release.kind != .release else { return release.name }
+        let artist = artistName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return artist.isEmpty ? release.name : "\(artist) — \(release.name)"
+    }
+
     @ViewBuilder
     private var trackRows: some View {
         if let trackError {
@@ -702,7 +787,12 @@ private struct DiscographyReleaseRow: View {
                     .accessibilityLabel("Download \(track.name)")
                 }
                 Button {
-                    onPreview(browseItem(for: track, url: url))
+                    // Hand over the whole release, not just this song: the
+                    // modal's next/previous walk it, and it auto-advances at
+                    // the end of each track.
+                    let queue = previewQueue
+                    onPreview(queue.first(where: { $0.url == url }) ?? browseItem(for: track, url: url),
+                              queue)
                 } label: {
                     Image(systemName: "play.circle")
                 }
@@ -763,29 +853,89 @@ private struct DiscographyReleaseRow: View {
         loadTask = nil
     }
 
-    /// The search: resolve each track to a YouTube video via the provider
-    /// (ISRC-first for Spotify, top search hit for the AI layout), updating
-    /// the rows as each match lands.
+    /// The search button's action — fire and forget; `runSearch` owns the work.
     @MainActor
     private func search() {
+        Task { await runSearch() }
+    }
+
+    /// The search: resolve each track to a YouTube video via the provider
+    /// (ISRC-first for Spotify, top search hit for the AI layout), updating
+    /// the rows as each match lands. **Single-flight**, like `loadTracks`: a
+    /// second caller (the Search button and Download Album can both want it)
+    /// awaits the pass already running instead of starting a rival one.
+    @MainActor
+    private func runSearch() async {
+        if let inFlight = searchTask {
+            await inFlight.value
+            return
+        }
+        let task = Task { @MainActor in await performSearch() }
+        searchTask = task
+        await task.value
+        searchTask = nil
+    }
+
+    @MainActor
+    private func performSearch() async {
         expanded = true
         searching = true
-        Task {
-            if tracks == nil { await loadTracks() }
-            guard let tracks, !tracks.isEmpty else {
-                searching = false
-                searched = tracks != nil
-                return
-            }
-            progress = (0, tracks.count)
-            for (index, track) in tracks.enumerated() {
-                if let url = await provider.youTubeURL(for: track) {
-                    matches[track.id] = url
-                }
-                progress = (index + 1, tracks.count)
-            }
+        if tracks == nil { await loadTracks() }
+        guard let tracks, !tracks.isEmpty else {
             searching = false
-            searched = true
+            searched = self.tracks != nil
+            return
+        }
+        progress = (0, tracks.count)
+        for (index, track) in tracks.enumerated() {
+            if let url = await provider.youTubeURL(for: track) {
+                matches[track.id] = url
+            }
+            progress = (index + 1, tracks.count)
+        }
+        searching = false
+        searched = true
+    }
+
+    /// **Download Album**: match the release against YouTube if that hasn't
+    /// happened yet, then queue every track that matched into one folder. The
+    /// misses are simply left out — "all available tracks" is what matched, and
+    /// the tracklist below shows which those were.
+    @MainActor
+    private func downloadAll() {
+        guard !queueing, queuedCount == nil else { return }
+        expanded = true
+        queueing = true
+        Task {
+            if !searched { await runSearch() }
+            if let tracks {
+                let picks: [(url: String, artworkURL: String?)] = tracks.compactMap { track in
+                    guard let url = matches[track.id] else { return nil }
+                    return (url, track.artworkURL ?? release.imageURL)
+                }
+                if !picks.isEmpty {
+                    downloads.enqueueAlbum(named: bulkFolderName,
+                                           tracks: picks,
+                                           mode: browse.downloadMode,
+                                           insideFolderNamed: downloadFolderName,
+                                           artworkURL: release.imageURL)
+                    // The per-track buttons follow suit, so a row doesn't offer
+                    // to download something already on its way.
+                    sent.formUnion(tracks.filter { matches[$0.id] != nil }.map(\.id))
+                    queuedCount = picks.count
+                }
+            }
+            queueing = false
+        }
+    }
+
+    /// This release's matched tracks as preview items, in tracklist order —
+    /// the queue the modal's next/previous buttons step through. Built fresh
+    /// per tap (a `BrowseItem` mints a new id each time), so the tapped item
+    /// is taken *out of* this list rather than made separately.
+    private var previewQueue: [BrowseItem] {
+        (tracks ?? []).compactMap { track in
+            matches[track.id].map { browseItem(for: track, url: $0) }
         }
     }
 

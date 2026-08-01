@@ -76,6 +76,7 @@
 		1B0000000000000000004E02 /* NoiseMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000004E02 /* NoiseMapView.swift */; };
 		1B0000000000000000004E03 /* EveryNoiseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000004E03 /* EveryNoiseView.swift */; };
 		1B0000000000000000004E05 /* DiscographyBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000004E05 /* DiscographyBrowserView.swift */; };
+		1B0000000000000000004E06 /* EveryNoiseUpdates.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000004E06 /* EveryNoiseUpdates.swift */; };
 		1B0000000000000000004E04 /* EveryNoiseData in Resources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000004E04 /* EveryNoiseData */; };
 		1B00000000000000000002E7 /* BrowseSourceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E7 /* BrowseSourceView.swift */; };
 		1B00000000000000000002E8 /* BrowsePreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E8 /* BrowsePreviewView.swift */; };
@@ -174,6 +175,7 @@
 		1A0000000000000000004E02 /* NoiseMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoiseMapView.swift; sourceTree = "<group>"; };
 		1A0000000000000000004E03 /* EveryNoiseView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EveryNoiseView.swift; sourceTree = "<group>"; };
 		1A0000000000000000004E05 /* DiscographyBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscographyBrowserView.swift; sourceTree = "<group>"; };
+		1A0000000000000000004E06 /* EveryNoiseUpdates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EveryNoiseUpdates.swift; sourceTree = "<group>"; };
 		1A0000000000000000004E04 /* EveryNoiseData */ = {isa = PBXFileReference; lastKnownFileType = folder; path = EveryNoiseData; sourceTree = "<group>"; };
 		1A00000000000000000002E7 /* BrowseSourceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseSourceView.swift; sourceTree = "<group>"; };
 		1A00000000000000000002E8 /* BrowsePreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowsePreviewView.swift; sourceTree = "<group>"; };
@@ -246,6 +248,7 @@
 				1A0000000000000000004E02 /* NoiseMapView.swift */,
 				1A0000000000000000004E03 /* EveryNoiseView.swift */,
 				1A0000000000000000004E05 /* DiscographyBrowserView.swift */,
+				1A0000000000000000004E06 /* EveryNoiseUpdates.swift */,
 				1A00000000000000000000AA /* LibraryView.swift */,
 				1A00000000000000000000B6 /* FolderView.swift */,
 				1A00000000000000000000BF /* MixtapeViews.swift */,
@@ -513,6 +516,7 @@
 				1B0000000000000000004E02 /* NoiseMapView.swift in Sources */,
 				1B0000000000000000004E03 /* EveryNoiseView.swift in Sources */,
 				1B0000000000000000004E05 /* DiscographyBrowserView.swift in Sources */,
+				1B0000000000000000004E06 /* EveryNoiseUpdates.swift in Sources */,
 				1B00000000000000000000BA /* LibraryView.swift in Sources */,
 				1B00000000000000000000C8 /* FolderView.swift in Sources */,
 				1B00000000000000000000D0 /* LocalSync.swift in Sources */,

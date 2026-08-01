@@ -11,8 +11,10 @@ struct BrowseSourceView: View {
     @EnvironmentObject private var browse: BrowseStore
     @EnvironmentObject private var downloads: DownloadManager
 
-    /// The item being previewed (drives the modal).
+    /// The item being previewed (drives the modal), and the list it was tapped
+    /// in — the modal's next/previous walk that list and auto-advance through it.
     @State private var previewItem: BrowseItem?
+    @State private var previewQueue: [BrowseItem] = []
     /// Drives multi-select mode (the "Select" button); `selection` holds the
     /// checked items so they can be downloaded in one tap.
     @State private var editMode: EditMode = .inactive
@@ -57,7 +59,7 @@ struct BrowseSourceView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent(items: items) }
         .sheet(item: $previewItem) { item in
-            BrowsePreviewView(item: item, mode: browse.downloadMode)
+            BrowsePreviewView(item: item, mode: browse.downloadMode, queue: previewQueue)
         }
         .confirmationDialog(
             "Follow this artist",
@@ -256,9 +258,12 @@ struct BrowseSourceView: View {
             onDownload: { download(item) },
             // Marked as soon as it's opened: the row's filled play icon is a
             // "you've heard this one" breadcrumb, not a record of a decision,
-            // so dismissing the modal doesn't take it back.
+            // so dismissing the modal doesn't take it back. The source's whole
+            // visible list rides along as the modal's queue, so previewing can
+            // run on from here without coming back to the list.
             onPreview: {
                 browse.markPreviewed(item)
+                previewQueue = browse.visibleItems(for: sourceID)
                 previewItem = item
             }
         )

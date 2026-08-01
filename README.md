@@ -156,7 +156,9 @@ Five screens (tabs):
    chapter list also highlights the chapter currently playing.
 
    **Folders** organize the library, under a **Folders** header (mirroring the
-   Tracks one): an **Inbox** pinned to the top collects every track you haven't
+   Tracks one). A folder with a **cover** — an album pulled down whole from a
+   discography — draws it as a thumbnail on the left of its row in place of
+   the folder icon. An **Inbox** pinned to the top collects every track you haven't
    listened to yet (starting playback — or a **Mark Played** swipe — clears it
    from the Inbox), **Recent** and **Watch** sit beneath it, user folders below
    those, and the **Archive** is pinned to
@@ -239,11 +241,16 @@ Five screens (tabs):
    that's what actually makes content scroll clear. The Every Noise maps take
    the same height as extra scroll inset, and their scan/artist-preview bars
    pad themselves by it, since the maps run edge to edge under the tab bar.
-5. **Settings** — AI configuration on top, then **Spotify** credentials, a
+5. **Settings** — AI configuration on top, then **Spotify** credentials, an
+   **Every Noise Data** section, a
    **Local Sync** section, a
    **Blog Agent** section (posts per
    refresh / songs per post limits for the Browse tab's Blog Agent sources),
    and the **Log** as a section beneath them.
+   - **Every Noise Data.** An opt-in toggle that lets browsing the genre map
+     top the bundled dataset up, a tally of what it has found, and **Download
+     New Data** to share that off the device (see
+     [Keeping the dataset from ageing](#keeping-the-dataset-from-ageing)).
    - **Local Sync.** Pick a folder (in Files — On My iPhone, iCloud Drive, or
      any file provider) to sync part of the library with; see
      [Local sync](#local-sync-a-folder-that-mirrors-part-of-the-library).
@@ -342,10 +349,19 @@ Art** searches Spotify by the track's (AI-cleaned) artist + title and
 attaches the best hit's cover through the same fetcher — best-effort like
 every artwork fetch, so a miss logs and changes nothing.
 
+**Folders wear covers too.** An album downloaded whole from a discography
+(**Download Album**, above) keeps the release's cover on the *folder*, in
+`Documents/FolderArtwork/<folder-id>.jpg` — drawn as the thumbnail on the left
+of its row in the Library's folder list, in place of the folder glyph (a
+synced folder keeps its sync badge, tucked into the corner of the cover). It's
+quite separate from a **mixtape**'s hand-framed banner, which is still its own
+thing.
+
 Artwork is app-local display metadata: it's never synced or exported with the
-file, it's deleted with the track, and tracks without it (YouTube feeds,
-searches, plain pastes) simply keep the placeholder. Decoded images are
-memoized (`TrackArtwork`, an `NSCache`) so list redraws never re-read disk.
+file, it's deleted with the track (or the folder), and tracks without it
+(YouTube feeds, searches, plain pastes) simply keep the placeholder. Decoded
+images are memoized (`TrackArtwork` / `FolderArtwork`, `NSCache`s) so list
+redraws never re-read disk.
 
 ## Browse: keeping tabs on audio sources
 
@@ -372,8 +388,20 @@ beneath the Browse title:
   it's a breadcrumb, not a decision). It opens a modal that downloads the audio — or, in Video mode,
   the video, its picture spanning the full width of the pane — and plays it in
   its own
-  **mini player** (scrubber, play/pause — separate from the main Player, which
-  it pauses while auditioning), with **Save** and **Discard** buttons. A video
+  **mini player** (scrubber, **previous / play-pause / next** — separate from
+  the main Player, which it pauses while auditioning), with **Save** and
+  **Discard** buttons.
+
+  **It previews a queue, not one track.** The list you tapped in comes along:
+  the side buttons walk it (with an *N of M* counter under them), and a track
+  that plays to its end **rolls straight into the next one**, so a source's
+  new items — or a whole album in the discography browser — can be auditioned
+  hands-off. Each track it moves to is marked previewed, so the breadcrumbs
+  fill in as it goes. The transport sits *outside* the loading state, so you
+  can skip past a slow resolve instead of waiting for it, and the audio layout
+  is deliberately tight — with no picture to frame, the sheet doesn't need the
+  vertical space a video preview does. A caller with nothing to walk (one
+  search result) simply has the side buttons disabled. A video
   preview also carries a **quality picker** (Best / 1080p / 720p / 480p /
   360p, remembered between previews): changing it restarts the preview at the
   chosen resolution, and Save files whatever was downloaded. The preference is
@@ -409,6 +437,21 @@ source has nothing further the button retires to "Nothing older to load".
 
 The **Audio/Video toggle** appears on a source's own screen too, not just the
 Browse root, so the mode can be changed where the Download/Preview buttons are.
+
+**Downloading a whole album.** In the album-first discography browser (an
+Artist source in either Discography mode, or Every Noise's Browse Discography),
+twirling a release open shows its cover, then a **Download Album** button, then
+the tracklist. One tap matches the whole record against YouTube — running the
+search itself first if you haven't — and queues every track that matched into
+a **library folder named after the release**, wearing the release's **cover
+art** as its thumbnail in the Library's folder list. From a Browse source the
+album folder nests inside the source's own folder (everything from one source
+still stays together); from Every Noise it's a top-level folder. Misses are
+left out — "all available tracks" means what matched, and the tracklist below
+shows which those were. Re-downloading an album reuses its folder rather than
+making a second one, and the pinned **Top 10** / **Highlights** rows offer the
+same button as **Download All** (their folder is qualified by the artist, since
+"Top 10" alone would collide across every artist you browse).
 
 **Bulk download.** A **Select** button at the top of a source's list turns on
 multi-select (the same edit-mode selection the Library uses): the per-row
@@ -564,14 +607,17 @@ art** beside it, and the artist's portrait, name, **Learn More** bio button
 and an **Add as Source** button heading the page — the latter files the
 artist into Browse as a discography-mode **Artist source** on the spot (it
 reads "In Browse" once an equivalent source exists, so it never files a
-duplicate). Expanding a release shows its cover full-size and lists
-its track names, and its **magnifier** matches them against YouTube in place
+duplicate). Expanding a release shows its cover full-size, a **Download
+Album** button, and its track names; the release's **magnifier** matches
+those against YouTube in place
 (ISRC-first, duration-gated — the pasted-link machinery), with live progress
 in the row; when the search settles, the **matched tracks light up with
 Download and Preview beside them** (Preview is the standard Browse
-listen-first modal) and misses dim to "no match" — no picker popup. These are
-single-track picks, so downloads go in **unfiled**: they show in the
-Library's Tracks list (and the Inbox) rather than an album folder. This is
+listen-first modal, walking the rest of the release) and misses dim to "no
+match" — no picker popup. A single-track pick goes in **unfiled**: it shows
+in the Library's Tracks list (and the Inbox) rather than an album folder.
+**Download Album** is the opposite case and files the whole record into a
+folder of its own, cover art and all. This is
 the same screen a discography-mode **Artist source** opens in Browse — one
 album-first browser, wherever a catalogue shows.
 
@@ -661,9 +707,46 @@ do — the maps ignore the bottom safe area, so the mini player's inset doesn't
 push bottom bars up on its own.
 
 Ideas deliberately left on the table: pinch-zoom on the maps (the site has
-none either); per-release "download all matched"; scan continuing to play
-beneath a pushed genre view. (A global artist search used to sit on this
-list — the derived artist index is what crossed it off.)
+none either); scan continuing to play beneath a pushed genre view. (A global
+artist search used to sit on this list — the derived artist index is what
+crossed it off, as **Download Album** did for per-release "download all
+matched".)
+
+#### Keeping the dataset from ageing
+
+The map is a scrape of a page that stopped updating in late 2024, but the
+genre space didn't. **Settings ▸ Every Noise Data ▸ Collect updates as I
+browse** (off by default; needs the Spotify credentials) closes that gap
+opportunistically: opening a genre also asks Spotify — **once per genre** —
+which artists it currently files under that label, and records every name the
+bundled shard is missing, along with the artist's Spotify id, popularity and
+its own genre labels. Nothing in the app changes on the spot; the findings
+accumulate in `Documents/EveryNoiseUpdates/` and Settings shows the tally
+("412 new artists across 37 genres · 8 genres missing from the map").
+**Download New Data** shares the file off the device, and
+`tools/everynoise/merge_updates.py` folds it into the bundled dataset before a
+rebuild — appending artists to their genre's shard, and minting a row *and* a
+shard for a label that has enough artists behind it but no place on the map at
+all, positioned at the centroid of the known genres those artists were found
+under.
+
+Two limits are inherent and recorded in `meta.json` rather than papered over:
+the site's layout came from Spotify's **audio-feature** API, withdrawn with
+everything else, so new rows are hashed deterministically into the spread
+their genre already occupies — among the right artists, not at a meaningful
+point within them; and Spotify stopped serving `preview_url` to apps created
+after November 2024, so a harvested artist has **no 30-second snippet** (their
+discography still opens normally).
+
+**Why this can't get you rate limited.** It is one request per genre *visit*,
+behind four independent brakes: it's **opt-in**; only **one harvest runs at a
+time**, no closer than **20 seconds** apart and delayed a few seconds behind
+the tap so it never races the screen you're waiting on; it's capped at **150
+requests a day** and won't re-ask a genre for **30 days**; and a harvest is
+**dropped outright** — not queued — whenever `SpotifyRateLimiter` knows of a
+live 429 window, since sending during one is exactly what makes Spotify extend
+it. A heavy browsing session costs about what opening twenty artists in the
+discography browser does.
 
 Preview downloads run through the **same pipeline** as the download queue but
 jump ahead of queued jobs, since the user is sitting in the modal waiting.
@@ -813,7 +896,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `AISettings.swift` | `AISettingsStore` (model/key/assist, Keychain-backed), `AIModel`, `Keychain` helper. |
 | `AnthropicClient.swift` | Minimal Anthropic Messages API client (verify + single-shot completion) over URLSession. |
 | `SpotifyRef.swift` | Parses `spotify:` URIs / `open.spotify.com` links into a (kind, id) pair; resolves `spotify.link` short links by redirect. |
-| `SpotifyClient.swift` | Spotify Web API client: Client Credentials token (cached, 401-refreshing) + the track/album/playlist/artist metadata reads, paginated and **batched** (`/albums?ids=`, cross-album `/tracks?ids=`). Also `SpotifyRateLimiter` (the persisted, per-client-id `Retry-After` window), `SpotifyMetadataCache` (the ten-minute catalogue cache), and the popularity-ranked `derivedTopTracks`. |
+| `SpotifyClient.swift` | Spotify Web API client: Client Credentials token (cached, 401-refreshing) + the track/album/playlist/artist metadata reads, paginated and **batched** (`/albums?ids=`, cross-album `/tracks?ids=`), plus `searchArtists(genre:)` — the one request the Every Noise dataset harvest makes. Also `SpotifyRateLimiter` (the persisted, per-client-id `Retry-After` window), `SpotifyMetadataCache` (the ten-minute catalogue cache), and the popularity-ranked `derivedTopTracks`. |
 | `SpotifySettings.swift` | `SpotifySettingsStore` — the Keychain-backed client id/secret (mirrors `AISettingsStore`). |
 | `SpotifyResolver.swift` | Spotify metadata → `ResolvedPlaylist`: ISRC-first YouTube matching with a duration gate, bounded and concurrent. |
 | `AIOrganizer.swift` | Builds the prompt, calls the API, writes music/podcast + clean metadata back to the library. |
@@ -824,14 +907,15 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `AIDiscovery.swift` | AI song discovery for Artist/Genre/Country sources (suggestions via the Messages API, links via the search resolver). |
 | `BlogAgent.swift` | The Blog Agent source: homepage fetch → AI link triage → article reads → per-article summary + artist extraction + YouTube-link harvest, with bot-protection ("agent blocked") detection. |
 | `DiscographyAgent.swift` | The AI catalogue layout behind Search Discography mode: albums + track names + a Highlights list, one model call, no YouTube work (matching moved into the browser, on demand). |
-| `DiscographyBrowserView.swift` | The shared album-first discography browser — artist header (portrait, name, Learn More bio), cover thumbnails/full art, names first, per-release YouTube search, pinned Top 10 — plus its two catalogue providers (Spotify live / AI layout), the Wikipedia lookup + AI bio sheet, and the Browse-source wrapper that caches the first pass. |
+| `DiscographyBrowserView.swift` | The shared album-first discography browser — artist header (portrait, name, Learn More bio), cover thumbnails/full art, names first, per-release YouTube search, **Download Album**, pinned Top 10 — plus its two catalogue providers (Spotify live / AI layout), the Wikipedia lookup + AI bio sheet, and the Browse-source wrapper that caches the first pass. |
 | `BrowseView.swift` | The Browse tab: sources grouped by type, add-source sheet, refresh, and the world button into the Every Noise browser. |
 | `EveryNoiseData.swift` | The bundled Every Noise dataset: models, the lazy/LRU shard-loading store, the memory-mapped global artist search (`ENArtistIndex`), and the 30-second preview player. |
+| `EveryNoiseUpdates.swift` | `ENUpdateStore` — the opt-in, heavily throttled Spotify harvest that records what the frozen dataset is missing as you browse, and the exportable JSONL it writes for `tools/everynoise/merge_updates.py`. |
 | `NoiseMapView.swift` | The virtualized `UIScrollView` scatter map (spatial grid + recycled labels) both noise maps render through — opens centered on its canvas, with the draggable scroll-pill ring on the right edge. |
 | `EveryNoiseView.swift` | The Every Noise browser: Map/List/Scan modes + Find at both levels (with the root's genre/artist toggle), the scan transport, and the artist bar whose "+" opens the live discography (or creates Artist sources when Spotify isn't set up). |
 | `EveryNoiseData/` | Bundled (folder reference): `genres.json` index + per-genre artist shards from the one-time `tools/everynoise/scrape.py`, plus the derived `artists.idx.z` from `build_artist_index.py`. |
 | `BrowseSourceView.swift` | One source's items with per-row Download/Preview/Discard, plus a **Select** mode for bulk download; also `BrowseTrackStatusButton`, the green play button every browse list shows once a download is in the library. |
-| `BrowsePreviewView.swift` | The preview modal: pipeline download, mini player, Save/Discard. |
+| `BrowsePreviewView.swift` | The preview modal: pipeline download, mini player with prev/play-pause/next over the queue it was opened with (auto-advancing at the end of each track), Save/Discard. |
 | `*View.swift` | The five SwiftUI screens (Download, Browse, Library, Player, Settings — which embeds the Log). `PlayerView.swift` also holds the tap-to-seek scrubber and the `MiniPlayerBar` the other tabs inset above the tab bar. |
 | `FolderView.swift` | Folder detail (tap-to-play, reorder, subfolders, mixtape header/Edit Cover) and Inbox screens. |
 | `MixtapeViews.swift` | Mixtape banner rendering (non-destructive crop), the shared folder-row label, and the Edit Cover sheet (PhotosPicker + drag/pinch + font picker). |

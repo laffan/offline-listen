@@ -759,6 +759,11 @@ struct ENGenreView: View {
     @EnvironmentObject private var store: EveryNoiseStore
     @EnvironmentObject private var player: ENPreviewPlayer
     @EnvironmentObject private var playback: PlaybackManager
+    /// Opening a genre is what feeds the dataset harvest (opt-in, one request,
+    /// heavily throttled — see `ENUpdateStore`). Both of these are app-level
+    /// environment objects, so the push inherits them.
+    @EnvironmentObject private var updates: ENUpdateStore
+    @EnvironmentObject private var spotifySettings: SpotifySettingsStore
     /// The artist map ignores the bottom safe area — the mini player's height
     /// rides in as extra content inset, same as the genre map.
     @Environment(\.miniPlayerHeight) private var miniPlayerHeight
@@ -829,6 +834,13 @@ struct ENGenreView: View {
                 select(target)
                 centerRequest = NoiseMapCenter(id: target.id, token: UUID())
             }
+            // Ask the live catalogue who it files under this label now, and
+            // record whoever the frozen shard is missing. Declines itself
+            // when the feature is off, when this genre was harvested
+            // recently, or when Spotify is anywhere near a rate limit.
+            updates.genreOpened(genre, localArtists: loaded,
+                                genreIndex: store.genres,
+                                client: spotifySettings.client)
         }
         .onDisappear {
             // Covered or popped, this genre's previews stop (the discography

@@ -10,11 +10,21 @@ struct SettingsView: View {
     @EnvironmentObject private var spotify: SpotifySettingsStore
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var localSync: LocalSyncStore
+    @EnvironmentObject private var everyNoiseUpdates: ENUpdateStore
     @EnvironmentObject private var log: LogStore
 
     @State private var keyInput = ""
     @State private var verifyState: VerifyState = .idle
     @State private var showFolderPicker = false
+    /// Drives the share sheet that hands the collected dataset updates off
+    /// the device, and the confirmation before throwing them away.
+    @State private var exportingUpdates = false
+    @State private var confirmingUpdateClear = false
+
+    /// The Every Noise harvest's opt-in. Read straight from `UserDefaults` by
+    /// `ENUpdateStore` too, so flipping it here takes effect on the next genre
+    /// you open.
+    @AppStorage(ENUpdateSettings.enabledKey) private var everyNoiseUpdatesEnabled = false
 
     @State private var spotifyIDInput = ""
     @State private var spotifySecretInput = ""
@@ -42,6 +52,7 @@ struct SettingsView: View {
             Form {
                 aiSection
                 spotifySection
+                everyNoiseDataSection
                 localSyncSection
                 blogAgentSection
                 logSection
@@ -53,9 +64,90 @@ struct SettingsView: View {
                     localSync.addRoot(url)
                 }
             }
+            .sheet(isPresented: $exportingUpdates) {
+                if let url = everyNoiseUpdates.exportURL {
+                    ActivityView(items: [url])
+                }
+            }
+            .confirmationDialog("Discard the collected updates?",
+                                isPresented: $confirmingUpdateClear,
+                                titleVisibility: .visible) {
+                Button("Discard", role: .destructive) { everyNoiseUpdates.clear() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Everything found so far is thrown away, and the genres already harvested become eligible again. Export first if you haven't merged it into the dataset yet.")
+            }
             .task(id: spotify.clientID) { await refreshSpotifyCooldown() }
-            .onAppear { Task { await refreshSpotifyCooldown() } }
+            .onAppear {
+                Task { await refreshSpotifyCooldown() }
+                everyNoiseUpdates.refreshCounts()
+            }
         }
+    }
+
+    // MARK: - Every Noise data
+
+    /// The dataset-freshness section: the opt-in, what browsing has turned up
+    /// so far, and the export that carries it off the device for
+    /// `tools/everynoise/merge_updates.py` to fold into the bundled map.
+    private var everyNoiseDataSection: some View {
+        Section {
+            Toggle("Collect updates as I browse", isOn: $everyNoiseUpdatesEnabled)
+                .disabled(!spotify.isConfigured)
+
+            if everyNoiseUpdates.hasRecords || everyNoiseUpdates.harvestedGenreCount > 0 {
+                HStack(spacing: 8) {
+                    if everyNoiseUpdates.isHarvesting {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "chart.bar.doc.horizontal")
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(collectedSummary)
+                        .foregroundStyle(.secondary)
+                }
+                .font(.callout)
+            }
+
+            if let error = everyNoiseUpdates.lastError {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+            }
+
+            Button {
+                exportingUpdates = true
+            } label: {
+                Label("Download New Data", systemImage: "square.and.arrow.down")
+            }
+            .disabled(everyNoiseUpdates.exportURL == nil)
+
+            if everyNoiseUpdates.hasRecords {
+                Button(role: .destructive) {
+                    confirmingUpdateClear = true
+                } label: {
+                    Label("Discard Collected Updates", systemImage: "trash")
+                }
+            }
+        } header: {
+            Text("Every Noise Data")
+        } footer: {
+            Text(spotify.isConfigured
+                 ? "The bundled genre map is a one-time scrape of a site that froze in late 2024. With this on, opening a genre in the Every Noise browser also asks Spotify — once per genre, at most a few times a minute, never while Spotify is rate limiting — which artists it files under that label now, and records the ones the map is missing. Nothing changes in the app; the findings collect in a file you export here and merge into the dataset with tools/everynoise/merge_updates.py before a rebuild."
+                 : "Needs Spotify credentials (above). With them saved, browsing the Every Noise map can also collect the artists and genres Spotify has added since the map was scraped, for merging into the dataset at build time.")
+        }
+    }
+
+    /// "412 new artists across 37 genres · 8 genres missing from the map".
+    private var collectedSummary: String {
+        let artists = everyNoiseUpdates.recordCount
+        let genres = everyNoiseUpdates.harvestedGenreCount
+        var line = "\(artists) new artist\(artists == 1 ? "" : "s") across \(genres) genre\(genres == 1 ? "" : "s")"
+        let missing = everyNoiseUpdates.newGenreCount
+        if missing > 0 {
+            line += " · \(missing) genre\(missing == 1 ? "" : "s") missing from the map"
+        }
+        return line
     }
 
     /// Re-reads the limiter on appearance (and when credentials change), so

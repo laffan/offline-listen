@@ -932,6 +932,51 @@ final class DownloadManager: ObservableObject {
         return library.createFolder(named: wanted) ?? Folder(name: wanted)
     }
 
+    /// The album equivalent, matched on **name *and* parent**: two artists can
+    /// both have a "Greatest Hits", and each belongs under its own artist
+    /// folder — the plain name lookup above would hand the second one the
+    /// first one's folder.
+    private func albumFolder(named name: String, fallback: String, parent parentID: UUID?) -> Folder {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let wanted = trimmed.isEmpty ? fallback : trimmed
+        if let existing = library.folders.first(where: {
+            !$0.isArchived && $0.parentID == parentID
+                && $0.name.localizedCaseInsensitiveCompare(wanted) == .orderedSame
+        }) {
+            return existing
+        }
+        return library.createFolder(named: wanted, parent: parentID)
+            ?? Folder(name: wanted, parentID: parentID)
+    }
+
+    /// Queues a whole release: one ordinary download per matched track, all
+    /// filed into a folder named after the album, with the release's cover
+    /// attached to that folder so it shows as a thumbnail in the Library's
+    /// folder list. A Browse source nests the album inside its own source
+    /// folder (everything from one source still stays together); the Every
+    /// Noise browser, which files single picks unfiled, gets a top-level album
+    /// folder. Re-downloading the same album reuses its folder rather than
+    /// spawning a second one.
+    @discardableResult
+    func enqueueAlbum(named albumName: String,
+                      tracks: [(url: String, artworkURL: String?)],
+                      mode: DownloadMode,
+                      insideFolderNamed parentName: String? = nil,
+                      artworkURL: String? = nil) -> Folder? {
+        guard !tracks.isEmpty else { return nil }
+        let parentTrimmed = (parentName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let parent = parentTrimmed.isEmpty ? nil : folder(named: parentTrimmed, fallback: "Browse")
+        let album = albumFolder(named: albumName, fallback: "Album", parent: parent?.id)
+        ArtworkFetcher.attach(artworkURL, toFolder: album.id, library: library)
+        for track in tracks {
+            enqueue(urlString: track.url, mode: mode, folderID: album.id,
+                    artworkURL: track.artworkURL ?? artworkURL)
+        }
+        appLog("Queued \(tracks.count) track(s) from \"\(album.name)\" into a library folder.",
+               category: "Queue")
+        return album
+    }
+
     /// Enqueues a Browse download filed into a folder named after its source, so
     /// everything pulled from one Browse source lands together (e.g. a
     /// "Brian Eno" folder for a Discography source). Blank names fall back to a
@@ -948,6 +993,27 @@ final class DownloadManager: ObservableObject {
 /// failed fetch just leaves the placeholder — never an error the user sees.
 enum ArtworkFetcher {
     static func attach(_ urlString: String?, to trackID: UUID, library: LibraryStore) {
+        fetch(urlString, named: "\(trackID.uuidString).jpg", into: AppPaths.artwork) { fileName in
+            // Re-fetches overwrite the same file name; drop the decoded copy
+            // so the new cover shows instead of the memoized old one.
+            TrackArtwork.invalidate(fileName: fileName)
+            await MainActor.run { library.setArtwork(for: trackID, fileName: fileName) }
+        }
+    }
+
+    /// The same best-effort fetch for a **folder's** cover — an album
+    /// downloaded whole from a discography wears its release art on its
+    /// Library row. Kept separate from the track path only by where the file
+    /// lands and which store field it records.
+    static func attach(_ urlString: String?, toFolder folderID: UUID, library: LibraryStore) {
+        fetch(urlString, named: "\(folderID.uuidString).jpg", into: AppPaths.folderArtwork) { fileName in
+            FolderArtwork.invalidate(fileName: fileName)
+            await MainActor.run { library.setFolderArtwork(for: folderID, fileName: fileName) }
+        }
+    }
+
+    private static func fetch(_ urlString: String?, named fileName: String, into directory: URL,
+                              record: @escaping (String) async -> Void) {
         guard let urlString, let url = URL(string: urlString) else { return }
         Task {
             do {
@@ -959,15 +1025,8 @@ enum ArtworkFetcher {
                     throw SpotifyError.http(http.statusCode, "artwork fetch")
                 }
                 guard !data.isEmpty else { return }
-                let fileName = "\(trackID.uuidString).jpg"
-                try data.write(to: AppPaths.artwork.appendingPathComponent(fileName),
-                               options: .atomic)
-                // Re-fetches overwrite the same file name; drop the decoded
-                // copy so the new cover shows instead of the memoized old one.
-                TrackArtwork.invalidate(fileName: fileName)
-                await MainActor.run {
-                    library.setArtwork(for: trackID, fileName: fileName)
-                }
+                try data.write(to: directory.appendingPathComponent(fileName), options: .atomic)
+                await record(fileName)
                 appLog("Album art saved (\(data.count / 1024) KB).", level: .debug, category: "Queue")
             } catch {
                 if isCancellation(error) { return }

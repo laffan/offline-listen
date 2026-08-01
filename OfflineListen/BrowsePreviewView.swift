@@ -9,10 +9,26 @@ import UIKit
 /// player at the same position and keeps going) or **Discard** (delete it and
 /// hide the item). Dismissing without deciding deletes the temp file and
 /// leaves the item untouched.
+///
+/// It previews a **queue**, not a single track: the list the tapped item came
+/// from is handed over with it, so the transport's previous/next buttons walk
+/// that list and a track that plays to its end rolls straight into the next
+/// one. A caller with nothing to walk (a one-off search result) passes no
+/// queue and the side buttons are simply disabled.
 struct BrowsePreviewView: View {
-    let item: BrowseItem
+    /// The list this preview walks: the caller's queue when it contains the
+    /// tapped item, otherwise that item on its own. Resolved once, at init,
+    /// so the starting index is right on the very first load.
+    let items: [BrowseItem]
     /// Audio (the default) or video — the Browse toggle / Download tab mode.
-    var mode: DownloadMode = .audio
+    let mode: DownloadMode
+
+    init(item: BrowseItem, mode: DownloadMode = .audio, queue: [BrowseItem] = []) {
+        let walkable = queue.contains(where: { $0.id == item.id }) ? queue : [item]
+        self.items = walkable
+        self.mode = mode
+        _index = State(initialValue: walkable.firstIndex(where: { $0.id == item.id }) ?? 0)
+    }
 
     @EnvironmentObject private var browse: BrowseStore
     @EnvironmentObject private var downloads: DownloadManager
@@ -22,6 +38,9 @@ struct BrowsePreviewView: View {
     @Environment(\.dismiss) private var dismiss
 
     @StateObject private var model = BrowsePreviewModel()
+    /// Where in `items` the preview currently is. Changing it *is* the
+    /// "load the next track" action — the `.task(id:)` below follows it.
+    @State private var index: Int
     /// The artist just added via the selection menu's "Browse Artist" (drives
     /// the confirmation alert).
     @State private var addedArtist: String?
@@ -38,24 +57,18 @@ struct BrowsePreviewView: View {
                 set: { qualityRaw = $0.rawValue })
     }
 
+    /// What's loaded right now. `items` is never empty, so this always resolves.
+    private var current: BrowseItem {
+        items.indices.contains(index) ? items[index] : items[0]
+    }
+
     var body: some View {
         NavigationStack {
-            VStack(spacing: 24) {
-                VStack(spacing: 6) {
-                    SelectableText(text: item.title,
-                                   font: .preferredFont(forTextStyle: .headline),
-                                   color: .label,
-                                   maxLines: 3,
-                                   onBrowseArtist: browseArtist)
-                    if !item.detail.isEmpty {
-                        SelectableText(text: item.detail,
-                                       font: .preferredFont(forTextStyle: .caption1),
-                                       color: .secondaryLabel,
-                                       maxLines: 3,
-                                       onBrowseArtist: browseArtist)
-                    }
-                }
-                .padding(.horizontal)
+            // Audio previews are deliberately tighter than video ones: with no
+            // picture to make room for, the spacing that framed a 16:9 pane
+            // just pushed the transport down the sheet.
+            VStack(spacing: mode == .video ? 18 : 12) {
+                titleBlock
 
                 // Video previews get a quality picker; changing it restarts
                 // the download at the chosen resolution (bounded by what the
@@ -70,7 +83,7 @@ struct BrowsePreviewView: View {
                     .padding(.horizontal)
                     .onChange(of: qualityRaw) { _ in
                         Task {
-                            await model.restart(item: item, mode: mode, quality: quality,
+                            await model.restart(item: current, mode: mode, quality: quality,
                                                 downloads: downloads, mainPlayback: playback)
                         }
                     }
@@ -79,11 +92,16 @@ struct BrowsePreviewView: View {
                 phaseContent
                     .frame(maxHeight: .infinity)
 
+                // Outside `phaseContent` on purpose: the transport stays put
+                // while the next track resolves, so skipping past a slow one
+                // doesn't mean waiting for it to arrive first.
+                transport
+
                 decisionButtons
                     .padding(.horizontal)
                     .padding(.bottom, 8)
             }
-            .padding(.top, 24)
+            .padding(.top, mode == .video ? 18 : 10)
             .navigationTitle("Preview")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -95,9 +113,18 @@ struct BrowsePreviewView: View {
         // A video preview needs the room for its picture; audio keeps the
         // half-height option.
         .presentationDetents(mode == .video ? [.large] : [.medium, .large])
-        .task {
-            await model.start(item: item, mode: mode, quality: quality,
-                              downloads: downloads, mainPlayback: playback)
+        .onAppear {
+            model.onFinished = { autoAdvance() }
+        }
+        // Keyed on the position, so moving through the queue *is* the load:
+        // the previous track's task is cancelled and the new one starts,
+        // structurally, the same way the first one did. Marking previewed
+        // here covers the auto-advance too, so a list walked hands-off ends
+        // up with its "you've heard this one" breadcrumbs filled in.
+        .task(id: index) {
+            browse.markPreviewed(current)
+            await model.load(item: current, mode: mode, quality: quality,
+                             downloads: downloads, mainPlayback: playback)
         }
         .onDisappear {
             model.teardown()
@@ -109,6 +136,86 @@ struct BrowsePreviewView: View {
         } message: {
             Text("Artist source \"\(addedArtist ?? "")\" was added and is refreshing in the background.")
         }
+    }
+
+    private var titleBlock: some View {
+        VStack(spacing: 4) {
+            SelectableText(text: current.title,
+                           font: .preferredFont(forTextStyle: .headline),
+                           color: .label,
+                           maxLines: 2,
+                           onBrowseArtist: browseArtist)
+            if !current.detail.isEmpty {
+                SelectableText(text: current.detail,
+                               font: .preferredFont(forTextStyle: .caption1),
+                               color: .secondaryLabel,
+                               maxLines: 2,
+                               onBrowseArtist: browseArtist)
+            }
+        }
+        .padding(.horizontal)
+    }
+
+    /// Previous / play-pause / next, with the queue position beneath. The side
+    /// buttons step through the list the item was tapped in; a single-item
+    /// preview simply has them disabled.
+    private var transport: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 30) {
+                Button {
+                    go(to: index - 1)
+                } label: {
+                    Image(systemName: "backward.end.fill")
+                        .font(.title2)
+                }
+                .disabled(!items.indices.contains(index - 1))
+                .accessibilityLabel("Previous track")
+
+                Button {
+                    model.togglePlayPause()
+                } label: {
+                    Image(systemName: model.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                        .font(.system(size: 52))
+                }
+                .disabled(!model.phase.isReady)
+                .accessibilityLabel(model.isPlaying ? "Pause" : "Play")
+
+                Button {
+                    go(to: index + 1)
+                } label: {
+                    Image(systemName: "forward.end.fill")
+                        .font(.title2)
+                }
+                .disabled(!items.indices.contains(index + 1))
+                .accessibilityLabel("Next track")
+            }
+            // Borderless so the three buttons stay independently tappable and
+            // dim themselves at the ends of the queue.
+            .buttonStyle(.borderless)
+
+            if items.count > 1 {
+                Text("\(index + 1) of \(items.count)")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .monospacedDigit()
+            }
+        }
+    }
+
+    /// Moves to a position in the queue — the transport's own buttons and the
+    /// auto-advance both come through here. Setting `index` is all it takes;
+    /// the `.task(id:)` above does the loading.
+    private func go(to newIndex: Int) {
+        guard items.indices.contains(newIndex) else { return }
+        index = newIndex
+    }
+
+    /// A track played through to its end: roll into the next one, so a list
+    /// can be auditioned without touching the phone. At the end of the queue
+    /// there's nothing to advance to and the player just rewinds, as before.
+    private func autoAdvance() {
+        guard items.indices.contains(index + 1) else { return }
+        go(to: index + 1)
     }
 
     /// The selection menu's "Browse Artist": adds an Artist source for the
@@ -168,8 +275,8 @@ struct BrowsePreviewView: View {
                     .padding(.horizontal, 32)
                 Button("Try Again") {
                     Task {
-                        await model.start(item: item, mode: mode, quality: quality,
-                                          downloads: downloads, mainPlayback: playback)
+                        await model.load(item: current, mode: mode, quality: quality,
+                                         downloads: downloads, mainPlayback: playback)
                     }
                 }
                 .buttonStyle(.bordered)
@@ -177,12 +284,15 @@ struct BrowsePreviewView: View {
         }
     }
 
+    /// The picture (video only) and the scrubber. The play/pause and the
+    /// queue's next/previous live in `transport`, below and outside the phase
+    /// switch, so they don't come and go as tracks load.
     private var miniPlayer: some View {
-        VStack(spacing: 16) {
-            // Video previews get a picture above the transport controls; the
-            // same AVPlayer drives both, so scrub/play-pause stay in sync.
-            // The height is fixed to a 16:9 slice of the pane's full width —
-            // a flexible aspect-ratio frame would let the surrounding VStack
+        VStack(spacing: model.isVideo ? 14 : 8) {
+            // Video previews get a picture above the controls; the same
+            // AVPlayer drives both, so scrub/play-pause stay in sync. The
+            // height is fixed to a 16:9 slice of the pane's full width — a
+            // flexible aspect-ratio frame would let the surrounding VStack
             // squeeze the picture down to a sliver when vertical space is
             // tight (the "minuscule rectangle" bug).
             if model.isVideo, let player = model.player {
@@ -191,32 +301,25 @@ struct BrowsePreviewView: View {
                     .frame(height: UIScreen.main.bounds.width * 9 / 16)
             }
 
-            Slider(
-                value: Binding(
-                    get: { model.currentTime },
-                    set: { model.scrub(to: $0) }
-                ),
-                in: 0...max(model.duration, 1),
-                onEditingChanged: { editing in model.isScrubbing = editing }
-            )
-            .padding(.horizontal, 32)
+            VStack(spacing: 0) {
+                Slider(
+                    value: Binding(
+                        get: { model.currentTime },
+                        set: { model.scrub(to: $0) }
+                    ),
+                    in: 0...max(model.duration, 1),
+                    onEditingChanged: { editing in model.isScrubbing = editing }
+                )
 
-            HStack {
-                Text(model.currentTime.asPlaybackTime)
-                Spacer()
-                Text(model.duration.asPlaybackTime)
+                HStack {
+                    Text(model.currentTime.asPlaybackTime)
+                    Spacer()
+                    Text(model.duration.asPlaybackTime)
+                }
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
             }
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 32)
-
-            Button {
-                model.togglePlayPause()
-            } label: {
-                Image(systemName: model.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                    .font(.system(size: 64))
-            }
-            .accessibilityLabel(model.isPlaying ? "Pause" : "Play")
+            .padding(.horizontal, 28)
         }
     }
 
@@ -224,7 +327,7 @@ struct BrowsePreviewView: View {
         HStack(spacing: 12) {
             Button(role: .destructive) {
                 model.markDiscardedAndCleanUp()
-                browse.markDiscarded(item)
+                browse.markDiscarded(current)
                 dismiss()
             } label: {
                 Label("Discard", systemImage: "xmark")
@@ -251,10 +354,11 @@ struct BrowsePreviewView: View {
     /// main player at the same position (now in the background, like any
     /// library track), so browsing continues with the music still going.
     private func save() {
+        let saved = current
         let handoffTime = model.currentTime
         let wasPlaying = model.isPlaying
-        guard let track = model.saveToLibrary(as: item, library: library) else { return }
-        browse.markSaved(item)
+        guard let track = model.saveToLibrary(as: saved, library: library) else { return }
+        browse.markSaved(saved)
         if wasPlaying {
             // The handoff doesn't count as listening — the saved track still
             // lands in the Inbox like any fresh download.
@@ -365,6 +469,9 @@ final class BrowsePreviewModel: ObservableObject {
     @Published private(set) var isVideo = false
     /// Set by the slider while dragging so observer ticks don't fight the thumb.
     var isScrubbing = false
+    /// Called when the track plays through to its end — the modal's cue to
+    /// advance to the next item in the queue it was opened with.
+    var onFinished: (() -> Void)?
 
     private var media: ExtractedMedia?
     /// Exposed (read-only) so the modal's video surface can render it.
@@ -418,24 +525,45 @@ final class BrowsePreviewModel: ObservableObject {
         await task.value
     }
 
-    /// Re-runs the preview at a different quality: cancels whatever is in
-    /// flight, discards the current file/player, and starts over. Bumping the
-    /// generation first means the cancelled task can't clear the new task's
-    /// handle or resurrect its file.
+    /// Switches the mini player to a different item — the queue's next/previous
+    /// and the end-of-track auto-advance both land here. Whatever is in flight
+    /// is cancelled and its file dropped before the new preview starts.
+    func load(item: BrowseItem, mode: DownloadMode, quality: VideoQuality,
+              downloads: DownloadManager, mainPlayback: PlaybackManager) async {
+        reset()
+        await start(item: item, mode: mode, quality: quality,
+                    downloads: downloads, mainPlayback: mainPlayback)
+    }
+
+    /// Re-runs the preview at a different quality: the same reset-and-start,
+    /// noted in the Log because nothing on screen says why it restarted.
     func restart(item: BrowseItem, mode: DownloadMode, quality: VideoQuality,
                  downloads: DownloadManager, mainPlayback: PlaybackManager) async {
+        appLog("Preview restarting at \(quality.displayName) quality…", category: "Browse")
+        await load(item: item, mode: mode, quality: quality,
+                   downloads: downloads, mainPlayback: mainPlayback)
+    }
+
+    /// Back to square one for a fresh item. Bumping the generation first means
+    /// the cancelled task can't clear the new task's handle or resurrect its
+    /// file. A file already moved into the library is *released*, never
+    /// deleted — it stopped being the preview's to clean up the moment it was
+    /// saved.
+    private func reset() {
         generation += 1
         downloadTask?.cancel()
         downloadTask = nil
         stopPlayer()
-        deleteTempFile()
+        if savedToLibrary {
+            media = nil
+            savedToLibrary = false
+        } else {
+            deleteTempFile()
+        }
         isVideo = false
         currentTime = 0
         duration = 0
         phase = .waiting
-        appLog("Preview restarting at \(quality.displayName) quality…", category: "Browse")
-        await start(item: item, mode: mode, quality: quality,
-                    downloads: downloads, mainPlayback: mainPlayback)
     }
 
     private func attachPlayer(to media: ExtractedMedia, mainPlayback: PlaybackManager) {
@@ -470,8 +598,12 @@ final class BrowsePreviewModel: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.isPlaying = false
+                // Rewind first, then tell the modal: at the end of a queue
+                // (or with no queue at all) nothing advances and this is the
+                // whole behaviour, exactly as it was before.
                 self.currentTime = 0
                 self.player?.seek(to: .zero)
+                self.onFinished?()
             }
         }
 
@@ -553,6 +685,9 @@ final class BrowsePreviewModel: ObservableObject {
         generation += 1
         downloadTask?.cancel()
         downloadTask = nil
+        // The callback holds the (dismissed) modal; dropping it here keeps a
+        // finished track from advancing a queue nobody is watching.
+        onFinished = nil
         stopPlayer()
         if !savedToLibrary {
             deleteTempFile()

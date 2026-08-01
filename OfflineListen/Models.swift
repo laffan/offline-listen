@@ -62,6 +62,17 @@ enum AppPaths {
         return url
     }
 
+    /// Cover art for folders, one file per folder (`<folder-id>.jpg`) — an
+    /// album filed whole from a discography keeps its release cover here, and
+    /// the Library's folder rows draw it as a thumbnail. App-local display
+    /// metadata like `artwork`: never synced or exported, deleted with the
+    /// folder.
+    static var folderArtwork: URL {
+        let url = documents.appendingPathComponent("FolderArtwork", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
     /// Where cover images for *unsynced* mixtape folders live (a synced
     /// mixtape's cover lives in its directory's `.mixtapedata` instead).
     static var mixtapeCovers: URL {
@@ -382,10 +393,18 @@ struct Folder: Identifiable, Codable, Hashable {
     var isMixtape: Bool
     /// The mixtape's banner style (crop + font). Meaningful while `isMixtape`.
     var mixtape: MixtapeStyle
+    /// Cover art for the folder, in `AppPaths.folderArtwork`. An album
+    /// downloaded whole from a discography carries the release's cover here,
+    /// and the Library's folder rows draw it as a thumbnail in place of the
+    /// folder icon. App-local display metadata, exactly like a track's
+    /// `artworkFileName` — never synced or exported, and quite separate from a
+    /// mixtape's hand-framed `coverURL`.
+    var artworkFileName: String?
 
     init(id: UUID = UUID(), name: String, dateCreated: Date = Date(), isArchived: Bool = false,
          parentID: UUID? = nil, isSynced: Bool = false, syncRootID: UUID? = nil, syncedPath: String? = nil,
-         isMixtape: Bool = false, mixtape: MixtapeStyle = MixtapeStyle()) {
+         isMixtape: Bool = false, mixtape: MixtapeStyle = MixtapeStyle(),
+         artworkFileName: String? = nil) {
         self.id = id
         self.name = name
         self.dateCreated = dateCreated
@@ -396,10 +415,12 @@ struct Folder: Identifiable, Codable, Hashable {
         self.syncedPath = syncedPath
         self.isMixtape = isMixtape
         self.mixtape = mixtape
+        self.artworkFileName = artworkFileName
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, dateCreated, isArchived, parentID, isSynced, syncRootID, syncedPath, isMixtape, mixtape
+        case artworkFileName
     }
 
     // Custom decode so folders.json saved before newer fields existed still loads.
@@ -415,6 +436,7 @@ struct Folder: Identifiable, Codable, Hashable {
         syncedPath = try c.decodeIfPresent(String.self, forKey: .syncedPath)
         isMixtape = try c.decodeIfPresent(Bool.self, forKey: .isMixtape) ?? false
         mixtape = try c.decodeIfPresent(MixtapeStyle.self, forKey: .mixtape) ?? MixtapeStyle()
+        artworkFileName = try c.decodeIfPresent(String.self, forKey: .artworkFileName)
     }
 
     /// The synced folder's directory inside its root's app-local sync store
@@ -431,6 +453,11 @@ struct Folder: Identifiable, Codable, Hashable {
     var coverURL: URL? {
         guard isMixtape else { return nil }
         return AppPaths.mixtapeCovers.appendingPathComponent("\(id.uuidString).jpg")
+    }
+
+    /// The downloaded cover art file, when the folder has one.
+    var artworkFileURL: URL? {
+        artworkFileName.map { AppPaths.folderArtwork.appendingPathComponent($0) }
     }
 }
 

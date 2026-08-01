@@ -560,6 +560,14 @@ final class LibraryStore: ObservableObject {
             }
             folders.removeAll { $0.id == current.id }
         }
+        // Downloaded folder covers are app-local display metadata, so they go
+        // with the folders that carried them (the same rule a track's artwork
+        // follows).
+        for id in doomed {
+            let name = "\(id.uuidString).jpg"
+            try? FileManager.default.removeItem(at: AppPaths.folderArtwork.appendingPathComponent(name))
+            FolderArtwork.invalidate(fileName: name)
+        }
         saveFolders()
         var changed = false
         for index in tracks.indices {
@@ -1403,6 +1411,16 @@ final class LibraryStore: ObservableObject {
               tracks[index].artworkFileName != fileName else { return }
         tracks[index].artworkFileName = fileName
         save()
+    }
+
+    /// The folder equivalent: points a folder at a cover already written to
+    /// `AppPaths.folderArtwork`. An album downloaded whole from a discography
+    /// wears its release cover in the Library's folder list this way.
+    func setFolderArtwork(for id: UUID, fileName: String) {
+        guard let index = folders.firstIndex(where: { $0.id == id }),
+              folders[index].artworkFileName != fileName else { return }
+        folders[index].artworkFileName = fileName
+        saveFolders()
     }
 
     /// Records a podcast's playhead. No-ops for tiny changes to limit churn.

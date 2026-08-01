@@ -420,8 +420,11 @@ private struct SearchResultsView: View {
     @EnvironmentObject private var downloads: DownloadManager
     @Environment(\.dismiss) private var dismiss
 
-    /// The result being previewed (drives the nested preview modal).
+    /// The result being previewed (drives the nested preview modal), and the
+    /// whole result set as the modal's queue — so previewing the top hit can
+    /// run down the rest with next/previous or on its own.
     @State private var previewItem: BrowseItem?
+    @State private var previewQueue: [BrowseItem] = []
     /// Results already sent to the queue (their row shows a status instead).
     @State private var sent: Set<String> = []
 
@@ -433,7 +436,7 @@ private struct SearchResultsView: View {
                         SearchResultRow(result: result,
                                         sent: sent.contains(result.videoID),
                                         onDownload: { download(result) },
-                                        onPreview: { previewItem = browseItem(for: result) })
+                                        onPreview: { preview(result) })
                     }
                 } header: {
                     Text("Top \(search.results.count) result(s) · \(mode.displayName)")
@@ -449,13 +452,22 @@ private struct SearchResultsView: View {
             }
         }
         .sheet(item: $previewItem) { item in
-            BrowsePreviewView(item: item, mode: mode)
+            BrowsePreviewView(item: item, mode: mode, queue: previewQueue)
         }
     }
 
     private func download(_ result: YouTubeSearchResult) {
         downloads.enqueue(urlString: result.url, mode: mode)
         sent.insert(result.videoID)
+    }
+
+    /// Opens the preview on this result with the whole result list behind it.
+    /// The items are built once here so the tapped one *is* the queue's entry
+    /// (a fresh `BrowseItem` would carry a different id and lose its place).
+    private func preview(_ result: YouTubeSearchResult) {
+        let queue = search.results.map(browseItem(for:))
+        previewQueue = queue
+        previewItem = queue.first { $0.url == result.url } ?? browseItem(for: result)
     }
 
     /// Wraps a search result as a transient `BrowseItem` so the shared preview
