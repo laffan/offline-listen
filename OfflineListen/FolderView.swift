@@ -21,6 +21,8 @@ struct FolderDetailView: View {
     @State private var newFolderName = ""
     @State private var renamingFolder: Folder?
     @State private var renameText = ""
+    /// The subfolder a swipe-Delete is asking about (see `DeleteFolderConfirm`).
+    @State private var deletingFolder: Folder?
     @State private var editingCover = false
 
     private var folder: Folder? {
@@ -77,6 +79,7 @@ struct FolderDetailView: View {
             Button("Rename") { library.renameFolder(subfolder, to: renameText) }
             Button("Cancel", role: .cancel) {}
         }
+        .deleteFolderConfirm(for: $deletingFolder)
         .toolbar {
             ToolbarItemGroup(placement: .navigationBarTrailing) {
                 // Mixtapes can't contain folders, so no subfolder creation there.
@@ -113,6 +116,8 @@ struct FolderDetailView: View {
                         .listRowInsets(EdgeInsets())
                         .listRowSeparator(.hidden)
                 }
+            } else {
+                coverHeader
             }
             if !subfolders.isEmpty {
                 Section("Folders") {
@@ -146,6 +151,28 @@ struct FolderDetailView: View {
         .miniPlayerClearance()
     }
 
+    /// The album sleeve, when this folder has one to show: its downloaded
+    /// cover, or the artwork every track in it shares. Sits above everything
+    /// else, so a folder that *is* a record looks like one. A mixtape has its
+    /// own banner instead and never reaches here.
+    @ViewBuilder
+    private var coverHeader: some View {
+        if let folder, let cover = FolderCover.image(for: folder, tracks: tracks) {
+            Section {
+                Image(uiImage: cover)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: 220, maxHeight: 220)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .shadow(radius: 6, y: 3)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .listRowInsets(EdgeInsets())
+                    .listRowSeparator(.hidden)
+            }
+        }
+    }
+
     private func subfolderRow(_ subfolder: Folder) -> some View {
         NavigationLink(value: LibraryRoute.folder(subfolder.id)) {
             FolderRowLabel(folder: subfolder,
@@ -154,7 +181,7 @@ struct FolderDetailView: View {
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(role: .destructive) {
-                library.deleteFolder(subfolder)
+                deletingFolder = subfolder
             } label: {
                 Label("Delete", systemImage: "trash")
             }

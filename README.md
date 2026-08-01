@@ -178,11 +178,22 @@ Five screens (tabs):
    download has fully landed — a failed conversion costs nothing (the
    attempt shows in the Download tab like any job). Tracks with no source
    link (local-sync imports) don't offer it. Swipe
-   a folder row for its slide menu: **Delete** (the folder only — its tracks
-   return to the library),
-   **Rename**, and **Archive** (move the whole folder, tracks and all, into the
-   Archive). To **reorder** the tracks inside a folder, use the **Reorder**
-   button in the folder's own screen.
+   a folder row for its slide menu: **Delete**, **Rename**, and **Archive**
+   (move the whole folder, tracks and all, into the Archive).
+
+   **Delete asks what you mean.** A folder is a grouping, so deleting one used
+   to leave its tracks in the library — right for a folder you're just
+   unfiling, wrong for one that *is* an album, and there's no telling which
+   from the swipe. It now offers both, naming the count: **Delete Folder & 12
+   Tracks** (red — the files go for good, artwork and synced copies with them,
+   including anything in subfolders) or **Delete Folder Only** (the old
+   behaviour: the tracks return to the library list and subfolders move up a
+   level). An empty folder just asks once. **Archive** is untouched and stays
+   the reversible option.
+
+   To **reorder** the tracks inside a folder, use the **Reorder** button in
+   the folder's own screen — which also shows the folder's **cover** above the
+   list when it has one (see [Album art](#album-art)).
 
    **The "Synced" grouping.** With several sync folders mirrored in, the
    folders that mirror them can crowd out your own. Settings ▸ Local Sync ▸
@@ -355,9 +366,23 @@ every artwork fetch, so a miss logs and changes nothing.
 (**Download Album**, above) keeps the release's cover on the *folder*, in
 `Documents/FolderArtwork/<folder-id>.jpg` — drawn as the thumbnail on the left
 of its row in the Library's folder list, in place of the folder glyph (a
-synced folder keeps its sync badge, tucked into the corner of the cover). It's
-quite separate from a **mixtape**'s hand-framed banner, which is still its own
-thing.
+synced folder keeps its sync badge, tucked into the corner of the cover), and
+as a **sleeve above the track list** inside the folder itself. It's quite
+separate from a **mixtape**'s hand-framed banner, which is still its own thing
+(and takes precedence — a mixtape shows its banner instead).
+
+A folder that never went through **Download Album** can earn the same sleeve:
+when *every* track in it carries the same cover — a Spotify album pasted into
+the Download tab, or a folder you assembled by hand out of one record — that
+image is shown. It has to be decided on **content**, not file names, because
+each track's cover is saved under its own track id, so an album's twelve
+identical covers are twelve identical *files*. File sizes are compared first,
+straight from the directory entries (two different covers essentially never
+weigh the same, so a mixed folder is ruled out without opening anything), and
+only if they all match are the bytes read. The verdict is memoized against the
+folder's exact set of artwork files, so opening a folder pays for it once
+rather than once per redraw, and folders over 100 tracks skip the check
+outright — nothing that big is an album.
 
 Artwork is app-local display metadata: it's never synced or exported with the
 file, it's deleted with the track (or the folder), and tracks without it

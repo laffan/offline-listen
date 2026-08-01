@@ -1067,9 +1067,13 @@ enum ArtworkFetcher {
     static func attach(_ urlString: String?, to trackID: UUID, library: LibraryStore) {
         fetch(urlString, named: "\(trackID.uuidString).jpg", into: AppPaths.artwork) { fileName in
             // Re-fetches overwrite the same file name; drop the decoded copy
-            // so the new cover shows instead of the memoized old one.
+            // so the new cover shows instead of the memoized old one — and the
+            // folder-cover verdict with it, since that compares these files.
             TrackArtwork.invalidate(fileName: fileName)
-            await MainActor.run { library.setArtwork(for: trackID, fileName: fileName) }
+            await MainActor.run {
+                FolderCover.invalidate()
+                library.setArtwork(for: trackID, fileName: fileName)
+            }
         }
     }
 

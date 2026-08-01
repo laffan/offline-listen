@@ -128,9 +128,62 @@ struct BreakChaptersConfirm: ViewModifier {
     }
 }
 
+/// Shared confirmation for deleting a folder. A folder has always been just a
+/// grouping — deleting one left its tracks in the library — but a folder that
+/// *is* an album is usually meant to go with its songs, and quietly picking
+/// either reading is wrong half the time. So it asks, naming the count, and
+/// the destructive option is never the one you get by accident.
+struct DeleteFolderConfirm: ViewModifier {
+    @EnvironmentObject private var library: LibraryStore
+    @Binding var folder: Folder?
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog(
+            "Delete Folder",
+            isPresented: isPresented,
+            titleVisibility: .visible,
+            presenting: folder
+        ) { folder in
+            let count = library.containedTrackCount(of: folder.id)
+            if count > 0 {
+                // Only this one is red: it's the one that loses files.
+                Button("Delete Folder & \(count) Track\(count == 1 ? "" : "s")", role: .destructive) {
+                    library.deleteFolder(folder, deletingTracks: true)
+                }
+                Button("Delete Folder Only") {
+                    library.deleteFolder(folder)
+                }
+            } else {
+                Button("Delete Folder", role: .destructive) {
+                    library.deleteFolder(folder)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { folder in
+            let count = library.containedTrackCount(of: folder.id)
+            if count == 0 {
+                Text("“\(folder.name)” is empty.")
+            } else {
+                Text("“\(folder.name)” holds \(count) track\(count == 1 ? "" : "s"). Deleting the folder on its own leaves them in your library; deleting them too removes the files for good.")
+            }
+        }
+    }
+
+    private var isPresented: Binding<Bool> {
+        Binding(
+            get: { folder != nil },
+            set: { if !$0 { folder = nil } }
+        )
+    }
+}
+
 extension View {
     func breakChaptersConfirm(for track: Binding<Track?>) -> some View {
         modifier(BreakChaptersConfirm(track: track))
+    }
+
+    func deleteFolderConfirm(for folder: Binding<Folder?>) -> some View {
+        modifier(DeleteFolderConfirm(folder: folder))
     }
 }
 
@@ -165,6 +218,8 @@ struct LibraryView: View {
     @State private var newFolderName = ""
     @State private var renamingFolder: Folder?
     @State private var renameText = ""
+    /// The folder a swipe-Delete is asking about (see `DeleteFolderConfirm`).
+    @State private var deletingFolder: Folder?
     @State private var editingTrack: Track?
     @State private var chapterContext: ChapterContext?
     @State private var splittingTrack: Track?
@@ -282,6 +337,7 @@ struct LibraryView: View {
             }
             .editMetadataSheet(for: $editingTrack)
             .breakChaptersConfirm(for: $splittingTrack)
+            .deleteFolderConfirm(for: $deletingFolder)
         }
     }
 
@@ -549,7 +605,7 @@ struct LibraryView: View {
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(role: .destructive) {
-                library.deleteFolder(folder)
+                deletingFolder = folder
             } label: {
                 Label("Delete", systemImage: "trash")
             }
@@ -792,6 +848,8 @@ struct SyncedFoldersView: View {
 
     @State private var renamingFolder: Folder?
     @State private var renameText = ""
+    /// The folder a swipe-Delete is asking about (see `DeleteFolderConfirm`).
+    @State private var deletingFolder: Folder?
 
     private var folders: [Folder] { library.syncedRootFolders }
 
@@ -820,6 +878,7 @@ struct SyncedFoldersView: View {
             Button("Rename") { library.renameFolder(folder, to: renameText) }
             Button("Cancel", role: .cancel) {}
         }
+        .deleteFolderConfirm(for: $deletingFolder)
     }
 
     private var renameAlertPresented: Binding<Bool> {
@@ -842,7 +901,7 @@ struct SyncedFoldersView: View {
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(role: .destructive) {
-                library.deleteFolder(folder)
+                deletingFolder = folder
             } label: {
                 Label("Delete", systemImage: "trash")
             }
@@ -876,6 +935,8 @@ struct ArchivedTracksView: View {
     @Binding var share: SharePayload?
 
     @State private var chapterContext: ChapterContext?
+    /// The folder a swipe-Delete is asking about (see `DeleteFolderConfirm`).
+    @State private var deletingFolder: Folder?
 
     private var isEmpty: Bool {
         library.archivedTracks.isEmpty && library.archivedFolders.isEmpty
@@ -915,6 +976,7 @@ struct ArchivedTracksView: View {
         .sheet(item: $chapterContext) { context in
             ChapterListView(track: context.track, queue: context.queue, onPlay: onPlay)
         }
+        .deleteFolderConfirm(for: $deletingFolder)
     }
 
     private func archivedFolderRow(_ folder: Folder) -> some View {
@@ -923,7 +985,7 @@ struct ArchivedTracksView: View {
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(role: .destructive) {
-                library.deleteFolder(folder)
+                deletingFolder = folder
             } label: {
                 Label("Delete", systemImage: "trash")
             }

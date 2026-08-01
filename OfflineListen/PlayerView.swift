@@ -12,7 +12,10 @@ enum TrackArtwork {
     private static let cache = NSCache<NSString, UIImage>()
 
     static func image(for track: Track) -> UIImage? {
-        guard let name = track.artworkFileName else { return nil }
+        track.artworkFileName.flatMap(image(named:))
+    }
+
+    static func image(named name: String) -> UIImage? {
         if let hit = cache.object(forKey: name as NSString) { return hit }
         guard let image = UIImage(contentsOfFile: AppPaths.artwork.appendingPathComponent(name).path) else {
             return nil
@@ -47,6 +50,78 @@ enum FolderArtwork {
 
     static func invalidate(fileName: String) {
         cache.removeObject(forKey: fileName as NSString)
+    }
+}
+
+/// The cover a folder can show above its tracks: its own downloaded art when
+/// it has some (an album pulled down whole from a discography), or — for a
+/// folder assembled any other way — the art its tracks *share*, when every one
+/// of them carries the same image. A folder of unrelated songs has no cover
+/// and shows none.
+///
+/// "The same image" has to be decided on content, not on file names: each
+/// track's cover is saved under its own track id, so an album's twelve
+/// identical covers are twelve identical *files*. Sizes are compared first
+/// (two different covers essentially never match on the byte), and only then
+/// the bytes, so a mixed folder is ruled out after one comparison. The answer
+/// is memoized against the folder's exact set of artwork files, so opening a
+/// folder costs the read once rather than once per redraw.
+/// Main-actor because its memo is a plain dictionary — every caller is a
+/// SwiftUI body or the artwork fetch's main-actor tail, so it never needs to
+/// be more than that.
+@MainActor
+enum FolderCover {
+    /// signature → the artwork file every track shares (nil = they don't).
+    private static var cache: [String: String?] = [:]
+    private static let cacheLimit = 64
+
+    /// Forgets every decision. The memo is keyed by which artwork *files* a
+    /// folder's tracks point at, so it can't notice one of those files being
+    /// rewritten in place (Get Album Art over an existing cover) — that's
+    /// what this is for.
+    static func invalidate() {
+        cache.removeAll()
+    }
+
+    static func image(for folder: Folder, tracks: [Track]) -> UIImage? {
+        if let own = FolderArtwork.image(for: folder) { return own }
+        guard let shared = sharedArtworkName(of: folder.id, tracks: tracks) else { return nil }
+        return TrackArtwork.image(named: shared)
+    }
+
+    /// Nothing this big is an album, and reading every cover in a folder of
+    /// hundreds to find that out would be a real cost for a cosmetic answer.
+    private static let maxTracksToCompare = 100
+
+    private static func sharedArtworkName(of folderID: UUID, tracks: [Track]) -> String? {
+        let names = tracks.map { $0.artworkFileName ?? "" }
+        // One cover missing is enough to say the folder doesn't have one.
+        guard !names.isEmpty, names.count <= maxTracksToCompare, !names.contains("") else { return nil }
+        let signature = "\(folderID.uuidString)|\(names.joined(separator: "|"))"
+        if let cached = cache[signature] { return cached }
+        let resolved = resolveShared(names)
+        if cache.count >= cacheLimit { cache.removeAll() }
+        cache[signature] = resolved
+        return resolved
+    }
+
+    private static func resolveShared(_ names: [String]) -> String? {
+        let urls = names.map(AppPaths.artwork.appendingPathComponent)
+        guard let referenceURL = urls.first,
+              let referenceSize = try? referenceURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              referenceSize > 0 else { return nil }
+        // Sizes first, from the directory entries alone: two different covers
+        // essentially never weigh the same, so a mixed folder is ruled out
+        // without opening a single file.
+        for url in urls.dropFirst() {
+            guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+                  size == referenceSize else { return nil }
+        }
+        guard let reference = try? Data(contentsOf: referenceURL) else { return nil }
+        for url in urls.dropFirst() where url != referenceURL {
+            guard let data = try? Data(contentsOf: url), data == reference else { return nil }
+        }
+        return names[0]
     }
 }
 

@@ -516,13 +516,37 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    /// Removes the folder only; its tracks keep their files and return to the
-    /// main library list, and any subfolders move up to the deleted folder's
-    /// parent. A synced folder additionally moves its files back to Documents
-    /// (recursively) before its directory is removed — deleting a folder never
-    /// deletes tracks.
-    func deleteFolder(_ folder: Folder) {
+    /// Every track filed at or under `folderID`, archived ones included —
+    /// what "delete the folder's contents too" would take with it, and the
+    /// figure the delete confirmation quotes.
+    func containedTrackCount(of folderID: UUID) -> Int {
+        let ids = Set([folderID] + descendantFolderIDs(of: folderID))
+        return tracks.filter { $0.folderID.map(ids.contains) ?? false }.count
+    }
+
+    /// Removes the folder. By default its tracks keep their files and return
+    /// to the main library list, and any subfolders move up to the deleted
+    /// folder's parent; a synced folder additionally moves its files back to
+    /// Documents (recursively) before its directory is removed.
+    ///
+    /// `deletingTracks` is the other reading of "delete this folder", and the
+    /// one an album wants: every track at or under it goes too — file,
+    /// artwork, synced copy and all — and the subfolders go with them rather
+    /// than being promoted into the library empty. Deliberately a decision the
+    /// caller has to make rather than a default, because it's the only
+    /// irreversible one (Archive remains the reversible way out).
+    func deleteFolder(_ folder: Folder, deletingTracks: Bool = false) {
         guard let current = folders.first(where: { $0.id == folder.id }) else { return }
+        // The subtree, when the tracks are going: having just deleted a
+        // subfolder's songs, promoting the empty subfolder into the library
+        // would be a strange thing to leave behind.
+        let subtree = deletingTracks ? Set([current.id] + descendantFolderIDs(of: current.id)) : []
+        if deletingTracks {
+            // Done first, so the teardown below finds nothing left to move out
+            // of the sync store (which leaves its directory free to remove)
+            // or to re-file into the main list.
+            deleteTracks(where: { $0.folderID.map(subtree.contains) ?? false })
+        }
         var doomed: Set<UUID> = [current.id]
         if current.isSynced {
             unsyncSubtree(of: current.id)
@@ -548,6 +572,14 @@ final class LibraryStore: ObservableObject {
                     try? FileManager.default.removeItem(at: dir)
                     // Mirror the removal to the replica (its copies go too).
                     exportOp(.removeRemote(rel: path), rootID: current.syncRootID)
+                }
+            }
+            folders.removeAll { doomed.contains($0.id) }
+        } else if deletingTracks {
+            doomed.formUnion(subtree)
+            for target in folders where doomed.contains(target.id) && target.isMixtape {
+                if let cover = target.coverURL {
+                    try? FileManager.default.removeItem(at: cover)
                 }
             }
             folders.removeAll { doomed.contains($0.id) }
@@ -1517,6 +1549,29 @@ final class LibraryStore: ObservableObject {
         tracks.removeAll { $0.id == track.id }
         save()
         if current.sentToWatch { syncWatch() }
+    }
+
+    /// Deletes every track matching `predicate` in one pass — one save and at
+    /// most one watch sync, however many go. (Calling `delete(_:)` in a loop
+    /// would write the index once per track.)
+    private func deleteTracks(where predicate: (Track) -> Bool) {
+        let doomed = tracks.filter(predicate)
+        guard !doomed.isEmpty else { return }
+        var wasOnWatch = false
+        for track in doomed {
+            try? FileManager.default.removeItem(at: track.fileURL)
+            if let art = track.artworkFileURL {
+                try? FileManager.default.removeItem(at: art)
+            }
+            if track.isSynced {
+                exportOp(.removeRemote(rel: track.fileName), rootID: track.syncRootID)
+            }
+            if track.sentToWatch { wasOnWatch = true }
+        }
+        let ids = Set(doomed.map(\.id))
+        tracks.removeAll { ids.contains($0.id) }
+        save()
+        if wasOnWatch { syncWatch() }
     }
 
     func delete(at offsets: IndexSet) {
