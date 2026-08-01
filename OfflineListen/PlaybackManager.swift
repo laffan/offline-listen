@@ -46,6 +46,15 @@ final class PlaybackManager: NSObject, ObservableObject {
     private var index = 0
     private var ticker: Timer?
     private var endObserver: NSObjectProtocol?
+    /// Fires when an item gives up partway — a decode error near the end, say.
+    /// Left unwatched it stranded the queue: playback stopped and nothing
+    /// moved it on.
+    private var failObserver: NSObjectProtocol?
+    /// Interruption / route-change observers, live for the app's lifetime.
+    private var sessionObservers: [NSObjectProtocol] = []
+    /// Consecutive ticks on which the player was stopped while we still
+    /// believed it was playing — see `checkForSilentStop()`.
+    private var stoppedTicks = 0
     /// The current track's album art for the lock screen / Control Center,
     /// loaded once per track change — `updateNowPlaying` runs at 2 Hz and
     /// must never touch the disk.
@@ -65,6 +74,7 @@ final class PlaybackManager: NSObject, ObservableObject {
         // Keep a video's audio playing when the app is backgrounded / locked.
         player.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible
         configureAudioSession()
+        observeAudioSession()
         setupRemoteCommands()
     }
 
@@ -205,15 +215,17 @@ final class PlaybackManager: NSObject, ObservableObject {
             MPMediaItemArtwork(boundsSize: image.size) { _ in image }
         }
         updateTransportButtons()
-        stopEngine()
+        releaseItemObservers()
+        stoppedTicks = 0
 
         let item = AVPlayerItem(url: track.fileURL)
+        // Swapped straight in, never through nil. Dropping the old item first
+        // leaves the player with nothing to play for an instant, and in the
+        // background that gap of silence is exactly when iOS suspends an audio
+        // app — which is how a locked phone could stop dead between tracks
+        // instead of rolling on to the next one.
         player.replaceCurrentItem(with: item)
-        endObserver = NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in self?.handleTrackFinished() }
-        }
+        observeItem(item)
 
         if startAt > 0 {
             player.seek(to: CMTime(seconds: startAt, preferredTimescale: 600))
@@ -231,6 +243,10 @@ final class PlaybackManager: NSObject, ObservableObject {
                 library.markPlayed(track.id)
                 library.recordListen(track.id)
             }
+        } else {
+            // `replaceCurrentItem` inherits the player's rate, so an item
+            // swapped in while playing would otherwise start on its own.
+            player.pause()
         }
         startTicker()
         updateNowPlaying()
@@ -246,21 +262,41 @@ final class PlaybackManager: NSObject, ObservableObject {
     }
 
     private func pause() {
-        player.pause()
+        // Flag first, then the player: the watchdog in `tick()` reads a stopped
+        // player as "the track ended" *unless* we're the ones who stopped it.
         isPlaying = false
+        stoppedTicks = 0
+        player.pause()
         updateNowPlaying()
         persistState()
     }
 
-    private func stopEngine() {
-        ticker?.invalidate()
-        ticker = nil
-        if let endObserver {
-            NotificationCenter.default.removeObserver(endObserver)
-            self.endObserver = nil
+    /// Watches one item for the two ways it can end: normally, and by giving
+    /// up. Both advance the queue — a file that fails three seconds from the
+    /// end shouldn't be the last thing you hear.
+    private func observeItem(_ item: AVPlayerItem) {
+        endObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.handleTrackFinished(reason: "played to the end") }
         }
-        player.pause()
-        player.replaceCurrentItem(with: nil)
+        failObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemFailedToPlayToEndTime, object: item, queue: .main
+        ) { [weak self] note in
+            let message = (note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error)?
+                .localizedDescription ?? "unknown error"
+            Task { @MainActor in
+                self?.handleTrackFinished(reason: "stopped early (\(message))")
+            }
+        }
+    }
+
+    private func releaseItemObservers() {
+        for observer in [endObserver, failObserver].compactMap({ $0 }) {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        endObserver = nil
+        failObserver = nil
     }
 
     private func persistState() {
@@ -277,9 +313,15 @@ final class PlaybackManager: NSObject, ObservableObject {
 
     private func startTicker() {
         ticker?.invalidate()
-        ticker = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
+        // `.common`, not the default mode: scrolling a list puts the run loop
+        // in tracking mode and stops a plain scheduled timer dead, and the
+        // end-of-track watchdog below has to keep running while the user drags
+        // through the library.
+        RunLoop.main.add(timer, forMode: .common)
+        ticker = timer
     }
 
     private func tick() {
@@ -300,26 +342,145 @@ final class PlaybackManager: NSObject, ObservableObject {
            itemDuration.isFinite, itemDuration > 0 {
             progress.duration = itemDuration
         }
+        checkForSilentStop()
         updateNowPlaying()
         if Date().timeIntervalSince(lastPersist) > 5 {
             persistState()
         }
     }
 
-    private func handleTrackFinished() {
+    /// The end-of-track watchdog, and the reason autoplay can be trusted.
+    ///
+    /// `AVPlayerItemDidPlayToEndTime` is the primary signal but it is not
+    /// sufficient on its own: something outside the app can stop the audio
+    /// without it (a call, Siri, an alarm, headphones pulled), and a file
+    /// whose container over-reports its length — AVFoundation reads some
+    /// HE-AAC/SBR audio as roughly twice its real duration, the same quirk
+    /// `tick()` refuses to trust for the scrubber — runs out of samples at a
+    /// timestamp the player never considers "the end", so the notification
+    /// simply never comes and the queue sits there for good.
+    ///
+    /// A player that has stopped while we still think it's playing is the
+    /// ground truth, whatever the notification did. Two consecutive ticks
+    /// (~1s) before acting, so a seek or a momentary stall can't be mistaken
+    /// for a stop.
+    private func checkForSilentStop() {
+        guard isPlaying, player.timeControlStatus == .paused else {
+            stoppedTicks = 0
+            return
+        }
+        stoppedTicks += 1
+        guard stoppedTicks >= 2 else { return }
+        stoppedTicks = 0
+        if isAtEnd {
+            handleTrackFinished(reason: "the player stopped at the end of the track")
+        } else {
+            // Stopped mid-track: something took the audio away. Reflect that
+            // rather than showing a play state that isn't happening — and
+            // don't skip the track the user was in the middle of.
+            appLog("Playback stopped mid-track (interrupted) — showing it as paused.",
+                   level: .debug, category: "Player")
+            isPlaying = false
+            updateNowPlaying()
+            persistState()
+        }
+    }
+
+    /// Whether the playhead has reached the end of the media, judged against
+    /// **both** clocks: the item's own duration and the duration recorded at
+    /// download time. They disagree on the over-reporting files described
+    /// above, and whichever one the audio actually ran out on, the track is
+    /// over.
+    private var isAtEnd: Bool {
+        let now = player.currentTime().seconds
+        guard now.isFinite, now > 0 else { return false }
+        let tolerance = 1.5
+        if let item = player.currentItem?.duration.seconds,
+           item.isFinite, item > 0, now >= item - tolerance {
+            return true
+        }
+        let recorded = currentTrack?.duration ?? 0
+        return recorded > 0 && now >= recorded - tolerance
+    }
+
+    private func handleTrackFinished(reason: String) {
         // A finished podcast or video resets so a later tap starts it fresh.
         if let track = currentTrack, track.remembersPosition {
             library.updatePosition(for: track.id, to: 0)
         }
+        stoppedTicks = 0
         // Auto-advance to the next track in the (category-filtered) queue and keep
         // going to the end of the list; stop, rather than loop, once it's done.
         if index + 1 < queue.count {
             index += 1
+            appLog("Advancing to \"\(queue[index].title)\" — \(reason).",
+                   level: .debug, category: "Player")
             loadCurrent(autoPlay: true, startAt: startPosition(for: queue[index]))
         } else {
+            appLog("End of the queue — \(reason).", level: .debug, category: "Player")
             seek(to: 0)
             pause()
         }
+    }
+
+    // MARK: - Interruptions
+
+    /// Audio the app doesn't control: a phone call, Siri, an alarm, or the
+    /// headphones being pulled out. iOS pauses the player and says so here.
+    /// Without this the app went on claiming to be playing — the lock screen
+    /// agreed — while the track it was on never finished, so the queue never
+    /// moved again until playback was poked by hand.
+    private func observeAudioSession() {
+        // `object: nil` deliberately: these are posted about the shared
+        // session, and there is only one, but which object they name has
+        // varied across iOS releases — filtering on it is how an observer
+        // silently never fires.
+        let center = NotificationCenter.default
+        sessionObservers.append(center.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            Task { @MainActor in self?.handleInterruption(note) }
+        })
+        sessionObservers.append(center.addObserver(
+            forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            Task { @MainActor in self?.handleRouteChange(note) }
+        })
+    }
+
+    private func handleInterruption(_ note: Notification) {
+        guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+        switch type {
+        case .began:
+            // The system has already stopped the audio; catch up with it.
+            guard isPlaying else { return }
+            appLog("Audio interrupted — pausing.", level: .debug, category: "Player")
+            isPlaying = false
+            stoppedTicks = 0
+            updateNowPlaying()
+            persistState()
+        case .ended:
+            let options = (note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt)
+                .map(AVAudioSession.InterruptionOptions.init(rawValue:)) ?? []
+            guard options.contains(.shouldResume), currentTrack != nil, !isPlaying else { return }
+            appLog("Interruption over — resuming.", level: .debug, category: "Player")
+            resume()
+        @unknown default:
+            break
+        }
+    }
+
+    private func handleRouteChange(_ note: Notification) {
+        guard let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              let reason = AVAudioSession.RouteChangeReason(rawValue: raw),
+              reason == .oldDeviceUnavailable, isPlaying else { return }
+        // Headphones pulled / Bluetooth gone: iOS pauses so nothing blares out
+        // of the speaker. Reflect it instead of drifting out of step.
+        isPlaying = false
+        stoppedTicks = 0
+        updateNowPlaying()
+        persistState()
     }
 
     // MARK: - Audio session

@@ -1226,6 +1226,38 @@ final class LibraryStore: ObservableObject {
         save()
     }
 
+    /// Adds a track that belongs at a known place inside its folder.
+    ///
+    /// A folder shows its tracks in the order they sit in the master array,
+    /// and downloads land in whatever order the queue finishes them — so an
+    /// album pulled down whole would otherwise be shuffled by how fast each
+    /// song happened to download. `order` maps each of the release's source
+    /// URLs to its position in the tracklist; each arrival is inserted ahead
+    /// of the first sibling that belongs after it, which puts the folder in
+    /// tracklist order no matter what sequence they arrive in. Tracks the
+    /// caller has no place for (a single pick dropped into the same folder
+    /// later) go to the top, exactly like `add`.
+    func add(_ track: Track, orderedWithin folderID: UUID, by order: [String: Int]) {
+        guard let mine = order[track.sourceURL] else {
+            add(track)
+            return
+        }
+        var lastSiblingBefore: Int?
+        var firstSiblingAfter: Int?
+        for (slot, sibling) in tracks.enumerated() where sibling.folderID == folderID {
+            guard let theirs = order[sibling.sourceURL] else { continue }
+            if theirs < mine {
+                lastSiblingBefore = slot
+            } else if firstSiblingAfter == nil {
+                firstSiblingAfter = slot
+                break
+            }
+        }
+        let slot = firstSiblingAfter ?? lastSiblingBefore.map { $0 + 1 } ?? 0
+        tracks.insert(track, at: min(slot, tracks.count))
+        save()
+    }
+
     /// Inserts several tracks at the top of the library, keeping their order.
     func addTracks(_ newTracks: [Track]) {
         guard !newTracks.isEmpty else { return }

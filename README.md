@@ -128,7 +128,9 @@ Five screens (tabs):
    the folder list.
 
    **Autoplay.** When a track finishes, playback advances to the next track in
-   the same list and keeps going to the end — it doesn't loop. In the
+   the same list and keeps going to the end — it doesn't loop. (What makes
+   that dependable, including with the phone locked, is described in
+   [Why autoplay keeps going](#why-autoplay-keeps-going).) In the
    **auto-aggregated** lists (the Tracks root and the Inbox), where media types
    are mixed together, autoplay **stays within the media type** you started: pick
    a song and only songs play on (podcasts and videos are skipped until the next
@@ -452,6 +454,31 @@ shows which those were. Re-downloading an album reuses its folder rather than
 making a second one, and the pinned **Top 10** / **Highlights** rows offer the
 same button as **Download All** (their folder is qualified by the artist, since
 "Top 10" alone would collide across every artist you browse).
+
+The button then **counts the record in** — *Downloading 3 of 12…* over a
+progress bar — and becomes **Play Album** once every track has landed, which
+starts the folder from its first song. That state is read from the *library*
+rather than from what the row remembers doing, so it survives a redraw and
+still offers to play a record you pulled down on an earlier visit.
+
+Three things come with the album rather than being reconstructed afterwards:
+
+- **The tracklist's order.** Downloads finish in whatever sequence the network
+  serves them, and a folder holds its tracks in arrival order — so a record
+  would otherwise be shuffled by how fast each song happened to download. The
+  release's order is recorded at queue time and each track is slotted into the
+  folder where it belongs as it arrives.
+- **The song's real title and artist.** They come from the catalogue, not from
+  the YouTube video title, so the library reads properly the moment a track
+  lands — no waiting on the AI to clean it up, and no going without when
+  there's no Anthropic key at all. (The download title is kept as the
+  "original", so Edit Metadata ▸ **Reset to Original Title** still works.)
+  With both already known the AI organizer is skipped for that track: guessing
+  at a video name can only do worse than the catalogue's own answer, and a
+  track from a discography is music by construction. The one exception is the
+  **YouTube-ranked Top 10** fallback, whose "tracks" are video titles with no
+  artist — those still get the AI's usual go at them.
+- **The cover**, on both the tracks and the folder (see [Album art](#album-art)).
 
 **Bulk download.** A **Select** button at the top of a source's list turns on
 multi-select (the same edit-mode selection the Library uses): the per-row
@@ -874,7 +901,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `Models.swift` | `Track`, `Folder`, `DownloadMode`, `LibraryFilter`, `FolderSort`, paths, helpers. |
 | `LibraryStore.swift` | Persists the library to `Documents/library.json` and folders to `Documents/folders.json`; owns the local moves across the sync boundary (queueing replica ops), the importer's reconcile primitives, and the mixtape conversions. |
 | `LocalSync.swift` | `LocalSyncStore` — the sync folder's security-scoped bookmark, the stamped manifest + journaled exporter, the coordinated importer (placeholder-aware copies), kqueue monitoring, and the off-main tree scan. |
-| `DownloadManager.swift` | Download queue (two concurrent slots) + `DownloadJob` + persisted history; `ArtworkFetcher`, the best-effort album-art fetch a finished download triggers. |
+| `DownloadManager.swift` | Download queue (two concurrent slots) + `DownloadJob` + persisted history; `enqueueAlbum`, which files a whole release into one folder in tracklist order with the catalogue's own titles/artists; `ArtworkFetcher`, the best-effort album-art fetch a finished download (or an album folder) triggers. |
 | `PythonGate.swift` | App-wide async mutex serializing every embedded-Python call, so the two-slot pipeline never runs concurrent interpreter work. |
 | `YouTubeExtractor.swift` | `MediaExtractor` protocol + YoutubeDL-iOS impl + a mock. |
 | `YouTubeKitExtractor.swift` | Native-Swift (b5i/YouTubeKit) primary extractor. |
@@ -891,7 +918,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `PlaylistResolver.swift` | Detects playlist links and flat-resolves their entries (on-device yt-dlp) so a playlist downloads into a folder. |
 | `ChapterSplitter.swift` | Exports one file per chapter (AVFoundation) for "Break Chapters into Playlist". |
 | `VideoMerger.swift` | Muxes a video-only + audio-only stream into one MP4. |
-| `PlaybackManager.swift` | `AVPlayer` engine (audio + video), audio session, lock screen; exposes the queue's next/previous entries for the Player's neighbour labels. |
+| `PlaybackManager.swift` | `AVPlayer` engine (audio + video), audio session (including interruption/route-change handling), lock screen, and the end-of-track watchdog that keeps autoplay advancing; exposes the queue's next/previous entries for the Player's neighbour labels. |
 | `Logger.swift` | `LogStore` — thread-safe, app-wide log sink. |
 | `AISettings.swift` | `AISettingsStore` (model/key/assist, Keychain-backed), `AIModel`, `Keychain` helper. |
 | `AnthropicClient.swift` | Minimal Anthropic Messages API client (verify + single-shot completion) over URLSession. |
@@ -1145,6 +1172,47 @@ Three pieces make this work, already configured:
 
 Start a track, lock the phone — audio keeps playing and the controls appear on
 the lock screen.
+
+### Why autoplay keeps going
+
+Advancing to the next track sounds like one line — listen for
+`AVPlayerItemDidPlayToEndTime`, load the next one — and that line is not
+enough. Three separate things used to strand the queue, most visibly with the
+phone locked, where nothing on screen said why the music had stopped:
+
+- **The item swap left a gap of silence.** Loading a track dropped the current
+  item (`replaceCurrentItem(with: nil)`) before installing the new one. An app
+  playing audio in the background stays alive *because* it is playing audio;
+  that instant with nothing to play is exactly when iOS is entitled to suspend
+  it, and a suspended app doesn't start the next track. The new item is now
+  swapped straight in, so the player is never empty.
+- **Nothing was listening for interruptions.** A call, Siri, an alarm or
+  headphones being unplugged pauses the player without any end-of-item
+  notification. The app went on believing it was playing — the lock screen
+  agreed — while the track it was on never finished, so the queue never moved
+  again. `AVAudioSession`'s **interruption** and **route-change**
+  notifications are now handled: the app follows the system into paused, and
+  resumes when the interruption ends and says it should.
+- **The end notification doesn't always come.** Some downloaded audio
+  over-reports its length — AVFoundation reads certain HE-AAC/SBR streams as
+  roughly *twice* their real duration, the same quirk the scrubber already
+  refuses to trust — so the samples run out at a timestamp AVFoundation
+  doesn't consider the end, and the notification never fires at all. A
+  **watchdog** on the existing half-second ticker now catches it: a player
+  that has stopped while the app still thinks it's playing has either ended
+  or been interrupted, and the playhead says which. At the end (judged
+  against *both* clocks — the item's own duration and the one recorded at
+  download time, whichever the audio actually ran out on) the queue advances;
+  mid-track it's an interruption, so the state is corrected and the track is
+  left alone. Two consecutive ticks are required, so a seek or a momentary
+  stall can't be mistaken for a stop.
+
+Two smaller things fell out of the same pass: `AVPlayerItemFailedToPlayToEnd`
+now advances the queue too (a file that gives up three seconds from the end
+shouldn't be the last thing you hear), and the ticker runs in the run loop's
+`.common` modes so scrolling a list doesn't stop the watchdog's clock. Every
+advance logs its reason at debug level under the `Player` category, so a
+queue that stops can be diagnosed from the Log rather than guessed at.
 
 The lock screen / Control Center renders only **three** transport buttons (a
 centre play/pause plus two side buttons), and iOS shows *either* the

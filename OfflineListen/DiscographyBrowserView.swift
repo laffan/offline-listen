@@ -563,6 +563,7 @@ private struct DiscographyReleaseRow: View {
     @EnvironmentObject private var downloads: DownloadManager
     @EnvironmentObject private var browse: BrowseStore
     @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var playback: PlaybackManager
 
     @State private var expanded = false
     @State private var tracks: [DiscographyTrackInfo]?
@@ -581,9 +582,14 @@ private struct DiscographyReleaseRow: View {
     /// results, and pressing it mid-search must join that pass rather than
     /// start a second one (or read a half-filled `matches`).
     @State private var searchTask: Task<Void, Never>?
-    /// The whole-release download: in flight, and how many tracks it queued.
+    /// True while **Download Album** is matching and queueing. Once the jobs
+    /// are in the queue the button reads the *library* instead, so it keeps
+    /// telling the truth across a redraw — and still offers to play a record
+    /// downloaded on an earlier visit.
     @State private var queueing = false
-    @State private var queuedCount: Int?
+    /// The URLs this row sent to the queue, which is what tells "downloading"
+    /// apart from "some of these happen to be in the library already".
+    @State private var queuedURLs: Set<String> = []
 
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
@@ -674,54 +680,125 @@ private struct DiscographyReleaseRow: View {
         }
     }
 
+    /// What the whole-release button is offering right now. Everything past
+    /// the queueing moment is derived from the **library**, not from what this
+    /// row remembers doing: that's what keeps the count honest as downloads
+    /// land one by one, and what lets the button offer to play a record that
+    /// was pulled down on an earlier visit.
+    private enum BulkState {
+        /// Matching the tracklist against YouTube, or queueing the results.
+        case working
+        /// Ready to download; the count is how many tracks matched (0 before
+        /// a search has run, or when nothing matched at all).
+        case idle(Int)
+        /// Queued and arriving: how many of them are in the library so far.
+        case downloading(landed: Int, total: Int)
+        /// All of them are in the library, in one folder — play it.
+        case ready(UUID)
+    }
+
+    private var bulkState: BulkState {
+        if queueing { return .working }
+        let urls = matchedURLs
+        guard !urls.isEmpty else { return .idle(0) }
+        let landed = urls.compactMap { library.track(forSourceURL: $0) }
+        let folders = Set(landed.compactMap(\.folderID))
+        if landed.count == urls.count, folders.count == 1, let folder = folders.first {
+            return .ready(folder)
+        }
+        if !queuedURLs.isEmpty { return .downloading(landed: landed.count, total: urls.count) }
+        return .idle(urls.count)
+    }
+
+    /// Every track of this release that matched a video, in tracklist order.
+    private var matchedURLs: [String] {
+        (tracks ?? []).compactMap { matches[$0.id] }
+    }
+
     /// **Download Album** — one tap for the whole record: it runs the YouTube
     /// match first when the release hasn't been searched yet, then queues every
     /// track that matched into a library folder named after the release (with
-    /// the cover attached to it). Sits directly under the cover and above the
-    /// tracklist, which is where an action on the *whole* release belongs — the
-    /// per-track buttons stay exactly where they were.
+    /// the cover attached to it). It counts the downloads in as they land and
+    /// turns into **Play Album** once the record is complete. Sits directly
+    /// under the cover and above the tracklist, which is where an action on the
+    /// *whole* release belongs — the per-track buttons stay where they were.
     @ViewBuilder
     private var downloadAllButton: some View {
-        Button {
-            downloadAll()
-        } label: {
-            HStack(spacing: 8) {
-                if queueing {
-                    ProgressView().controlSize(.small)
+        let state = bulkState
+        VStack(spacing: 6) {
+            Button {
+                if case .ready(let folderID) = state {
+                    playAlbum(in: folderID)
                 } else {
-                    Image(systemName: queuedCount == nil ? "arrow.down.circle.fill" : "checkmark.circle.fill")
+                    downloadAll()
                 }
-                Text(downloadAllLabel)
-                    .font(.subheadline.weight(.semibold))
+            } label: {
+                HStack(spacing: 8) {
+                    if case .working = state {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: icon(for: state))
+                    }
+                    Text(label(for: state))
+                        .font(.subheadline.weight(.semibold))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 4)
-            .contentShape(Rectangle())
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
+            .tint(isReady(state) ? Color.green : Color.accentColor)
+            .disabled(isBusy(state) || (searched && matches.isEmpty))
+
+            // A real bar for the real thing: "3 of 12" alone reads as a label,
+            // and a whole album takes long enough to want a shape for it.
+            if case .downloading(let landed, let total) = state, total > 0 {
+                ProgressView(value: Double(landed), total: Double(total))
+                    .progressViewStyle(.linear)
+            }
         }
-        .buttonStyle(.bordered)
-        .buttonBorderShape(.capsule)
-        .tint(queuedCount == nil ? Color.accentColor : .green)
-        // Nothing to queue while it's working, once it has queued, or when the
-        // search came back with no usable match at all.
-        .disabled(queueing || queuedCount != nil || (searched && matches.isEmpty))
         .padding(.vertical, 4)
     }
 
-    private var downloadAllLabel: String {
-        if let queuedCount {
-            return "Queued \(queuedCount) track\(queuedCount == 1 ? "" : "s")"
-        }
-        if queueing {
+    private func label(for state: BulkState) -> String {
+        switch state {
+        case .working:
             return progress.total > 0 && progress.done < progress.total
                 ? "Matching \(progress.done) of \(progress.total)…"
                 : "Queueing…"
+        case .downloading(let landed, let total):
+            return "Downloading \(landed) of \(total)…"
+        case .ready:
+            return "Play \(bulkNoun)"
+        case .idle(let matched):
+            if searched {
+                return matched == 0
+                    ? "Nothing matched on YouTube"
+                    : "Download \(bulkNoun) (\(matched))"
+            }
+            return "Download \(bulkNoun)"
         }
-        if searched {
-            return matches.isEmpty
-                ? "Nothing matched on YouTube"
-                : "Download \(bulkNoun) (\(matches.count))"
+    }
+
+    private func icon(for state: BulkState) -> String {
+        switch state {
+        case .ready: return "play.circle.fill"
+        case .downloading: return "arrow.down.circle"
+        default: return "arrow.down.circle.fill"
         }
-        return "Download \(bulkNoun)"
+    }
+
+    private func isReady(_ state: BulkState) -> Bool {
+        if case .ready = state { return true }
+        return false
+    }
+
+    private func isBusy(_ state: BulkState) -> Bool {
+        switch state {
+        case .working, .downloading: return true
+        case .idle, .ready: return false
+        }
     }
 
     /// What the bulk button calls this release: a real album is an "Album",
@@ -778,7 +855,7 @@ private struct DiscographyReleaseRow: View {
                                             pendingLabel: "Sent to Downloads")
                 } else {
                     Button {
-                        enqueue(url, artworkURL: track.artworkURL)
+                        enqueue(track, url: url)
                         sent.insert(track.id)
                     } label: {
                         Image(systemName: "arrow.down.circle")
@@ -811,16 +888,44 @@ private struct DiscographyReleaseRow: View {
         return searched ? .tertiary : .secondary
     }
 
-    /// Queues one matched track — with its album art riding along, so the
-    /// finished download wears it. A Browse source files it into the folder
-    /// named after the source; the Every Noise browser's picks stay unfiled.
-    private func enqueue(_ url: String, artworkURL: String?) {
+    /// Queues one matched track — with its album art *and the catalogue's own
+    /// title and artist* riding along, so the finished download wears both
+    /// rather than a YouTube video title. A Browse source files it into the
+    /// folder named after the source; the Every Noise browser's picks stay
+    /// unfiled.
+    private func enqueue(_ track: DiscographyTrackInfo, url: String) {
+        let known = knownMetadata(for: track)
+        let artworkURL = track.artworkURL ?? release.imageURL
         if let folder = downloadFolderName, !folder.isEmpty {
             downloads.enqueue(urlString: url, mode: browse.downloadMode,
-                              browseFolderNamed: folder, artworkURL: artworkURL)
+                              browseFolderNamed: folder, artworkURL: artworkURL,
+                              knownTitle: known.title, knownArtist: known.artist)
         } else {
-            downloads.enqueue(urlString: url, mode: browse.downloadMode, artworkURL: artworkURL)
+            downloads.enqueue(urlString: url, mode: browse.downloadMode,
+                              artworkURL: artworkURL,
+                              knownTitle: known.title, knownArtist: known.artist)
         }
+    }
+
+    /// What the catalogue knows about a track, when it's worth carrying into
+    /// the download. The **YouTube-ranked Top 10** backup is the exception:
+    /// its "tracks" are video titles with no artist at all, which is exactly
+    /// what the download would have arrived with anyway — so it passes
+    /// nothing and the AI organizer gets its usual go at them.
+    private func knownMetadata(for track: DiscographyTrackInfo) -> (title: String?, artist: String?) {
+        let artist = track.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = track.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !artist.isEmpty, !name.isEmpty else { return (nil, nil) }
+        return (name, artist)
+    }
+
+    /// Plays the downloaded album from its first track. A folder is a curated
+    /// playlist, so it runs straight through in list order — which, thanks to
+    /// the ordered insert the album download uses, is the release's own order.
+    private func playAlbum(in folderID: UUID) {
+        let albumTracks = library.tracks(in: folderID)
+        guard let first = albumTracks.first else { return }
+        playback.play(first, in: albumTracks, restrictToCategory: false)
     }
 
     /// Fetches the tracklist (also triggered by plain expansion, so the
@@ -903,15 +1008,21 @@ private struct DiscographyReleaseRow: View {
     /// the tracklist below shows which those were.
     @MainActor
     private func downloadAll() {
-        guard !queueing, queuedCount == nil else { return }
+        guard !queueing else { return }
         expanded = true
         queueing = true
         Task {
             if !searched { await runSearch() }
             if let tracks {
-                let picks: [(url: String, artworkURL: String?)] = tracks.compactMap { track in
+                // Tracklist order is the order these go in, and the queue
+                // preserves it however fast each one downloads.
+                let picks: [DownloadManager.AlbumTrack] = tracks.compactMap { track in
                     guard let url = matches[track.id] else { return nil }
-                    return (url, track.artworkURL ?? release.imageURL)
+                    let known = knownMetadata(for: track)
+                    return DownloadManager.AlbumTrack(url: url,
+                                                      title: known.title,
+                                                      artist: known.artist,
+                                                      artworkURL: track.artworkURL ?? release.imageURL)
                 }
                 if !picks.isEmpty {
                     downloads.enqueueAlbum(named: bulkFolderName,
@@ -922,7 +1033,7 @@ private struct DiscographyReleaseRow: View {
                     // The per-track buttons follow suit, so a row doesn't offer
                     // to download something already on its way.
                     sent.formUnion(tracks.filter { matches[$0.id] != nil }.map(\.id))
-                    queuedCount = picks.count
+                    queuedURLs = Set(picks.map(\.url))
                 }
             }
             queueing = false

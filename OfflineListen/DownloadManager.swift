@@ -26,6 +26,13 @@ final class DownloadJob: ObservableObject, Identifiable {
     /// source in the other format. Replacement happens only on success, so a
     /// failed conversion never costs the original.
     let replacesTrackID: UUID?
+    /// Track metadata already known when the job was queued. A discography
+    /// download knows the release's real song title and artist from Spotify,
+    /// so the finished track can read properly straight away instead of
+    /// wearing a YouTube video title until the AI gets to it — or for good,
+    /// when there's no Anthropic key to do the cleaning.
+    let knownTitle: String?
+    let knownArtist: String?
 
     @Published var title: String
     /// A live sub-status shown in place of the state label while a long
@@ -43,7 +50,8 @@ final class DownloadJob: ObservableObject, Identifiable {
 
     init(url: String, mode: DownloadMode, isPlaylist: Bool = false,
          spotifyRef: SpotifyRef? = nil, folderID: UUID? = nil,
-         artworkURL: String? = nil, replacesTrackID: UUID? = nil) {
+         artworkURL: String? = nil, replacesTrackID: UUID? = nil,
+         knownTitle: String? = nil, knownArtist: String? = nil) {
         self.url = url
         self.mode = mode
         self.isPlaylist = isPlaylist
@@ -51,12 +59,22 @@ final class DownloadJob: ObservableObject, Identifiable {
         self.folderID = folderID
         self.artworkURL = artworkURL
         self.replacesTrackID = replacesTrackID
+        self.knownTitle = Self.cleaned(knownTitle)
+        self.knownArtist = Self.cleaned(knownArtist)
         if let spotifyRef {
             self.title = DownloadJob.spotifyPlaceholder(for: spotifyRef)
         } else {
             self.title = isPlaylist ? "Playlist" : url
         }
         self.state = .queued
+    }
+
+    /// Blank-or-whitespace metadata is the same as none — a caller that has
+    /// only half a pair (the YouTube-ranked Top 10 carries song titles but no
+    /// artist) shouldn't have empty strings written over the real thing.
+    private static func cleaned(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     /// What the queue row reads while a Spotify reference is being resolved —
@@ -197,10 +215,26 @@ private struct DownloadRecord: Codable {
 /// downloads, never the Python.
 @MainActor
 final class DownloadManager: ObservableObject {
+    /// One track of a release, as `enqueueAlbum` takes them: in the tracklist's
+    /// own order, carrying whatever the catalogue already knows about each.
+    struct AlbumTrack {
+        let url: String
+        var title: String? = nil
+        var artist: String? = nil
+        var artworkURL: String? = nil
+    }
+
     @Published private(set) var jobs: [DownloadJob] = []
     /// A resolved playlist waiting for the user to choose entries (drives the
     /// selection popup). Settable so the popup binding can clear it on dismiss.
     @Published var pendingPlaylist: PendingPlaylist?
+
+    /// Album folder id → source URL → the track's place in the release. An
+    /// album's downloads finish in whatever order the network serves them, so
+    /// each one is slotted into the folder by this rather than by arrival.
+    /// In-memory only, which matches the queue's own lifetime — in-flight jobs
+    /// don't survive a quit either.
+    private var albumOrders: [UUID: [String: Int]] = [:]
 
     private let library: LibraryStore
     private let extractor: MediaExtractor
@@ -398,10 +432,12 @@ final class DownloadManager: ObservableObject {
     /// jobs a playlist expands into); `replacesTrackID` marks a format
     /// conversion — the named track leaves the library once this lands.
     func enqueue(urlString: String, mode: DownloadMode, folderID: UUID? = nil,
-                 artworkURL: String? = nil, replacesTrackID: UUID? = nil) {
+                 artworkURL: String? = nil, replacesTrackID: UUID? = nil,
+                 knownTitle: String? = nil, knownArtist: String? = nil) {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         let job = DownloadJob(url: trimmed, mode: mode, folderID: folderID,
-                              artworkURL: artworkURL, replacesTrackID: replacesTrackID)
+                              artworkURL: artworkURL, replacesTrackID: replacesTrackID,
+                              knownTitle: knownTitle, knownArtist: knownArtist)
         if URL(string: trimmed) == nil || !trimmed.lowercased().hasPrefix("http") {
             job.state = .failed(ExtractorError.invalidURL.localizedDescription)
             jobs.insert(job, at: 0)
@@ -477,6 +513,11 @@ final class DownloadManager: ObservableObject {
         // (History rows restored from disk carry none — deliberately, so a
         // stale restart after a relaunch can never delete a track.)
         let replacesTrackID = job.replacesTrackID
+        // The catalogue's title/artist survive a retry — they were never the
+        // reason it failed, and losing them would leave one track of a
+        // restarted album reading differently from the rest.
+        let knownTitle = job.knownTitle
+        let knownArtist = job.knownArtist
         remove(job)
         appLog("Restarting: \(url)", category: "Queue")
         // Re-read the reference from the URL rather than trusting the job's:
@@ -487,7 +528,8 @@ final class DownloadManager: ObservableObject {
             enqueuePlaylist(urlString: url, mode: mode)
         } else {
             enqueue(urlString: url, mode: mode, folderID: folderID, artworkURL: artworkURL,
-                    replacesTrackID: replacesTrackID)
+                    replacesTrackID: replacesTrackID,
+                    knownTitle: knownTitle, knownArtist: knownArtist)
         }
     }
 
@@ -668,16 +710,28 @@ final class DownloadManager: ObservableObject {
                 chapters = await ChapterFetcher.fetch(url: url)
             }
 
+            // A job that already knows what it downloaded (a discography pick,
+            // whose title and artist come from Spotify) wears that instead of
+            // the YouTube video title, and keeps the download title as the
+            // "original" so Edit Metadata ▸ Reset still works.
             let track = Track(
-                title: extracted.title,
+                title: job.knownTitle ?? extracted.title,
+                artist: job.knownArtist ?? "Unknown",
                 fileName: finalURL.lastPathComponent,
                 sourceURL: job.url,
                 duration: extracted.duration,
                 isVideo: extracted.isVideo,
                 folderID: job.folderID,
+                originalTitle: job.knownTitle == nil ? nil : extracted.title,
                 chapters: chapters
             )
-            library.add(track)
+            // An album download files its tracks in the release's own order,
+            // however the queue happened to finish them.
+            if let folderID = job.folderID, let order = albumOrders[folderID] {
+                library.add(track, orderedWithin: folderID, by: order)
+            } else {
+                library.add(track)
+            }
             // Album art (best-effort): a Spotify-sourced enqueue carried the
             // cover URL — fetch it and hang it on the track. Never blocks the
             // queue, never fatal.
@@ -700,7 +754,13 @@ final class DownloadManager: ObservableObject {
             // when the user has set up and opted into AI assist. Runs detached so
             // it never holds up the queue; re-snapshots the history once done so
             // the saved row carries the AI's clean title/artist too.
-            if let aiOrganizer {
+            //
+            // Skipped when the job already carried both: guessing a title and
+            // artist out of a YouTube video name can only do worse than the
+            // catalogue's own, and a track from a discography is music by
+            // construction, so there's no classification left to make either.
+            let metadataKnown = job.knownTitle != nil && job.knownArtist != nil
+            if let aiOrganizer, !metadataKnown {
                 let id = track.id
                 Task {
                     await aiOrganizer.organizeIfEnabled(id)
@@ -959,7 +1019,7 @@ final class DownloadManager: ObservableObject {
     /// spawning a second one.
     @discardableResult
     func enqueueAlbum(named albumName: String,
-                      tracks: [(url: String, artworkURL: String?)],
+                      tracks: [AlbumTrack],
                       mode: DownloadMode,
                       insideFolderNamed parentName: String? = nil,
                       artworkURL: String? = nil) -> Folder? {
@@ -968,9 +1028,19 @@ final class DownloadManager: ObservableObject {
         let parent = parentTrimmed.isEmpty ? nil : folder(named: parentTrimmed, fallback: "Browse")
         let album = albumFolder(named: albumName, fallback: "Album", parent: parent?.id)
         ArtworkFetcher.attach(artworkURL, toFolder: album.id, library: library)
+        // Recorded before anything is queued, so the first track to land
+        // already has somewhere to be. Merged into any order already there,
+        // never replacing it: filling in a couple of tracks that failed the
+        // first time must not move the ones that landed.
+        var order = albumOrders[album.id] ?? [:]
+        for (position, track) in tracks.enumerated() {
+            order[track.url] = position
+        }
+        albumOrders[album.id] = order
         for track in tracks {
             enqueue(urlString: track.url, mode: mode, folderID: album.id,
-                    artworkURL: track.artworkURL ?? artworkURL)
+                    artworkURL: track.artworkURL ?? artworkURL,
+                    knownTitle: track.title, knownArtist: track.artist)
         }
         appLog("Queued \(tracks.count) track(s) from \"\(album.name)\" into a library folder.",
                category: "Queue")
@@ -982,9 +1052,11 @@ final class DownloadManager: ObservableObject {
     /// "Brian Eno" folder for a Discography source). Blank names fall back to a
     /// generic "Browse" folder.
     func enqueue(urlString: String, mode: DownloadMode, browseFolderNamed folderName: String,
-                 artworkURL: String? = nil) {
+                 artworkURL: String? = nil,
+                 knownTitle: String? = nil, knownArtist: String? = nil) {
         let folder = folder(named: folderName, fallback: "Browse")
-        enqueue(urlString: urlString, mode: mode, folderID: folder.id, artworkURL: artworkURL)
+        enqueue(urlString: urlString, mode: mode, folderID: folder.id, artworkURL: artworkURL,
+                knownTitle: knownTitle, knownArtist: knownArtist)
     }
 }
 
