@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 struct DownloadView: View {
     @EnvironmentObject private var downloads: DownloadManager
@@ -103,7 +102,7 @@ struct DownloadView: View {
 
                 if urlText.isEmpty {
                     Button {
-                        if let pasted = UIPasteboard.general.string {
+                        if let pasted = Pasteboard.string {
                             urlText = pasted
                         }
                     } label: {
@@ -290,7 +289,7 @@ private struct DownloadJobRow: View {
             // The row shows the video's title once it's known, so the link it
             // came from is otherwise unreachable from here.
             Button {
-                UIPasteboard.general.string = job.url
+                Pasteboard.copy(job.url)
             } label: {
                 Label("Copy URL", systemImage: "doc.on.doc")
             }

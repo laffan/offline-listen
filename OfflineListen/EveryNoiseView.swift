@@ -336,7 +336,7 @@ struct ENModeBar: View {
                     }
                 }
                 .padding(8)
-                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
+                .background(Color.appSecondaryBackground, in: RoundedRectangle(cornerRadius: 10))
 
                 if mode == .list, let sort {
                     Menu {
@@ -348,7 +348,7 @@ struct ENModeBar: View {
                     } label: {
                         Image(systemName: "arrow.up.arrow.down")
                             .padding(9)
-                            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
+                            .background(Color.appSecondaryBackground, in: RoundedRectangle(cornerRadius: 10))
                     }
                     .accessibilityLabel("Sort order")
                 }
@@ -427,7 +427,7 @@ struct ENFindResults: View {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 1) {
                                         Text(entry.label)
-                                            .foregroundStyle(Color(UIColor(noiseHex: entry.colorHex)))
+                                            .foregroundStyle(Color(noiseHex: entry.colorHex))
                                         if let detail = entry.detail {
                                             Text(detail)
                                                 .font(.caption)
@@ -517,7 +517,7 @@ struct ENGenreListView: View {
                     } label: {
                         HStack {
                             Text(genre.name)
-                                .foregroundStyle(Color(UIColor(noiseHex: genre.color)))
+                                .foregroundStyle(Color(noiseHex: genre.color))
                             Spacer()
                             Image(systemName: "chevron.right")
                                 .font(.caption)
@@ -588,7 +588,7 @@ struct ENHistoryView: View {
                                 .frame(width: 26)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(entry.name)
-                                    .foregroundStyle(Color(UIColor(noiseHex: entry.color)))
+                                    .foregroundStyle(Color(noiseHex: entry.color))
                                     .lineLimit(1)
                                 if let detail = entry.detail {
                                     Text("in \(detail)")
@@ -948,7 +948,7 @@ struct ENGenreView: View {
                     } label: {
                         HStack {
                             Text(artist.name)
-                                .foregroundStyle(Color(UIColor(noiseHex: artist.color)))
+                                .foregroundStyle(Color(noiseHex: artist.color))
                             Spacer()
                             if player.currentID == artist.id && player.isPlaying {
                                 Image(systemName: "speaker.wave.2.fill")

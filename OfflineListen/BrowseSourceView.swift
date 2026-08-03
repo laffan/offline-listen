@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 /// One source's discovered items: artist/song title with per-row **Download**
 /// (sends to the download queue) and **Preview** (opens the listen-first
@@ -143,7 +142,7 @@ struct BrowseSourceView: View {
                 }
                 .listStyle(.plain)
                 .miniPlayerClearance()
-                .environment(\.editMode, $editMode)
+                .editModeEnvironment($editMode)
                 .refreshable { await refreshAsync() }
             }
         }
@@ -724,7 +723,7 @@ private extension View {
             .padding(.horizontal, 16)
             .padding(.top, 10)
             .padding(.bottom, 6)
-            .background(Color(.systemBackground))
+            .background(Color.appBackground)
             .overlay(alignment: .bottom) {
                 Rectangle()
                     .fill(Color.primary)

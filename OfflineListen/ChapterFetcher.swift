@@ -21,7 +21,11 @@ import PythonKit
 /// no chapters and the rest of the app behaves exactly as before.
 enum ChapterFetcher {
     static func fetch(url: URL) async -> [Chapter] {
-        #if canImport(YoutubeDL) && canImport(PythonKit)
+        // The Mac has no embedded interpreter — it asks the real yt-dlp binary
+        // for the same metadata, and degrades identically when there isn't one.
+        #if os(macOS)
+        return await MacYtDlp.chapters(for: url)
+        #elseif canImport(YoutubeDL) && canImport(PythonKit)
         let category = "Chapters"
         guard FileManager.default.fileExists(atPath: YoutubeDL.pythonModuleURL.path) else {
             appLog("yt-dlp module not present — skipping chapter lookup.", level: .debug, category: category)

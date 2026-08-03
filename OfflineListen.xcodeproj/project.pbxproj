@@ -10,8 +10,6 @@
 		1B00000000000000000000B1 /* OfflineListenApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A1 /* OfflineListenApp.swift */; };
 		1B00000000000000000000B2 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A2 /* Models.swift */; };
 		1B00000000000000000000B3 /* LibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A3 /* LibraryStore.swift */; };
-		1B00000000000000000000D0 /* LocalSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BE /* LocalSync.swift */; };
-		1B00000000000000000000D2 /* MixtapeViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BF /* MixtapeViews.swift */; };
 		1B00000000000000000000B4 /* DownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A4 /* DownloadManager.swift */; };
 		1B00000000000000000000B5 /* YouTubeExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A5 /* YouTubeExtractor.swift */; };
 		1B00000000000000000000B7 /* PlaybackManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000A7 /* PlaybackManager.swift */; };
@@ -20,33 +18,59 @@
 		1B00000000000000000000BA /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000AA /* LibraryView.swift */; };
 		1B00000000000000000000BB /* PlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000AB /* PlayerView.swift */; };
 		1B00000000000000000000BC /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000AC /* Assets.xcassets */; };
-		1B00000000000000000000BE /* YoutubeDL in Frameworks */ = {isa = PBXBuildFile; productRef = 2300000000000000000000A2 /* YoutubeDL */; };
+		1B00000000000000000000BE /* YoutubeDL in Frameworks */ = {isa = PBXBuildFile; platformFilters = (ios, ); productRef = 2300000000000000000000A2 /* YoutubeDL */; };
 		1B00000000000000000000BF /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000AF /* Logger.swift */; };
 		1B00000000000000000000C0 /* LogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B0 /* LogView.swift */; };
 		1B00000000000000000000C2 /* AudioStreamDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B1 /* AudioStreamDownloader.swift */; };
 		1B00000000000000000000C3 /* CompositeExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B2 /* CompositeExtractor.swift */; };
 		1B00000000000000000000C4 /* YouTubeKitExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B3 /* YouTubeKitExtractor.swift */; };
-		1B0000000000000000003A06 /* VimeoExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000003A06 /* VimeoExtractor.swift */; };
 		1B00000000000000000000C5 /* YouTubeKit in Frameworks */ = {isa = PBXBuildFile; productRef = 2300000000000000000000A3 /* YouTubeKit */; };
 		1B00000000000000000000C6 /* VideoAudioExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B4 /* VideoAudioExtractor.swift */; };
-		1B0000000000000000003A05 /* HLSDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000003A05 /* HLSDownloader.swift */; };
 		1B00000000000000000000C7 /* VideoMerger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B5 /* VideoMerger.swift */; };
 		1B00000000000000000000C8 /* FolderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B6 /* FolderView.swift */; };
 		1B00000000000000000000C9 /* ChapterFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B7 /* ChapterFetcher.swift */; };
-		1B00000000000000000000CF /* PlaylistResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BD /* PlaylistResolver.swift */; };
 		1B00000000000000000000CA /* ChapterSplitter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B8 /* ChapterSplitter.swift */; };
 		1B00000000000000000000CB /* AISettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000B9 /* AISettings.swift */; };
 		1B00000000000000000000CC /* AnthropicClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BA /* AnthropicClient.swift */; };
+		1B00000000000000000000CD /* AIOrganizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BB /* AIOrganizer.swift */; };
+		1B00000000000000000000CE /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BC /* SettingsView.swift */; };
+		1B00000000000000000000CF /* PlaylistResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BD /* PlaylistResolver.swift */; };
+		1B00000000000000000000D0 /* LocalSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BE /* LocalSync.swift */; };
+		1B00000000000000000000D2 /* MixtapeViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BF /* MixtapeViews.swift */; };
+		1B00000000000000000001E0 /* JSChallengeSolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000001E0 /* JSChallengeSolver.swift */; };
+		1B00000000000000000001E1 /* POTokenMinter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000001E1 /* POTokenMinter.swift */; };
+		1B00000000000000000001E2 /* PythonBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000001E2 /* PythonBridge.swift */; };
+		1B00000000000000000001E3 /* ytdlp in Resources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000001E3 /* ytdlp */; };
+		1B00000000000000000002E1 /* BrowseModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E1 /* BrowseModels.swift */; };
+		1B00000000000000000002E2 /* BrowseStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E2 /* BrowseStore.swift */; };
+		1B00000000000000000002E3 /* FeedParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E3 /* FeedParser.swift */; };
+		1B00000000000000000002E4 /* BrowseFetchers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E4 /* BrowseFetchers.swift */; };
+		1B00000000000000000002E5 /* AIDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E5 /* AIDiscovery.swift */; };
+		1B00000000000000000002E6 /* BrowseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E6 /* BrowseView.swift */; };
+		1B00000000000000000002E7 /* BrowseSourceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E7 /* BrowseSourceView.swift */; };
+		1B00000000000000000002E8 /* BrowsePreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E8 /* BrowsePreviewView.swift */; };
+		1B00000000000000000002E9 /* BlogAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E9 /* BlogAgent.swift */; };
+		1B00000000000000000002EA /* DiscographyAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002EA /* DiscographyAgent.swift */; };
+		1B00000000000000000002EB /* PythonGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002EB /* PythonGate.swift */; };
+		1B0000000000000000005F01 /* Platform.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000005F01 /* Platform.swift */; };
+		1B000000000000000005F03 /* MacYtDlp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000005F03 /* MacYtDlp.swift */; };
+		1B000000000000000005F02 /* NoiseMapViewMac.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000005F02 /* NoiseMapViewMac.swift */; };
 		1B0000000000000000003A01 /* SpotifyRef.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000003A01 /* SpotifyRef.swift */; };
 		1B0000000000000000003A02 /* SpotifyClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000003A02 /* SpotifyClient.swift */; };
 		1B0000000000000000003A03 /* SpotifySettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000003A03 /* SpotifySettings.swift */; };
 		1B0000000000000000003A04 /* SpotifyResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000003A04 /* SpotifyResolver.swift */; };
-		1B00000000000000000000CD /* AIOrganizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BB /* AIOrganizer.swift */; };
-		1B00000000000000000000CE /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BC /* SettingsView.swift */; };
-		3B00000000000000000000A3 /* SharedInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A00000000000000000000A5 /* SharedInbox.swift */; };
+		1B0000000000000000003A05 /* HLSDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000003A05 /* HLSDownloader.swift */; };
+		1B0000000000000000003A06 /* VimeoExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000003A06 /* VimeoExtractor.swift */; };
+		1B0000000000000000004E01 /* EveryNoiseData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000004E01 /* EveryNoiseData.swift */; };
+		1B0000000000000000004E02 /* NoiseMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000004E02 /* NoiseMapView.swift */; };
+		1B0000000000000000004E03 /* EveryNoiseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000004E03 /* EveryNoiseView.swift */; };
+		1B0000000000000000004E04 /* EveryNoiseData in Resources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000004E04 /* EveryNoiseData */; };
+		1B0000000000000000004E05 /* DiscographyBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000004E05 /* DiscographyBrowserView.swift */; };
+		1B0000000000000000004E06 /* EveryNoiseUpdates.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000004E06 /* EveryNoiseUpdates.swift */; };
 		3B00000000000000000000A1 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A00000000000000000000A1 /* ShareViewController.swift */; };
 		3B00000000000000000000A2 /* SharedInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A00000000000000000000A5 /* SharedInbox.swift */; };
-		3B00000000000000000000A4 /* ShareExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 3A00000000000000000000A4 /* ShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		3B00000000000000000000A3 /* SharedInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A00000000000000000000A5 /* SharedInbox.swift */; };
+		3B00000000000000000000A4 /* ShareExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 3A00000000000000000000A4 /* ShareExtension.appex */; platformFilters = (ios, ); settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		6B0000000000000000000001 /* WatchManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0000000000000000000001 /* WatchManifest.swift */; };
 		6B0000000000000000000002 /* WatchSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0000000000000000000002 /* WatchSync.swift */; };
 		6B0000000000000000000003 /* WatchFolderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0000000000000000000003 /* WatchFolderView.swift */; };
@@ -61,28 +85,7 @@
 		6B0000000000000000000018 /* WatchSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0000000000000000000018 /* WatchSettingsView.swift */; };
 		6B0000000000000000000019 /* WatchManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0000000000000000000001 /* WatchManifest.swift */; };
 		6B0000000000000000000020 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 5A0000000000000000000019 /* Assets.xcassets */; };
-		6B0000000000000000000030 /* OfflineListenWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 5A000000000000000000001C /* OfflineListenWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		1B00000000000000000001E0 /* JSChallengeSolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000001E0 /* JSChallengeSolver.swift */; };
-		1B00000000000000000001E1 /* POTokenMinter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000001E1 /* POTokenMinter.swift */; };
-		1B00000000000000000001E2 /* PythonBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000001E2 /* PythonBridge.swift */; };
-		1B00000000000000000001E3 /* ytdlp in Resources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000001E3 /* ytdlp */; };
-		1B00000000000000000002E1 /* BrowseModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E1 /* BrowseModels.swift */; };
-		1B00000000000000000002E2 /* BrowseStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E2 /* BrowseStore.swift */; };
-		1B00000000000000000002E3 /* FeedParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E3 /* FeedParser.swift */; };
-		1B00000000000000000002E4 /* BrowseFetchers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E4 /* BrowseFetchers.swift */; };
-		1B00000000000000000002E5 /* AIDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E5 /* AIDiscovery.swift */; };
-		1B00000000000000000002E6 /* BrowseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E6 /* BrowseView.swift */; };
-		1B0000000000000000004E01 /* EveryNoiseData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000004E01 /* EveryNoiseData.swift */; };
-		1B0000000000000000004E02 /* NoiseMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000004E02 /* NoiseMapView.swift */; };
-		1B0000000000000000004E03 /* EveryNoiseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000004E03 /* EveryNoiseView.swift */; };
-		1B0000000000000000004E05 /* DiscographyBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000004E05 /* DiscographyBrowserView.swift */; };
-		1B0000000000000000004E06 /* EveryNoiseUpdates.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000004E06 /* EveryNoiseUpdates.swift */; };
-		1B0000000000000000004E04 /* EveryNoiseData in Resources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000004E04 /* EveryNoiseData */; };
-		1B00000000000000000002E7 /* BrowseSourceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E7 /* BrowseSourceView.swift */; };
-		1B00000000000000000002E8 /* BrowsePreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E8 /* BrowsePreviewView.swift */; };
-		1B00000000000000000002E9 /* BlogAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E9 /* BlogAgent.swift */; };
-		1B00000000000000000002EA /* DiscographyAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002EA /* DiscographyAgent.swift */; };
-		1B00000000000000000002EB /* PythonGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002EB /* PythonGate.swift */; };
+		6B0000000000000000000030 /* OfflineListenWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 5A000000000000000000001C /* OfflineListenWatch.app */; platformFilters = (ios, ); settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -102,12 +105,35 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		3D00000000000000000000A4 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				3B00000000000000000000A4 /* ShareExtension.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6D0000000000000000000010 /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				6B0000000000000000000030 /* OfflineListenWatch.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		1A00000000000000000000A1 /* OfflineListenApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineListenApp.swift; sourceTree = "<group>"; };
 		1A00000000000000000000A2 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		1A00000000000000000000A3 /* LibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStore.swift; sourceTree = "<group>"; };
-		1A00000000000000000000BE /* LocalSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSync.swift; sourceTree = "<group>"; };
-		1A00000000000000000000BF /* MixtapeViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MixtapeViews.swift; sourceTree = "<group>"; };
 		1A00000000000000000000A4 /* DownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadManager.swift; sourceTree = "<group>"; };
 		1A00000000000000000000A5 /* YouTubeExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubeExtractor.swift; sourceTree = "<group>"; };
 		1A00000000000000000000A7 /* PlaybackManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackManager.swift; sourceTree = "<group>"; };
@@ -115,36 +141,63 @@
 		1A00000000000000000000A9 /* DownloadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadView.swift; sourceTree = "<group>"; };
 		1A00000000000000000000AA /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		1A00000000000000000000AB /* PlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerView.swift; sourceTree = "<group>"; };
+		1A00000000000000000000AC /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		1A00000000000000000000AD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		1A0000000000000000005F04 /* Info-macOS.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Info-macOS.plist"; sourceTree = "<group>"; };
+		1A00000000000000000000AE /* OfflineListen.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OfflineListen.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		1A00000000000000000000AF /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B0 /* LogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogView.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B1 /* AudioStreamDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioStreamDownloader.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B2 /* CompositeExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositeExtractor.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B3 /* YouTubeKitExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubeKitExtractor.swift; sourceTree = "<group>"; };
-		1A0000000000000000003A06 /* VimeoExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VimeoExtractor.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B4 /* VideoAudioExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoAudioExtractor.swift; sourceTree = "<group>"; };
-		1A0000000000000000003A05 /* HLSDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HLSDownloader.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B5 /* VideoMerger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoMerger.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B6 /* FolderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderView.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B7 /* ChapterFetcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChapterFetcher.swift; sourceTree = "<group>"; };
-		1A00000000000000000000BD /* PlaylistResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaylistResolver.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B8 /* ChapterSplitter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChapterSplitter.swift; sourceTree = "<group>"; };
 		1A00000000000000000000B9 /* AISettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISettings.swift; sourceTree = "<group>"; };
 		1A00000000000000000000BA /* AnthropicClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnthropicClient.swift; sourceTree = "<group>"; };
+		1A00000000000000000000BB /* AIOrganizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIOrganizer.swift; sourceTree = "<group>"; };
+		1A00000000000000000000BC /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		1A00000000000000000000BD /* PlaylistResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaylistResolver.swift; sourceTree = "<group>"; };
+		1A00000000000000000000BE /* LocalSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSync.swift; sourceTree = "<group>"; };
+		1A00000000000000000000BF /* MixtapeViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MixtapeViews.swift; sourceTree = "<group>"; };
+		1A00000000000000000001E0 /* JSChallengeSolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSChallengeSolver.swift; sourceTree = "<group>"; };
+		1A00000000000000000001E1 /* POTokenMinter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = POTokenMinter.swift; sourceTree = "<group>"; };
+		1A00000000000000000001E2 /* PythonBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PythonBridge.swift; sourceTree = "<group>"; };
+		1A00000000000000000001E3 /* ytdlp */ = {isa = PBXFileReference; lastKnownFileType = folder; path = ytdlp; sourceTree = "<group>"; };
+		1A00000000000000000002E1 /* BrowseModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseModels.swift; sourceTree = "<group>"; };
+		1A00000000000000000002E2 /* BrowseStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseStore.swift; sourceTree = "<group>"; };
+		1A00000000000000000002E3 /* FeedParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedParser.swift; sourceTree = "<group>"; };
+		1A00000000000000000002E4 /* BrowseFetchers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseFetchers.swift; sourceTree = "<group>"; };
+		1A00000000000000000002E5 /* AIDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIDiscovery.swift; sourceTree = "<group>"; };
+		1A00000000000000000002E6 /* BrowseView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseView.swift; sourceTree = "<group>"; };
+		1A00000000000000000002E7 /* BrowseSourceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseSourceView.swift; sourceTree = "<group>"; };
+		1A00000000000000000002E8 /* BrowsePreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowsePreviewView.swift; sourceTree = "<group>"; };
+		1A00000000000000000002E9 /* BlogAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlogAgent.swift; sourceTree = "<group>"; };
+		1A00000000000000000002EA /* DiscographyAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscographyAgent.swift; sourceTree = "<group>"; };
+		1A00000000000000000002EB /* PythonGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PythonGate.swift; sourceTree = "<group>"; };
+		1A0000000000000000005F01 /* Platform.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Platform.swift; sourceTree = "<group>"; };
+		1A000000000000000005F03 /* MacYtDlp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacYtDlp.swift; sourceTree = "<group>"; };
+		1A000000000000000005F02 /* NoiseMapViewMac.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoiseMapViewMac.swift; sourceTree = "<group>"; };
 		1A0000000000000000003A01 /* SpotifyRef.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifyRef.swift; sourceTree = "<group>"; };
 		1A0000000000000000003A02 /* SpotifyClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifyClient.swift; sourceTree = "<group>"; };
 		1A0000000000000000003A03 /* SpotifySettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifySettings.swift; sourceTree = "<group>"; };
 		1A0000000000000000003A04 /* SpotifyResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifyResolver.swift; sourceTree = "<group>"; };
-		1A00000000000000000000BB /* AIOrganizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIOrganizer.swift; sourceTree = "<group>"; };
-		1A00000000000000000000BC /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
-		1A00000000000000000000AC /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		1A00000000000000000000AD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		1A00000000000000000000AE /* OfflineListen.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OfflineListen.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		3A00000000000000000000A5 /* SharedInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedInbox.swift; sourceTree = "<group>"; };
-		3A00000000000000000000A6 /* OfflineListen.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OfflineListen.entitlements; sourceTree = "<group>"; };
+		1A0000000000000000003A05 /* HLSDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HLSDownloader.swift; sourceTree = "<group>"; };
+		1A0000000000000000003A06 /* VimeoExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VimeoExtractor.swift; sourceTree = "<group>"; };
+		1A0000000000000000004E01 /* EveryNoiseData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EveryNoiseData.swift; sourceTree = "<group>"; };
+		1A0000000000000000004E02 /* NoiseMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoiseMapView.swift; sourceTree = "<group>"; };
+		1A0000000000000000004E03 /* EveryNoiseView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EveryNoiseView.swift; sourceTree = "<group>"; };
+		1A0000000000000000004E04 /* EveryNoiseData */ = {isa = PBXFileReference; lastKnownFileType = folder; path = EveryNoiseData; sourceTree = "<group>"; };
+		1A0000000000000000004E05 /* DiscographyBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscographyBrowserView.swift; sourceTree = "<group>"; };
+		1A0000000000000000004E06 /* EveryNoiseUpdates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EveryNoiseUpdates.swift; sourceTree = "<group>"; };
 		3A00000000000000000000A1 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		3A00000000000000000000A2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		3A00000000000000000000A3 /* ShareExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ShareExtension.entitlements; sourceTree = "<group>"; };
 		3A00000000000000000000A4 /* ShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		3A00000000000000000000A5 /* SharedInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedInbox.swift; sourceTree = "<group>"; };
+		3A00000000000000000000A6 /* OfflineListen.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OfflineListen.entitlements; sourceTree = "<group>"; };
 		5A0000000000000000000001 /* WatchManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchManifest.swift; sourceTree = "<group>"; };
 		5A0000000000000000000002 /* WatchSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSync.swift; sourceTree = "<group>"; };
 		5A0000000000000000000003 /* WatchFolderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchFolderView.swift; sourceTree = "<group>"; };
@@ -161,27 +214,6 @@
 		5A000000000000000000001A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		5A000000000000000000001B /* OfflineListenWatch.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OfflineListenWatch.entitlements; sourceTree = "<group>"; };
 		5A000000000000000000001C /* OfflineListenWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OfflineListenWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		1A00000000000000000001E0 /* JSChallengeSolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSChallengeSolver.swift; sourceTree = "<group>"; };
-		1A00000000000000000001E1 /* POTokenMinter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = POTokenMinter.swift; sourceTree = "<group>"; };
-		1A00000000000000000001E2 /* PythonBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PythonBridge.swift; sourceTree = "<group>"; };
-		1A00000000000000000001E3 /* ytdlp */ = {isa = PBXFileReference; lastKnownFileType = folder; path = ytdlp; sourceTree = "<group>"; };
-		1A00000000000000000002E1 /* BrowseModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseModels.swift; sourceTree = "<group>"; };
-		1A00000000000000000002E2 /* BrowseStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseStore.swift; sourceTree = "<group>"; };
-		1A00000000000000000002E3 /* FeedParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedParser.swift; sourceTree = "<group>"; };
-		1A00000000000000000002E4 /* BrowseFetchers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseFetchers.swift; sourceTree = "<group>"; };
-		1A00000000000000000002E5 /* AIDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIDiscovery.swift; sourceTree = "<group>"; };
-		1A00000000000000000002E6 /* BrowseView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseView.swift; sourceTree = "<group>"; };
-		1A0000000000000000004E01 /* EveryNoiseData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EveryNoiseData.swift; sourceTree = "<group>"; };
-		1A0000000000000000004E02 /* NoiseMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoiseMapView.swift; sourceTree = "<group>"; };
-		1A0000000000000000004E03 /* EveryNoiseView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EveryNoiseView.swift; sourceTree = "<group>"; };
-		1A0000000000000000004E05 /* DiscographyBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscographyBrowserView.swift; sourceTree = "<group>"; };
-		1A0000000000000000004E06 /* EveryNoiseUpdates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EveryNoiseUpdates.swift; sourceTree = "<group>"; };
-		1A0000000000000000004E04 /* EveryNoiseData */ = {isa = PBXFileReference; lastKnownFileType = folder; path = EveryNoiseData; sourceTree = "<group>"; };
-		1A00000000000000000002E7 /* BrowseSourceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseSourceView.swift; sourceTree = "<group>"; };
-		1A00000000000000000002E8 /* BrowsePreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowsePreviewView.swift; sourceTree = "<group>"; };
-		1A00000000000000000002E9 /* BlogAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlogAgent.swift; sourceTree = "<group>"; };
-		1A00000000000000000002EA /* DiscographyAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscographyAgent.swift; sourceTree = "<group>"; };
-		1A00000000000000000002EB /* PythonGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PythonGate.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -241,6 +273,9 @@
 				1A00000000000000000002E9 /* BlogAgent.swift */,
 				1A00000000000000000002EA /* DiscographyAgent.swift */,
 				1A00000000000000000002EB /* PythonGate.swift */,
+				1A0000000000000000005F01 /* Platform.swift */,
+				1A000000000000000005F03 /* MacYtDlp.swift */,
+				1A000000000000000005F02 /* NoiseMapViewMac.swift */,
 				1A00000000000000000002E6 /* BrowseView.swift */,
 				1A00000000000000000002E7 /* BrowseSourceView.swift */,
 				1A00000000000000000002E8 /* BrowsePreviewView.swift */,
@@ -284,9 +319,30 @@
 				1A0000000000000000004E04 /* EveryNoiseData */,
 				1A00000000000000000000AC /* Assets.xcassets */,
 				1A00000000000000000000AD /* Info.plist */,
+				1A0000000000000000005F04 /* Info-macOS.plist */,
 				3A00000000000000000000A6 /* OfflineListen.entitlements */,
 			);
 			path = OfflineListen;
+			sourceTree = "<group>";
+		};
+		1C00000000000000000000C3 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				1A00000000000000000000AE /* OfflineListen.app */,
+				3A00000000000000000000A4 /* ShareExtension.appex */,
+				5A000000000000000000001C /* OfflineListenWatch.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		3C00000000000000000000A1 /* ShareExtension */ = {
+			isa = PBXGroup;
+			children = (
+				3A00000000000000000000A1 /* ShareViewController.swift */,
+				3A00000000000000000000A2 /* Info.plist */,
+				3A00000000000000000000A3 /* ShareExtension.entitlements */,
+			);
+			path = ShareExtension;
 			sourceTree = "<group>";
 		};
 		5C0000000000000000000001 /* OfflineListenWatch */ = {
@@ -308,26 +364,6 @@
 			path = OfflineListenWatch;
 			sourceTree = "<group>";
 		};
-		3C00000000000000000000A1 /* ShareExtension */ = {
-			isa = PBXGroup;
-			children = (
-				3A00000000000000000000A1 /* ShareViewController.swift */,
-				3A00000000000000000000A2 /* Info.plist */,
-				3A00000000000000000000A3 /* ShareExtension.entitlements */,
-			);
-			path = ShareExtension;
-			sourceTree = "<group>";
-		};
-		1C00000000000000000000C3 /* Products */ = {
-			isa = PBXGroup;
-			children = (
-				1A00000000000000000000AE /* OfflineListen.app */,
-				3A00000000000000000000A4 /* ShareExtension.appex */,
-				5A000000000000000000001C /* OfflineListenWatch.app */,
-			);
-			name = Products;
-			sourceTree = "<group>";
-		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -340,6 +376,7 @@
 				1D00000000000000000000D3 /* Resources */,
 				3D00000000000000000000A4 /* Embed App Extensions */,
 				6D0000000000000000000010 /* Embed Watch Content */,
+				1D0000000000000000005F10 /* Embed yt-dlp (macOS) */,
 			);
 			buildRules = (
 			);
@@ -435,31 +472,6 @@
 		};
 /* End PBXProject section */
 
-/* Begin PBXCopyFilesBuildPhase section */
-		3D00000000000000000000A4 /* Embed App Extensions */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 13;
-			files = (
-				3B00000000000000000000A4 /* ShareExtension.appex in Embed App Extensions */,
-			);
-			name = "Embed App Extensions";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		6D0000000000000000000010 /* Embed Watch Content */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
-			dstSubfolderSpec = 16;
-			files = (
-				6B0000000000000000000030 /* OfflineListenWatch.app in Embed Watch Content */,
-			);
-			name = "Embed Watch Content";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXCopyFilesBuildPhase section */
-
 /* Begin PBXResourcesBuildPhase section */
 		1D00000000000000000000D3 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
@@ -488,6 +500,25 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		1D0000000000000000005F10 /* Embed yt-dlp (macOS) */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/tools/embed-ytdlp.sh",
+			);
+			name = "Embed yt-dlp (macOS)";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/tools/embed-ytdlp.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		1D00000000000000000000D1 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -509,6 +540,9 @@
 				1B00000000000000000002E9 /* BlogAgent.swift in Sources */,
 				1B00000000000000000002EA /* DiscographyAgent.swift in Sources */,
 				1B00000000000000000002EB /* PythonGate.swift in Sources */,
+				1B0000000000000000005F01 /* Platform.swift in Sources */,
+				1B000000000000000005F03 /* MacYtDlp.swift in Sources */,
+				1B000000000000000005F02 /* NoiseMapViewMac.swift in Sources */,
 				1B00000000000000000002E6 /* BrowseView.swift in Sources */,
 				1B00000000000000000002E7 /* BrowseSourceView.swift in Sources */,
 				1B00000000000000000002E8 /* BrowsePreviewView.swift in Sources */,
@@ -583,11 +617,13 @@
 /* Begin PBXTargetDependency section */
 		3000000000000000000000A2 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
+			platformFilters = (ios, );
 			target = 3000000000000000000000A1 /* ShareExtension */;
 			targetProxy = 3000000000000000000000A3 /* PBXContainerItemProxy */;
 		};
 		6000000000000000000000A2 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
+			platformFilters = (ios, );
 			target = 6000000000000000000000A1 /* OfflineListenWatch */;
 			targetProxy = 6000000000000000000000A3 /* PBXContainerItemProxy */;
 		};
@@ -652,20 +688,32 @@
 				CODE_SIGN_ENTITLEMENTS = OfflineListen/OfflineListen.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 6DD9DB2M63;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = OfflineListen/Info.plist;
+				"INFOPLIST_FILE[sdk=macosx*]" = "OfflineListen/Info-macOS.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.offlinelisten.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
-				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -680,20 +728,32 @@
 				CODE_SIGN_ENTITLEMENTS = OfflineListen/OfflineListen.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 6DD9DB2M63;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = OfflineListen/Info.plist;
+				"INFOPLIST_FILE[sdk=macosx*]" = "OfflineListen/Info-macOS.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.offlinelisten.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
-				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -707,6 +767,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 6DD9DB2M63;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = ShareExtension/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -733,6 +794,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 6DD9DB2M63;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = ShareExtension/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -764,7 +826,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 6DD9DB2M63;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = OfflineListenWatch/Info.plist;
@@ -798,7 +860,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 6DD9DB2M63;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = OfflineListenWatch/Info.plist;

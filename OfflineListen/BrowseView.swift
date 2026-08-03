@@ -150,7 +150,7 @@ struct BrowseView: View {
                 }
             }
         }
-        .listStyle(.insetGrouped)
+        .insetGroupedListStyle()
         .miniPlayerClearance()
         .refreshable { await browse.refreshAll() }
     }
@@ -387,7 +387,11 @@ struct CountryListView: View {
                         .foregroundStyle(.primary)
                 }
             }
+            #if os(macOS)
+            .searchable(text: $search)
+            #else
             .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always))
+            #endif
             .navigationTitle("Choose a Country")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 import PhotosUI
 
 // MARK: - Colors
@@ -17,8 +16,7 @@ extension Color {
 
     /// "#RRGGBB" for this color (alpha dropped), nil if it can't be resolved.
     var mixtapeHex: String? {
-        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        guard UIColor(self).getRed(&r, green: &g, blue: &b, alpha: &a) else { return nil }
+        guard let (r, g, b, _) = rgbaComponents else { return nil }
         func byte(_ c: CGFloat) -> Int { Int((max(0, min(1, c)) * 255).rounded()) }
         return String(format: "#%02X%02X%02X", byte(r), byte(g), byte(b))
     }
@@ -51,14 +49,14 @@ extension MixtapeStyle {
 /// includes the file's modification date, so a replaced cover is picked up on
 /// the next render without manual invalidation.
 enum MixtapeCoverLoader {
-    private static let cache = NSCache<NSString, UIImage>()
+    private static let cache = NSCache<NSString, PlatformImage>()
 
-    static func image(for folder: Folder) -> UIImage? {
+    static func image(for folder: Folder) -> PlatformImage? {
         guard let url = folder.coverURL else { return nil }
         let modified = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
         let key = "\(url.path)#\(modified?.timeIntervalSince1970 ?? 0)" as NSString
         if let hit = cache.object(forKey: key) { return hit }
-        guard let image = UIImage(contentsOfFile: url.path) else { return nil }
+        guard let image = PlatformImage(contentsOfFile: url.path) else { return nil }
         cache.setObject(image, forKey: key)
         return image
     }
@@ -72,7 +70,7 @@ enum MixtapeCoverLoader {
 /// so a pan can reach — but never pass — the image's edges in any frame.
 /// Without an image, a quiet gradient stands in.
 struct MixtapeBackground: View {
-    let image: UIImage?
+    let image: PlatformImage?
     let zoom: Double
     let offsetX: Double
     let offsetY: Double
@@ -80,7 +78,7 @@ struct MixtapeBackground: View {
     /// How far (as a fraction of the frame's size) the aspect-filled, zoomed
     /// image can pan in each axis before its edge enters the frame. Zero when
     /// there's no overflow (or no image).
-    static func offsetLimits(image: UIImage?, zoom: Double, frame: CGSize) -> CGSize {
+    static func offsetLimits(image: PlatformImage?, zoom: Double, frame: CGSize) -> CGSize {
         guard let size = image?.size, size.width > 0, size.height > 0,
               frame.width > 0, frame.height > 0 else { return .zero }
         let scale = max(frame.width / size.width, frame.height / size.height) * max(zoom, 1)
@@ -93,7 +91,7 @@ struct MixtapeBackground: View {
             let limits = Self.offsetLimits(image: image, zoom: zoom, frame: geo.size)
             ZStack {
                 if let image {
-                    Image(uiImage: image)
+                    Image(platformImage: image)
                         .resizable()
                         .scaledToFill()
                         .frame(width: geo.size.width, height: geo.size.height)
@@ -147,7 +145,7 @@ struct MixtapeTitle: View {
 struct MixtapeRowContent: View {
     let title: String
     let style: MixtapeStyle
-    let image: UIImage?
+    let image: PlatformImage?
     var count: Int?
     var showsSync: Bool = false
     var playingHere: Bool = false
@@ -193,7 +191,7 @@ struct MixtapeRowContent: View {
 struct MixtapeHeaderContent: View {
     let title: String
     let style: MixtapeStyle
-    let image: UIImage?
+    let image: PlatformImage?
     var height: CGFloat = 150
 
     var body: some View {
@@ -257,7 +255,7 @@ struct FolderRowLabel: View {
     @ViewBuilder
     private var leadingIcon: some View {
         if let image = FolderArtwork.image(for: folder) {
-            Image(uiImage: image)
+            Image(platformImage: image)
                 .resizable()
                 .scaledToFill()
                 .frame(width: 38, height: 38)
@@ -308,7 +306,7 @@ struct MixtapeCoverEditor: View {
     @State private var style: MixtapeStyle
     /// A newly picked image (preview + the JPEG that will be saved); nil while
     /// the existing cover (if any) is kept.
-    @State private var pickedImage: UIImage?
+    @State private var pickedImage: PlatformImage?
     @State private var pickedImageData: Data?
     @State private var pickerItem: PhotosPickerItem?
     @State private var showFontPicker = false
@@ -333,7 +331,7 @@ struct MixtapeCoverEditor: View {
         _style = State(initialValue: folder.mixtape)
     }
 
-    private var previewImage: UIImage? {
+    private var previewImage: PlatformImage? {
         pickedImage ?? MixtapeCoverLoader.image(for: folder)
     }
 
@@ -563,16 +561,8 @@ struct MixtapeCoverEditor: View {
     /// as the JPEG that will be written on Save.
     private func loadPicked(_ item: PhotosPickerItem) async {
         guard let data = try? await item.loadTransferable(type: Data.self),
-              var image = UIImage(data: data) else { return }
-        let maxDimension: CGFloat = 1600
-        let largest = max(image.size.width, image.size.height)
-        if largest > maxDimension {
-            let scale = maxDimension / largest
-            let newSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-            image = UIGraphicsImageRenderer(size: newSize).image { _ in
-                image.draw(in: CGRect(origin: .zero, size: newSize))
-            }
-        }
+              var image = PlatformImage(data: data) else { return }
+        image = image.downscaled(toLongestSide: 1600)
         guard let jpeg = image.jpegData(compressionQuality: 0.85) else { return }
         pickedImage = image
         pickedImageData = jpeg
@@ -594,9 +584,7 @@ struct MixtapeFontPicker: View {
     @Binding var fontName: String?
     @Environment(\.dismiss) private var dismiss
 
-    private let families = UIFont.familyNames.sorted {
-        $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
-    }
+    private let families = PlatformFonts.familyNames
 
     var body: some View {
         NavigationStack {

@@ -165,6 +165,7 @@ enum PythonBridge {
     /// reject-all shim is sufficient — and it prevents a real `posix_spawn` in the
     /// iOS sandbox, which is what the wrapper's own shim exists to avoid.
     private static func installFakePopen() {
+        #if canImport(PythonKit)
         let code = """
         import errno, os, subprocess
         class _OLFakePopen:
@@ -176,6 +177,7 @@ enum PythonBridge {
         let builtins = Python.import("builtins")
         let namespace = builtins.dict()
         builtins.exec(PythonObject(code), namespace)
+        #endif
     }
 
     /// Installs the callbacks and registers the plugin. Call at the top of the

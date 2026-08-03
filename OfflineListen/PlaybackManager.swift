@@ -1,7 +1,6 @@
 import Foundation
 import AVFoundation
 import MediaPlayer
-import UIKit
 
 /// Drives playback for the player screen and the lock screen / Control Center.
 ///
@@ -234,7 +233,7 @@ final class PlaybackManager: NSObject, ObservableObject {
 
         isPlaying = autoPlay
         if autoPlay {
-            try? AVAudioSession.sharedInstance().setActive(true)
+            AudioSession.activate()
             player.play()
             // Starting playback counts as listened — the track leaves the
             // Inbox and joins the Recent log. (The preview-save handoff opts
@@ -254,7 +253,7 @@ final class PlaybackManager: NSObject, ObservableObject {
     }
 
     private func resume() {
-        try? AVAudioSession.sharedInstance().setActive(true)
+        AudioSession.activate()
         player.play()
         isPlaying = true
         startTicker()
@@ -430,7 +429,11 @@ final class PlaybackManager: NSObject, ObservableObject {
     /// Without this the app went on claiming to be playing — the lock screen
     /// agreed — while the track it was on never finished, so the queue never
     /// moved again until playback was poked by hand.
+    /// macOS posts none of these — there's no audio session to be interrupted
+    /// on, and a Mac losing its headphones keeps playing out of the speakers —
+    /// so the whole mechanism compiles out there.
     private func observeAudioSession() {
+        #if os(iOS)
         // `object: nil` deliberately: these are posted about the shared
         // session, and there is only one, but which object they name has
         // varied across iOS releases — filtering on it is how an observer
@@ -446,8 +449,10 @@ final class PlaybackManager: NSObject, ObservableObject {
         ) { [weak self] note in
             Task { @MainActor in self?.handleRouteChange(note) }
         })
+        #endif
     }
 
+    #if os(iOS)
     private func handleInterruption(_ note: Notification) {
         guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
               let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
@@ -482,16 +487,12 @@ final class PlaybackManager: NSObject, ObservableObject {
         updateNowPlaying()
         persistState()
     }
+    #endif
 
     // MARK: - Audio session
 
     private func configureAudioSession() {
-        let session = AVAudioSession.sharedInstance()
-        do {
-            try session.setCategory(.playback, mode: .default)
-        } catch {
-            print("[PlaybackManager] audio session error: \(error)")
-        }
+        AudioSession.configureForPlayback()
     }
 
     // MARK: - Lock screen

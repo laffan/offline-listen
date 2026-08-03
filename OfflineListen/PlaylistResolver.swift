@@ -73,7 +73,10 @@ enum PlaylistURL {
 /// the link as a single download" — the caller falls back gracefully.
 enum PlaylistResolver {
     static func resolve(url: URL) async -> ResolvedPlaylist? {
-        #if canImport(YoutubeDL) && canImport(PythonKit)
+        // See `ChapterFetcher.fetch`: the Mac goes through the yt-dlp binary.
+        #if os(macOS)
+        return await MacYtDlp.playlist(for: url)
+        #elseif canImport(YoutubeDL) && canImport(PythonKit)
         let category = "Playlist"
         guard FileManager.default.fileExists(atPath: YoutubeDL.pythonModuleURL.path) else {
             appLog("yt-dlp module not present — can't resolve playlist.", level: .warning, category: category)

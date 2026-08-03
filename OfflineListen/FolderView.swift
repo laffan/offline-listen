@@ -55,7 +55,7 @@ struct FolderDetailView: View {
         }
         .navigationTitle(isMixtape ? "" : (folder?.name ?? "Folder"))
         .navigationBarTitleDisplayMode(.inline)
-        .environment(\.editMode, $editMode)
+        .editModeEnvironment($editMode)
         .editMetadataSheet(for: $editingTrack)
         .breakChaptersConfirm(for: $splittingTrack)
         .sheet(item: $chapterContext) { context in
@@ -159,7 +159,7 @@ struct FolderDetailView: View {
     private var coverHeader: some View {
         if let folder, let cover = FolderCover.image(for: folder, tracks: tracks) {
             Section {
-                Image(uiImage: cover)
+                Image(platformImage: cover)
                     .resizable()
                     .scaledToFit()
                     .frame(maxWidth: 220, maxHeight: 220)

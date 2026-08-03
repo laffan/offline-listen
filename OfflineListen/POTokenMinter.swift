@@ -161,8 +161,8 @@ final class POTokenMinter {
     }
 
     /// Ensures an off-screen 1×1 `WKWebView` exists in the key window's view
-    /// hierarchy — iOS only runs a WebView's JS reliably when it's actually in
-    /// the tree, so a detached view would silently never execute. The document is
+    /// hierarchy — a WebView only runs its JS reliably when it's actually in the
+    /// tree, so a detached view would silently never execute. The document is
     /// loaded with a `youtube.com` base URL so the BotGuard `fetch`es are
     /// same-origin.
     private func ensureWebView() -> WKWebView {
@@ -170,10 +170,16 @@ final class POTokenMinter {
         let config = WKWebViewConfiguration()
         let view = WKWebView(frame: CGRect(x: 0, y: 0, width: 1, height: 1), configuration: config)
         view.isHidden = true
+        #if canImport(UIKit)
         if let window = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene }).flatMap({ $0.windows }).first(where: { $0.isKeyWindow }) {
             window.addSubview(view)
         }
+        #elseif canImport(AppKit)
+        if let contentView = (NSApplication.shared.keyWindow ?? NSApplication.shared.windows.first)?.contentView {
+            contentView.addSubview(view)
+        }
+        #endif
         view.loadHTMLString("<!doctype html><html><head></head><body></body></html>",
                             baseURL: URL(string: "https://www.youtube.com"))
         webView = view

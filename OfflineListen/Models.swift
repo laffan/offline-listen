@@ -2,10 +2,27 @@ import Foundation
 
 /// Centralised filesystem locations for the app.
 enum AppPaths {
-    /// The app sandbox Documents directory. All downloaded audio lives here so it
-    /// survives relaunches and is available fully offline.
+    /// Where everything the app owns lives — downloaded audio, the library
+    /// index, artwork, the logs. All of it on local disk, so it survives
+    /// relaunches and works fully offline.
+    ///
+    /// On iOS that's the sandbox's Documents directory, which belongs to the app
+    /// alone. The Mac target isn't sandboxed (it has to spawn `yt-dlp`), so the
+    /// same call there would return the user's *real* `~/Documents` and strew a
+    /// music library, an index and a log file through it. Application Support is
+    /// where a Mac app is supposed to keep this, and a named subdirectory keeps
+    /// it all together and easy to throw away.
     static var documents: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        #if os(macOS)
+        let base = FileManager.default.urls(for: .applicationSupportDirectory,
+                                            in: .userDomainMask)[0]
+        let home = base.appendingPathComponent("OfflineListen", isDirectory: true)
+        // Unlike the iOS Documents directory, this one isn't created for us.
+        try? FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        return home
+        #else
+        return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        #endif
     }
 
     static var libraryIndex: URL {

@@ -26,6 +26,18 @@ struct SettingsView: View {
     /// you open.
     @AppStorage(ENUpdateSettings.enabledKey) private var everyNoiseUpdatesEnabled = false
 
+    #if os(macOS)
+    /// The resolved yt-dlp's version. Outer nil = still asking; inner nil = it
+    /// couldn't be run.
+    @State private var ytDlpVersion: String??
+    /// Which of the three copies is in use, phrased for the row.
+    @State private var ytDlpSource: String?
+    @State private var updatingYtDlp = false
+    @State private var ytDlpError: String?
+    /// Bumped after an update so the version and source are re-read.
+    @State private var ytDlpRevision = 0
+    #endif
+
     @State private var spotifyIDInput = ""
     @State private var spotifySecretInput = ""
     @State private var spotifyVerifyState: VerifyState = .idle
@@ -50,6 +62,9 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                #if os(macOS)
+                ytDlpSection
+                #endif
                 aiSection
                 spotifySection
                 everyNoiseDataSection
@@ -90,6 +105,90 @@ struct SettingsView: View {
     /// The dataset-freshness section: the opt-in, what browsing has turned up
     /// so far, and the export that carries it off the device for
     /// `tools/everynoise/merge_updates.py` to fold into the bundled map.
+    #if os(macOS)
+    /// Mac-only. iOS carries yt-dlp as an embedded Python module it fetches on
+    /// first use; the Mac runs the real binary — a copy ships with the app, and
+    /// **Update** fetches a newer one into Application Support that outranks it
+    /// (see `MacYtDlp`). Updating matters more than it sounds: yt-dlp tracks a
+    /// moving target, and a stale one shows up as downloads that used to work
+    /// and suddenly don't.
+    private var ytDlpSection: some View {
+        Section {
+            LabeledContent("Version") {
+                switch ytDlpVersion {
+                case .some(.some(let version)):
+                    Text(version).foregroundStyle(.primary)
+                case .some(.none):
+                    Text("Not available").foregroundStyle(.secondary)
+                case .none:
+                    ProgressView().controlSize(.small)
+                }
+            }
+
+            if let source = ytDlpSource {
+                LabeledContent("Source") {
+                    Text(source)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+
+            Button {
+                updateYtDlp()
+            } label: {
+                HStack {
+                    Text("Update yt-dlp")
+                    if updatingYtDlp {
+                        Spacer()
+                        ProgressView().controlSize(.small)
+                    }
+                }
+            }
+            .disabled(updatingYtDlp)
+
+            if let ytDlpError {
+                Text(ytDlpError)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
+
+            if !MacYtDlp.hasFFmpeg {
+                Text("No ffmpeg found. Downloads work, but video is limited to streams that already carry their audio, which caps the resolution some sites offer. `brew install ffmpeg` lifts it.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("yt-dlp")
+        } footer: {
+            Text("Downloads try the built-in extractors first and fall back to yt-dlp, which covers the hundreds of other sites. A copy ships with the app; Update fetches a newer one, and a Homebrew install is used ahead of the bundled copy.")
+        }
+        .task(id: ytDlpRevision) { await readYtDlpState() }
+    }
+
+    private func readYtDlpState() async {
+        ytDlpSource = MacYtDlp.resolve().map(MacYtDlp.sourceDescription(of:))
+        // Double optional: nil while the binary is still being asked,
+        // .some(nil) once it has answered that it can't run.
+        ytDlpVersion = .some(await MacYtDlp.version())
+    }
+
+    private func updateYtDlp() {
+        updatingYtDlp = true
+        ytDlpError = nil
+        ytDlpVersion = nil
+        Task {
+            do {
+                try await MacYtDlp.update()
+            } catch {
+                ytDlpError = error.localizedDescription
+            }
+            updatingYtDlp = false
+            ytDlpRevision += 1
+        }
+    }
+    #endif
+
     private var everyNoiseDataSection: some View {
         Section {
             Toggle("Collect updates as I browse", isOn: $everyNoiseUpdatesEnabled)

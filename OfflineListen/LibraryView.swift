@@ -1,11 +1,17 @@
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 
 /// Identifiable payload so a share sheet can be presented via `.sheet(item:)`.
 struct SharePayload: Identifiable {
     let id = UUID()
     let urls: [URL]
 }
+
+#if canImport(UIKit)
 
 /// Bridges `UIActivityViewController` (the system share sheet) into SwiftUI so
 /// downloaded files can be shared/exported (AirDrop, Files, Messages, …).
@@ -18,6 +24,94 @@ struct ActivityView: UIViewControllerRepresentable {
 
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
+
+#else
+
+/// The Mac's answer to the iOS share sheet.
+///
+/// `NSSharingServicePicker` is a popover that has to hang off a real view, so it
+/// can't simply *be* the sheet the way `UIActivityViewController` can. Instead
+/// this presents the small sheet a Mac user expects for "here are some files" —
+/// the list, then Reveal in Finder (the thing people actually reach for) and
+/// Share…, which anchors the system picker to its own button.
+struct ActivityView: View {
+    let items: [Any]
+    @Environment(\.dismiss) private var dismiss
+
+    private var urls: [URL] { items.compactMap { $0 as? URL } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(urls.count == 1 ? "Share File" : "Share \(urls.count) Files")
+                .font(.headline)
+
+            if !urls.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(urls, id: \.self) { url in
+                        Label(url.lastPathComponent, systemImage: "doc")
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .font(.callout)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            HStack {
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting(urls)
+                    dismiss()
+                } label: {
+                    Label("Reveal in Finder", systemImage: "folder")
+                }
+                .disabled(urls.isEmpty)
+
+                SharePickerButton(items: items)
+                    .disabled(items.isEmpty)
+
+                Spacer()
+
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 380)
+    }
+}
+
+/// A Share… button that opens `NSSharingServicePicker` anchored to itself.
+/// It has to be an AppKit button because the picker needs a concrete view and
+/// bounds to point its popover at, which SwiftUI won't hand out.
+private struct SharePickerButton: NSViewRepresentable {
+    let items: [Any]
+
+    func makeNSView(context: Context) -> NSButton {
+        let button = NSButton(title: "Share…", target: context.coordinator,
+                              action: #selector(Coordinator.present(_:)))
+        button.bezelStyle = .rounded
+        context.coordinator.items = items
+        return button
+    }
+
+    func updateNSView(_ button: NSButton, context: Context) {
+        context.coordinator.items = items
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator: NSObject {
+        var items: [Any] = []
+
+        @objc func present(_ sender: NSButton) {
+            guard !items.isEmpty else { return }
+            NSSharingServicePicker(items: items)
+                .show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+        }
+    }
+}
+
+#endif
 
 /// Manual metadata editor: edit the track title and artist by hand (handy when
 /// AI Organize doesn't get it quite right), with a Reset that restores the
@@ -285,9 +379,13 @@ struct LibraryView: View {
                 }
             }
             .navigationTitle("Library")
+            #if os(macOS)
+            .searchable(text: $searchText, prompt: "Search titles and artists")
+            #else
             .searchable(text: $searchText,
                         placement: .navigationBarDrawer(displayMode: .automatic),
                         prompt: "Search titles and artists")
+            #endif
             // Debounce: each keystroke cancels the pending pass, so the list is
             // rebuilt once the typing pauses rather than mid-word. Clearing the
             // field takes effect at once — there's nothing to wait for.
@@ -299,7 +397,7 @@ struct LibraryView: View {
                 query = searchText
             }
             .toolbar { toolbarContent }
-            .environment(\.editMode, $editMode)
+            .editModeEnvironment($editMode)
             .sheet(item: $share) { payload in
                 ActivityView(items: payload.urls)
             }

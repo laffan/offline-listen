@@ -1,5 +1,21 @@
 import Foundation
 
+/// The last-resort extractor behind every native one: yt-dlp.
+///
+/// Which yt-dlp differs by platform, and nothing above this line needs to know.
+/// iOS drives it as a Python module inside the embedded interpreter; the Mac
+/// can't link that stack at all (the Python/FFmpeg xcframeworks are iOS-only)
+/// and doesn't need to — it runs the real binary as a subprocess.
+enum DefaultExtractors {
+    static var ytDlp: MediaExtractor {
+        #if os(macOS)
+        return MacYtDlpExtractor()
+        #else
+        return YoutubeDLExtractor()
+        #endif
+    }
+}
+
 /// Tries a primary extractor and, if it fails, falls back to a secondary one.
 /// Cancellation is never treated as a failure — it propagates immediately so the
 /// Cancel button doesn't accidentally trigger the fallback.

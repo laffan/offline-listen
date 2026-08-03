@@ -284,7 +284,7 @@ final class DownloadManager: ObservableObject {
             primary: VimeoExtractor(), named: "Vimeo",
             fallback: CompositeExtractor(
                 primary: YouTubeKitExtractor(), named: "YouTubeKit",
-                fallback: YoutubeDLExtractor(), named: "yt-dlp"),
+                fallback: DefaultExtractors.ytDlp, named: "yt-dlp"),
             named: "YouTubeKit/yt-dlp")) {
         self.library = library
         self.aiOrganizer = aiOrganizer

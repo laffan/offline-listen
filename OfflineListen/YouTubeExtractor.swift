@@ -359,7 +359,19 @@ final class YoutubeDLExtractor: MediaExtractor {
     @discardableResult
     static func refreshEngine() async -> Bool {
         let category = "yt-dlp"
-        #if canImport(YoutubeDL)
+        #if os(macOS)
+        // Same intent as the iOS path — fetch a current yt-dlp over the stale
+        // one — but the Mac's engine is a binary rather than a Python module, so
+        // the new copy lands in Application Support and outranks both the system
+        // and bundled ones from then on.
+        do {
+            try await MacYtDlp.update()
+            return true
+        } catch {
+            appLog("Engine refresh failed: \(error.localizedDescription)", level: .error, category: category)
+            return false
+        }
+        #elseif canImport(YoutubeDL)
         appLog("Refreshing yt-dlp engine…", level: .warning, category: category)
         try? FileManager.default.removeItem(at: YoutubeDL.pythonModuleURL)
         do {

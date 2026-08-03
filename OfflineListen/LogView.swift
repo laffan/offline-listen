@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 struct LogView: View {
     @EnvironmentObject private var log: LogStore
@@ -31,7 +30,7 @@ struct LogView: View {
             }
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button {
-                    UIPasteboard.general.string = log.plainText
+                    Pasteboard.copy(log.plainText)
                     copied = true
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
                 } label: {

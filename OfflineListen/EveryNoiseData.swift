@@ -416,7 +416,7 @@ final class ENPreviewPlayer: ObservableObject {
             }
         }
 
-        try? AVAudioSession.sharedInstance().setActive(true)
+        AudioSession.activate()
         player.play()
     }
 
@@ -426,7 +426,7 @@ final class ENPreviewPlayer: ObservableObject {
         if isPlaying {
             player.pause()
         } else {
-            try? AVAudioSession.sharedInstance().setActive(true)
+            AudioSession.activate()
             player.play()
         }
         isPlaying.toggle()

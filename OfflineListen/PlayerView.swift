@@ -1,7 +1,6 @@
 import SwiftUI
 import AVFoundation
 import AVKit
-import UIKit
 
 /// Loads a track's saved album art off disk, memoized so the player and mini
 /// player don't re-decode a JPEG on every render (NSCache is thread-safe and
@@ -9,15 +8,15 @@ import UIKit
 /// track id — so an entry only goes stale when that file is *re*-written
 /// (Get Album Art over an existing cover), which is what `invalidate` is for.
 enum TrackArtwork {
-    private static let cache = NSCache<NSString, UIImage>()
+    private static let cache = NSCache<NSString, PlatformImage>()
 
-    static func image(for track: Track) -> UIImage? {
+    static func image(for track: Track) -> PlatformImage? {
         track.artworkFileName.flatMap(image(named:))
     }
 
-    static func image(named name: String) -> UIImage? {
+    static func image(named name: String) -> PlatformImage? {
         if let hit = cache.object(forKey: name as NSString) { return hit }
-        guard let image = UIImage(contentsOfFile: AppPaths.artwork.appendingPathComponent(name).path) else {
+        guard let image = PlatformImage(contentsOfFile: AppPaths.artwork.appendingPathComponent(name).path) else {
             return nil
         }
         cache.setObject(image, forKey: name as NSString)
@@ -36,12 +35,12 @@ enum TrackArtwork {
 /// thumbnail on its Library row, and the folder list redraws often enough that
 /// re-reading the JPEG per row would show.
 enum FolderArtwork {
-    private static let cache = NSCache<NSString, UIImage>()
+    private static let cache = NSCache<NSString, PlatformImage>()
 
-    static func image(for folder: Folder) -> UIImage? {
+    static func image(for folder: Folder) -> PlatformImage? {
         guard let name = folder.artworkFileName else { return nil }
         if let hit = cache.object(forKey: name as NSString) { return hit }
-        guard let image = UIImage(contentsOfFile: AppPaths.folderArtwork.appendingPathComponent(name).path) else {
+        guard let image = PlatformImage(contentsOfFile: AppPaths.folderArtwork.appendingPathComponent(name).path) else {
             return nil
         }
         cache.setObject(image, forKey: name as NSString)
@@ -83,7 +82,7 @@ enum FolderCover {
         cache.removeAll()
     }
 
-    static func image(for folder: Folder, tracks: [Track]) -> UIImage? {
+    static func image(for folder: Folder, tracks: [Track]) -> PlatformImage? {
         if let own = FolderArtwork.image(for: folder) { return own }
         guard let shared = sharedArtworkName(of: folder.id, tracks: tracks) else { return nil }
         return TrackArtwork.image(named: shared)
@@ -272,8 +271,12 @@ struct PlayerView: View {
                 }
             }
         }
+        // Fullscreen video hides the app's chrome. macOS has neither bar to
+        // hide — the window's own toolbar stays put — so this is iOS-only.
+        #if !os(macOS)
         .toolbar(.hidden, for: .navigationBar)
         .toolbar(.hidden, for: .tabBar)
+        #endif
         // Rotating into landscape surfaces the controls (there's no other cue
         // that they're there); a deliberate tap into portrait fullscreen asked
         // for a clean picture, so it starts with them out of the way.
@@ -292,7 +295,7 @@ struct PlayerView: View {
     private func artworkView(_ track: Track) -> some View {
         let live = library.track(withID: track.id) ?? track
         if let image = TrackArtwork.image(for: live) {
-            Image(uiImage: image)
+            Image(platformImage: image)
                 .resizable()
                 .scaledToFill()
                 .frame(width: 260, height: 260)
@@ -600,7 +603,7 @@ struct MiniPlayerBar: View {
                             // against the library's live copy — art can land
                             // after playback started); the kind icon otherwise.
                             if let image = TrackArtwork.image(for: library.track(withID: track.id) ?? track) {
-                                Image(uiImage: image)
+                                Image(platformImage: image)
                                     .resizable()
                                     .scaledToFill()
                                     .frame(width: 28, height: 28)
@@ -656,7 +659,7 @@ struct MiniPlayerBar: View {
             }
             .background(.bar)
             .overlay(alignment: .top) {
-                Color(.separator).frame(height: 0.5)
+                Color.appSeparator.frame(height: 0.5)
             }
         }
     }
@@ -784,6 +787,7 @@ private struct MiniPlayerClearanceModifier: ViewModifier {
 /// suite (the same one audio gets) drives playback. Shared with the Browse
 /// preview modal, which turns PiP off (a transient temp-file preview shouldn't
 /// detach into a floating window).
+#if canImport(UIKit)
 struct NativeVideoPlayer: UIViewControllerRepresentable {
     let player: AVPlayer
     var allowsPiP = true
@@ -804,3 +808,27 @@ struct NativeVideoPlayer: UIViewControllerRepresentable {
         }
     }
 }
+#else
+/// The Mac's `AVPlayerView` fills the same role as iOS's `AVPlayerViewController`
+/// here: the picture and PiP only, with its own controls off so the app's
+/// control suite stays the single one on screen.
+struct NativeVideoPlayer: NSViewRepresentable {
+    let player: AVPlayer
+    var allowsPiP = true
+
+    func makeNSView(context: Context) -> AVPlayerView {
+        let view = AVPlayerView()
+        view.player = player
+        view.controlsStyle = .none
+        view.allowsPictureInPicturePlayback = allowsPiP
+        view.videoGravity = .resizeAspect
+        return view
+    }
+
+    func updateNSView(_ view: AVPlayerView, context: Context) {
+        if view.player !== player {
+            view.player = player
+        }
+    }
+}
+#endif

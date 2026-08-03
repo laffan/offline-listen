@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 @main
 struct OfflineListenApp: App {
@@ -74,7 +77,24 @@ struct OfflineListenApp: App {
                 .environmentObject(localSync)
                 .environmentObject(everyNoiseUpdates)
                 .environmentObject(LogStore.shared)
+                #if os(macOS)
+                // Dark, whatever the system is set to. `preferredColorScheme`
+                // covers the app's own views; the `NSApp` appearance is what
+                // takes the AppKit chrome with it — title bar, scrollers, the
+                // open panel — which would otherwise stay light around a dark
+                // window.
+                .preferredColorScheme(.dark)
+                .onAppear {
+                    NSApplication.shared.appearance = NSAppearance(named: .darkAqua)
+                }
+                #endif
                 .task { playback.restoreLastSession() }
+                #if os(macOS)
+                // Whether the Mac has a yt-dlp binary behind the native
+                // extractors is the single biggest thing separating one install
+                // from another, so the log says which it is at launch.
+                .task { await MacYtDlp.logStartupState() }
+                #endif
                 .onAppear { importShared() }
                 .onOpenURL { _ in importShared() }
                 .onChange(of: scenePhase) { phase in
@@ -91,6 +111,12 @@ struct OfflineListenApp: App {
                     }
                 }
         }
+        #if os(macOS)
+        // The five-tab layout wants roughly an iPad's worth of room; without a
+        // default the Mac opens it at SwiftUI's small standard size, where the
+        // noise map and the library grid both arrive cramped.
+        .defaultSize(width: 1180, height: 800)
+        #endif
     }
 
     /// Drains any URLs handed over by the Share Extension and enqueues them.

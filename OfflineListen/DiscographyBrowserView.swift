@@ -461,7 +461,7 @@ struct DiscographyBrowserView: View {
                 }
             }
         }
-        .listStyle(.insetGrouped)
+        .insetGroupedListStyle()
         .miniPlayerClearance()
     }
 

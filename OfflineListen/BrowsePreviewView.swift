@@ -1,6 +1,10 @@
 import SwiftUI
 import AVFoundation
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 
 /// The Browse preview modal: downloads the item's media (through the same
 /// serial pipeline as the download queue — audio or video per `mode`), plays
@@ -141,14 +145,12 @@ struct BrowsePreviewView: View {
     private var titleBlock: some View {
         VStack(spacing: 4) {
             SelectableText(text: current.title,
-                           font: .preferredFont(forTextStyle: .headline),
-                           color: .label,
+                           style: .headline,
                            maxLines: 2,
                            onBrowseArtist: browseArtist)
             if !current.detail.isEmpty {
                 SelectableText(text: current.detail,
-                               font: .preferredFont(forTextStyle: .caption1),
-                               color: .secondaryLabel,
+                               style: .caption,
                                maxLines: 2,
                                onBrowseArtist: browseArtist)
             }
@@ -298,7 +300,7 @@ struct BrowsePreviewView: View {
             if model.isVideo, let player = model.player {
                 NativeVideoPlayer(player: player, allowsPiP: false)
                     .frame(maxWidth: .infinity)
-                    .frame(height: UIScreen.main.bounds.width * 9 / 16)
+                    .frame(height: PlatformScreen.width * 9 / 16)
             }
 
             VStack(spacing: 0) {
@@ -370,6 +372,27 @@ struct BrowsePreviewView: View {
     }
 }
 
+/// The two text roles the preview modal draws with, named here rather than
+/// passed as a platform font/colour pair so the call sites don't have to know
+/// whether they're talking to UIKit or AppKit.
+enum SelectableTextStyle {
+    case headline, caption
+
+    #if canImport(UIKit)
+    var font: UIFont {
+        UIFont.preferredFont(forTextStyle: self == .headline ? .headline : .caption1)
+    }
+    var color: UIColor { self == .headline ? .label : .secondaryLabel }
+    #else
+    var font: NSFont {
+        NSFont.preferredFont(forTextStyle: self == .headline ? .headline : .caption1)
+    }
+    var color: NSColor { self == .headline ? .labelColor : .secondaryLabelColor }
+    #endif
+}
+
+#if canImport(UIKit)
+
 /// Selectable text for the preview modal, backed by a non-editable
 /// `UITextView` because SwiftUI's `Text` offers no way to extend its selection
 /// menu. Selecting text adds a **Browse Artist** action alongside the system
@@ -377,10 +400,12 @@ struct BrowsePreviewView: View {
 /// "Ali Farka Touré — Savane") to `onBrowseArtist`.
 struct SelectableText: UIViewRepresentable {
     let text: String
-    let font: UIFont
-    let color: UIColor
+    let style: SelectableTextStyle
     let maxLines: Int
     let onBrowseArtist: @MainActor (String) -> Void
+
+    private var font: UIFont { style.font }
+    private var color: UIColor { style.color }
 
     func makeUIView(context: Context) -> UITextView {
         let view = UITextView()
@@ -443,6 +468,93 @@ struct SelectableText: UIViewRepresentable {
         }
     }
 }
+
+#else
+
+/// The AppKit twin: a non-editable `NSTextView` whose right-click menu grows a
+/// **Browse Artist** item whenever there's a selection.
+struct SelectableText: NSViewRepresentable {
+    let text: String
+    let style: SelectableTextStyle
+    let maxLines: Int
+    let onBrowseArtist: @MainActor (String) -> Void
+
+    func makeNSView(context: Context) -> NSTextView {
+        let view = NSTextView()
+        view.isEditable = false
+        view.isSelectable = true
+        view.drawsBackground = false
+        view.textContainerInset = .zero
+        view.textContainer?.lineFragmentPadding = 0
+        view.textContainer?.maximumNumberOfLines = maxLines
+        view.textContainer?.lineBreakMode = .byTruncatingTail
+        view.alignment = .center
+        view.delegate = context.coordinator
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return view
+    }
+
+    func updateNSView(_ view: NSTextView, context: Context) {
+        view.string = text
+        view.font = style.font
+        view.textColor = style.color
+        // Re-assert alignment: setting `string` resets the typing attributes,
+        // so without this the second render draws left-aligned.
+        view.alignment = .center
+        context.coordinator.onBrowseArtist = onBrowseArtist
+    }
+
+    /// Same story as UIKit's: a non-scrolling text view won't self-size inside
+    /// SwiftUI, so answer the proposal with the wrapped height.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextView, context: Context) -> CGSize? {
+        guard let width = proposal.width, width.isFinite, width > 0,
+              let container = nsView.textContainer,
+              let layoutManager = nsView.layoutManager else { return nil }
+        container.containerSize = CGSize(width: width, height: .greatestFiniteMagnitude)
+        layoutManager.ensureLayout(for: container)
+        let height = layoutManager.usedRect(for: container).height
+        return CGSize(width: width, height: height)
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onBrowseArtist: onBrowseArtist)
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var onBrowseArtist: @MainActor (String) -> Void
+        private var selected = ""
+
+        init(onBrowseArtist: @escaping @MainActor (String) -> Void) {
+            self.onBrowseArtist = onBrowseArtist
+        }
+
+        func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
+            let range = view.selectedRange()
+            guard range.length > 0,
+                  let text = view.string as NSString?,
+                  range.location + range.length <= text.length else { return menu }
+            selected = text.substring(with: range)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !selected.isEmpty else { return menu }
+
+            menu.addItem(.separator())
+            let item = NSMenuItem(title: "Browse Artist",
+                                  action: #selector(browseSelection), keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+            return menu
+        }
+
+        @objc private func browseSelection() {
+            let selection = selected
+            Task { @MainActor [weak self] in
+                self?.onBrowseArtist(selection)
+            }
+        }
+    }
+}
+
+#endif
 
 /// State machine + mini audio player behind the preview modal. Owns the temp
 /// file: it's deleted on teardown unless `saveToLibrary` moved it first.
@@ -613,7 +725,7 @@ final class BrowsePreviewModel: ObservableObject {
         }
 
         phase = .ready
-        try? AVAudioSession.sharedInstance().setActive(true)
+        AudioSession.activate()
         player.play()
         isPlaying = true
     }
@@ -623,7 +735,7 @@ final class BrowsePreviewModel: ObservableObject {
         if isPlaying {
             player.pause()
         } else {
-            try? AVAudioSession.sharedInstance().setActive(true)
+            AudioSession.activate()
             player.play()
         }
         isPlaying.toggle()

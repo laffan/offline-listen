@@ -1,5 +1,7 @@
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
 
 /// One dot of text on a noise map — a genre on the master map, or an artist
 /// on a genre's map. Coordinates are the site's own layout pixels (top-left
@@ -34,6 +36,8 @@ struct NoiseMapCenter: Equatable {
 /// (not the top-left corner), and a **scroll pill** hugs the right edge — a
 /// draggable dot mapped onto the full vertical scroll, since the genre map is
 /// ~15 screens tall and the system indicator can't be grabbed.
+#if canImport(UIKit)
+
 struct NoiseMapView: UIViewRepresentable {
     /// Identity of the dataset — rebuild only when this changes, never on
     /// ordinary SwiftUI re-renders.
@@ -476,3 +480,5 @@ extension UIColor {
                   alpha: 1)
     }
 }
+
+#endif
