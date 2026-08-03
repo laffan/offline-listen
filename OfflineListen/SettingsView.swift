@@ -1,6 +1,54 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+private extension View {
+    /// Settings' `Form`, dressed for the platform it's on.
+    ///
+    /// iOS needs nothing: a `Form` in a `NavigationStack` is already the
+    /// grouped, inset, section-spaced thing the rest of the app looks like.
+    ///
+    /// The Mac defaults to the **columns** style instead — labels right-aligned
+    /// in a narrow gutter, rows stretched the full width of the window, headers
+    /// butted straight up against the previous section's footer. That's the
+    /// right shape for a compact preferences pane and quite wrong for a full
+    /// window, where it reads as unstyled text. Two changes fix it:
+    ///
+    ///  - **`.grouped`** puts each section in its own rounded box, with the
+    ///    header above it and the footer beneath in secondary type — the same
+    ///    reading order iOS gives, and real space between sections.
+    ///  - **A capped, centred width.** Grouped rows fill whatever they're
+    ///    given, so in a 1180-point window a toggle's label and its switch end
+    ///    up a hand's width apart and the footer paragraphs run to unreadable
+    ///    measure. `SettingsMetrics.maxContentWidth` holds them to roughly the
+    ///    column System Settings uses. It doubles as a structural guard: with
+    ///    the content's width bounded, no row inside can drive the window's
+    ///    size (see `stepperRow` for what that costs when it can).
+    @ViewBuilder
+    func settingsFormChrome() -> some View {
+        #if os(macOS)
+        self
+            .formStyle(.grouped)
+            // The grouped style paints its own panel behind the scroll view.
+            // Capping the width would leave that panel as a lit rectangle with
+            // hard vertical edges down the middle of a dark window, so it goes
+            // and the section boxes float on the window's own background.
+            .scrollContentBackground(.hidden)
+            .frame(maxWidth: SettingsMetrics.maxContentWidth)
+            .frame(maxWidth: .infinity)
+        #else
+        self
+        #endif
+    }
+}
+
+#if os(macOS)
+private enum SettingsMetrics {
+    /// Wide enough for the longest footer paragraph to break naturally, narrow
+    /// enough that a row's label and its control stay visually paired.
+    static let maxContentWidth: CGFloat = 720
+}
+#endif
+
 /// The Settings tab. Top section configures AI-assisted organization (model +
 /// API key + the assist opt-in), then the Spotify credentials; Local Sync and
 /// the Blog Agent's limits sit below them, and the Log is a section beneath
@@ -72,6 +120,7 @@ struct SettingsView: View {
                 blogAgentSection
                 logSection
             }
+            .settingsFormChrome()
             .miniPlayerClearance()
             .navigationTitle("Settings")
             .fileImporter(isPresented: $showFolderPicker, allowedContentTypes: [.folder]) { result in
@@ -332,29 +381,60 @@ struct SettingsView: View {
 
     private var blogAgentSection: some View {
         Section {
-            Stepper(value: $blogAgentMaxPosts, in: BlogAgentSettings.postsRange) {
-                HStack {
-                    Text("Posts per refresh")
-                    Spacer()
-                    Text("\(blogAgentMaxPosts)")
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-            }
-            Stepper(value: $blogAgentMaxSongs, in: BlogAgentSettings.songsRange) {
-                HStack {
-                    Text("Songs per post")
-                    Spacer()
-                    Text("\(blogAgentMaxSongs)")
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-            }
+            stepperRow("Posts per refresh",
+                       value: $blogAgentMaxPosts,
+                       in: BlogAgentSettings.postsRange)
+            stepperRow("Songs per post",
+                       value: $blogAgentMaxSongs,
+                       in: BlogAgentSettings.songsRange)
         } header: {
             Text("Blog Agent")
         } footer: {
             Text("How many recent posts a Blog Agent source reads on each refresh, and how many tracks it may take from a single post (found links and mentioned tracks alike).")
         }
+    }
+
+    /// A stepper naming its setting and showing the current value.
+    ///
+    /// The two platforms build this differently, and the difference is not
+    /// cosmetic. iOS pushes the number to the trailing edge of the `Stepper`'s
+    /// own label with a `Spacer`, which is greedy — it takes whatever width it
+    /// is offered. On the Mac that is fatal: SwiftUI sizes the window to the
+    /// `Form`'s content, so a row that grows to fill the window makes the
+    /// window wider, which offers the row more width, which widens the window
+    /// again. AppKit runs the loop until it exceeds one constraints pass per
+    /// view and throws `NSGenericException` mid-layout — the window is a few
+    /// hundred thousand points wide by then — which took the whole Settings tab
+    /// down with it.
+    ///
+    /// So the Mac splits the row with `LabeledContent` instead, which divides
+    /// leading label from trailing content itself rather than being handed a
+    /// greedy spacer, and keeps the value beside the stepper it belongs to.
+    @ViewBuilder
+    private func stepperRow(_ title: String,
+                            value: Binding<Int>,
+                            in range: ClosedRange<Int>) -> some View {
+        #if os(macOS)
+        LabeledContent(title) {
+            HStack(spacing: 8) {
+                Text("\(value.wrappedValue)")
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                Stepper(title, value: value, in: range)
+                    .labelsHidden()
+            }
+        }
+        #else
+        Stepper(value: value, in: range) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text("\(value.wrappedValue)")
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+        }
+        #endif
     }
 
     // MARK: - AI
