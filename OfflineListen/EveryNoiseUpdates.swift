@@ -234,7 +234,7 @@ extension AppPaths {
         everyNoiseUpdates.appendingPathComponent("state.json")
     }
 
-    /// The record file's name, reused for the copy kept in the sync folder.
+    /// The record file's name, reused for the copy kept in the data folder.
     static let everyNoiseUpdatesFileName = "everynoise-updates.jsonl"
 }
 
@@ -252,8 +252,6 @@ final class ENUpdateStore: ObservableObject {
     /// that the request never competes with the shard load and the map's
     /// first layout, and short enough to still happen on a real visit.
     private static let settleDelay: TimeInterval = 4
-    /// One page of the artist search: Spotify's own maximum.
-    private static let pageSize = 50
 
     /// New artists recorded so far, and how many genres have been harvested.
     @Published private(set) var recordCount = 0
@@ -413,7 +411,7 @@ final class ENUpdateStore: ObservableObject {
 
         let hits: [SpotifyArtistHit]
         do {
-            hits = try await client.searchArtists(genre: genre.name, limit: Self.pageSize)
+            hits = try await client.searchArtists(genre: genre.name)
             lastError = nil
         } catch {
             if isCancellation(error) { return }

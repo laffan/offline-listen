@@ -836,6 +836,14 @@ point within them; and Spotify stopped serving `preview_url` to apps created
 after November 2024, so a harvested artist has **no 30-second snippet** (their
 discography still opens normally, and Scan skips them).
 
+**How many artists a visit brings back is Spotify's call, not ours.** The
+request asked for the documented maximum of 50 and got a **400 "Invalid
+limit"** — the same thing a client-credentials app gets from
+`/artists/{id}/albums`, on values the docs call valid. It now sends no `limit`
+at all and takes the server's default page, which is the only size guaranteed
+not to be refused. Fewer artists per genre than the ask; considerably more
+than the nothing a rejected request returns.
+
 **Why this can't get you rate limited.** It is one request per genre *visit*,
 behind four independent brakes: it's **opt-in**; only **one harvest runs at a
 time**, no closer than **20 seconds** apart and delayed a few seconds behind

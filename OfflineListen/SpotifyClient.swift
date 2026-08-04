@@ -593,12 +593,19 @@ struct SpotifyClient {
     /// It is not a catalogue read and deliberately isn't cached: the whole
     /// point is to see what the live catalogue says *now* versus what the
     /// 2024-frozen scrape recorded.
-    func searchArtists(genre: String, limit: Int = 50, offset: Int = 0) async throws -> [SpotifyArtistHit] {
+    func searchArtists(genre: String) async throws -> [SpotifyArtistHit] {
         // The quotes matter: `genre:deep house` filters on "deep" and searches
         // for "house", `genre:"deep house"` filters on the whole label.
         let raw = "genre:\"\(genre)\""
         let encoded = raw.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? raw
-        let data = try await get(path: "/search?q=\(encoded)&type=artist&limit=\(limit)&offset=\(offset)",
+        // No explicit `limit` or `offset`, for the same reason `artistAlbums`
+        // sends none: under a client-credentials app Spotify answers
+        // *"Invalid limit"* (400) to values its own docs call valid — this
+        // asked for the documented maximum of 50 and got nothing back at all.
+        // The server's default page is whatever it is happy to serve, which is
+        // the only size guaranteed not to 400. Fewer artists per genre than
+        // the ask, and far more than the zero a rejected request returns.
+        let data = try await get(path: "/search?q=\(encoded)&type=artist",
                                  describing: "artists in \"\(genre)\"")
         guard let response = try? JSONDecoder().decode(APIArtistSearch.self, from: data) else {
             throw SpotifyError.malformedResponse
