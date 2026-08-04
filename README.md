@@ -261,10 +261,9 @@ Five screens (tabs):
    refresh / songs per post limits for the Browse tab's Blog Agent sources),
    and the **Log** as a section beneath them.
    - **Every Noise Data.** An opt-in toggle that lets browsing the genre map
-     top the bundled dataset up, a tally of what it has found, and **Download
-     New Data** to share that off the device — with a sync folder configured
-     the same file is also kept in `OfflineListenData/` there, which the row
-     names (see
+     top the bundled dataset up, a tally of what it has found, **Download New
+     Data** to share that off the device, and a **Data Folder** to keep a copy
+     of it in — its own folder, unrelated to Local Sync (see
      [Keeping the dataset from ageing](#keeping-the-dataset-from-ageing)).
    - **Local Sync.** Pick a folder (in Files — On My iPhone, iCloud Drive, or
      any file provider) to sync part of the library with; see
@@ -810,15 +809,22 @@ across the map when the export is eventually merged. The global **Find
 Artist** index is derived from the bundled shards at build time, so it still
 only knows the artists the scrape had.
 
-**A copy rides along in the sync folder.** The records are only useful on a
+**A copy lands in a folder you choose.** The records are only useful on a
 computer, and Settings ▸ Download New Data plus a share sheet was the only way
-out. With a sync folder configured (Settings ▸ Local Sync) the same file is
-kept current in **`OfflineListenData/everynoise-updates.jsonl`** at the top of
-the **first** sync folder — rewritten whenever a harvest adds to it, when the
-sync folder changes, and at launch, and removed when the records are
-discarded. It's a copy: `Documents/` stays the original, an unreachable folder
-just means a stale copy until the next harvest, and the importer skips that
-one directory by name so it never comes back as a library folder.
+out. Settings ▸ Every Noise Data ▸ **Choose Data Folder…** picks anywhere the
+Files app can reach, and `everynoise-updates.jsonl` is kept current there —
+rewritten whenever a harvest adds to it, at launch, and on returning to the
+app (a size check skips the write when the copy is already current), and
+removed when the records are discarded. It's a copy: `Documents/` stays the
+original, and a folder that's unreachable just means a stale copy until next
+time. **Stop Writing to …** forgets the folder and leaves the file where it is.
+
+This is deliberately **its own folder, not a sync folder**. The two have
+nothing to do with each other — one mirrors music you want on this phone, the
+other drops a text file somewhere a computer will see it — and tying them
+together would mean changing where your music syncs also moved the records,
+and that pointing at a records folder adopted everything in it into your
+library. Separate bookmarks, chosen separately, changed separately.
 
 Two limits are inherent and recorded in `meta.json` rather than papered over:
 the site's layout came from Spotify's **audio-feature** API, withdrawn with
@@ -897,15 +903,6 @@ identical:
   it reads a plain *Syncing…* until the first count is in) / N changes waiting
   / Up to date.
 
-**`OfflineListenData/` is not part of the library.** The **first** sync folder
-also carries a directory of the app's own data — today the Every Noise
-harvest's records (see
-[Keeping the dataset from ageing](#keeping-the-dataset-from-ageing)), which
-are only useful on a computer. It travels *outward* only: no manifest entry,
-no journal op, and the importer skips it by exact top-level name, so it never
-comes back as a folder full of nothing playable. (A folder of that name deeper
-in the tree is an ordinary folder and syncs like one.)
-
 Synced items wear a **sync icon** (`arrow.triangle.2.circlepath`) but
 otherwise behave exactly like everything else — tap to play, reorder,
 classify, archive, send to the watch. Passes run on filesystem events
@@ -972,7 +969,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `OfflineListenApp.swift` | App entry; wires up the shared stores. |
 | `Models.swift` | `Track`, `Folder`, `DownloadMode`, `LibraryFilter`, `FolderSort`, paths, helpers. |
 | `LibraryStore.swift` | Persists the library to `Documents/library.json` and folders to `Documents/folders.json`; owns the local moves across the sync boundary (queueing replica ops), the importer's reconcile primitives, and the mixtape conversions. |
-| `LocalSync.swift` | `LocalSyncStore` — the sync folder's security-scoped bookmark, the stamped manifest + journaled exporter, the coordinated importer (placeholder-aware copies), kqueue monitoring, the off-main tree scan, and `mirrorAppData`, the app's own data drop in the first root's `OfflineListenData/`. |
+| `LocalSync.swift` | `LocalSyncStore` — the sync folder's security-scoped bookmark, the stamped manifest + journaled exporter, the coordinated importer (placeholder-aware copies), kqueue monitoring, and the off-main tree scan. |
 | `DownloadManager.swift` | Download queue (two concurrent slots) + `DownloadJob` + persisted history; `enqueueAlbum`, which files a whole release into one folder in tracklist order with the catalogue's own titles/artists; `ArtworkFetcher`, the best-effort album-art fetch a finished download (or an album folder) triggers. |
 | `PythonGate.swift` | App-wide async mutex serializing every embedded-Python call, so the two-slot pipeline never runs concurrent interpreter work. |
 | `YouTubeExtractor.swift` | `MediaExtractor` protocol + YoutubeDL-iOS impl + a mock. |
@@ -1009,7 +1006,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `DiscographyBrowserView.swift` | The shared album-first discography browser — artist header (portrait, name, Learn More bio), cover thumbnails/full art, names first, per-release YouTube search, **Download Album**, pinned Top 10 — plus its two catalogue providers (Spotify live / AI layout), the Wikipedia lookup + AI bio sheet, and the Browse-source wrapper that caches the first pass. |
 | `BrowseView.swift` | The Browse tab: sources grouped by type, add-source sheet, refresh, and the world button into the Every Noise browser. |
 | `EveryNoiseData.swift` | The bundled Every Noise dataset: models, the lazy/LRU shard-loading store, the memory-mapped global artist search (`ENArtistIndex`), and the 30-second preview player. |
-| `EveryNoiseUpdates.swift` | `ENUpdateStore` — the opt-in, heavily throttled Spotify harvest that records what the frozen dataset is missing as you browse; the exportable JSONL it writes for `tools/everynoise/merge_updates.py` (mirrored into the sync folder); and `merged(_:genre:)`, which draws the findings onto the genre's map straight away. |
+| `EveryNoiseUpdates.swift` | `ENUpdateStore` — the opt-in, heavily throttled Spotify harvest that records what the frozen dataset is missing as you browse; the exportable JSONL it writes for `tools/everynoise/merge_updates.py`; `merged(_:genre:)`, which draws the findings onto the genre's map straight away; and `ENDataFolder`, the separately bookmarked folder a copy of the records is kept in. |
 | `NoiseMapView.swift` | The virtualized `UIScrollView` scatter map (spatial grid + recycled labels) both noise maps render through — opens centered on its canvas, with the draggable scroll-pill ring on the right edge. |
 | `EveryNoiseView.swift` | The Every Noise browser: Map/List/Scan modes + Find at both levels (with the root's genre/artist toggle), the scan transport, and the artist bar whose "+" opens the live discography (or creates Artist sources when Spotify isn't set up). |
 | `EveryNoiseData/` | Bundled (folder reference): `genres.json` index + per-genre artist shards from the one-time `tools/everynoise/scrape.py`, plus the derived `artists.idx.z` from `build_artist_index.py`. |

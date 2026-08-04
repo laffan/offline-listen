@@ -64,6 +64,9 @@ struct SettingsView: View {
     @State private var keyInput = ""
     @State private var verifyState: VerifyState = .idle
     @State private var showFolderPicker = false
+    /// The Every Noise harvest's own folder picker — a separate concern from
+    /// the sync roots above, and a separate importer.
+    @State private var showDataFolderPicker = false
     /// Drives the share sheet that hands the collected dataset updates off
     /// the device, and the confirmation before throwing them away.
     @State private var exportingUpdates = false
@@ -126,6 +129,11 @@ struct SettingsView: View {
             .fileImporter(isPresented: $showFolderPicker, allowedContentTypes: [.folder]) { result in
                 if case .success(let url) = result {
                     localSync.addRoot(url)
+                }
+            }
+            .fileImporter(isPresented: $showDataFolderPicker, allowedContentTypes: [.folder]) { result in
+                if case .success(let url) = result {
+                    everyNoiseUpdates.chooseDataFolder(url)
                 }
             }
             .sheet(isPresented: $exportingUpdates) {
@@ -263,14 +271,31 @@ struct SettingsView: View {
                     .foregroundStyle(.orange)
             }
 
-            // With a sync folder configured the export is already happening on
-            // its own; say so, so nobody hunts for a share sheet they don't
-            // need. Named so it can be found in Files.
-            if let syncRoot = localSync.roots.first {
-                Label("Also kept in \(syncRoot.name)/\(AppPaths.syncAppDataDirName)",
-                      systemImage: "arrow.triangle.2.circlepath")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+            // A folder of its own, quite apart from Local Sync's: this is one
+            // text file for a computer to pick up, not part of the library
+            // mirror, and nobody should have to change where their music syncs
+            // to change where this lands.
+            if let folder = everyNoiseUpdates.dataFolderName {
+                LabeledContent("Data Folder") {
+                    HStack(spacing: 6) {
+                        if everyNoiseUpdates.dataFolderUnreachable {
+                            Image(systemName: "exclamationmark.triangle")
+                                .foregroundStyle(.orange)
+                        }
+                        Text(folder).foregroundStyle(.secondary)
+                    }
+                }
+                Button(role: .destructive) {
+                    everyNoiseUpdates.clearDataFolder()
+                } label: {
+                    Label("Stop Writing to \(folder)", systemImage: "folder.badge.minus")
+                }
+            } else {
+                Button {
+                    showDataFolderPicker = true
+                } label: {
+                    Label("Choose Data Folder…", systemImage: "folder")
+                }
             }
 
             Button {
@@ -291,7 +316,7 @@ struct SettingsView: View {
             Text("Every Noise Data")
         } footer: {
             Text(spotify.isConfigured
-                 ? "The bundled genre map is a one-time scrape of a site that froze in late 2024. With this on, opening a genre in the Every Noise browser also asks Spotify — once per genre, at most a few times a minute, never while Spotify is rate limiting — which artists it files under that label now, and records the ones the map is missing. Nothing changes in the app; the findings collect in a file you export here and merge into the dataset with tools/everynoise/merge_updates.py before a rebuild."
+                 ? "The bundled genre map is a one-time scrape of a site that froze in late 2024. With this on, opening a genre in the Every Noise browser also asks Spotify — once per genre, at most a few times a minute, never while Spotify is rate limiting — which artists it files under that label now, and records the ones the map is missing. They show up on that genre's map straight away, and collect in a file to merge into the dataset with tools/everynoise/merge_updates.py before a rebuild.\n\nA Data Folder keeps a copy of that file wherever you point it — anywhere in Files — so it can be picked up without a share sheet. It has nothing to do with Local Sync below: separate folder, chosen and changed separately, and nothing in it joins your library."
                  : "Needs Spotify credentials (above). With them saved, browsing the Every Noise map can also collect the artists and genres Spotify has added since the map was scraped, for merging into the dataset at build time.")
         }
     }

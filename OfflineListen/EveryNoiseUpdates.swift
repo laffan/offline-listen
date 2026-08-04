@@ -68,6 +68,151 @@ enum ENUpdateSettings {
     static var isEnabled: Bool {
         UserDefaults.standard.bool(forKey: enabledKey)
     }
+
+    /// Security-scoped bookmark for the folder the records are written to.
+    static let dataFolderBookmarkKey = "everyNoiseDataFolderBookmark"
+}
+
+// MARK: - The folder the records are written to
+
+/// A user-chosen folder that the collected records are kept in, so the file
+/// is somewhere a computer can reach without a share sheet.
+///
+/// **Deliberately its own folder, not the library's sync folder.** The two
+/// have nothing to do with each other: one mirrors music you want on this
+/// phone, the other drops a developer-ish text file somewhere convenient. Tied
+/// together, changing where the music syncs would silently move the records
+/// too (and picking a records folder would mean adopting it as a sync root,
+/// with everything in it landing in your library). Separate bookmarks, chosen
+/// separately, changed separately.
+///
+/// It writes exactly one file, named after the record file itself, and
+/// creates no directory of its own — whatever you point it at is where the
+/// file lands.
+@MainActor
+final class ENDataFolder {
+    /// The resolved folder, or nil when none is configured (or its provider
+    /// is unreachable this session).
+    private(set) var url: URL?
+    /// What Settings calls it — kept even when the folder can't be resolved,
+    /// so the row can say which folder is missing rather than going blank.
+    private(set) var name: String?
+
+    init() {
+        resolve()
+    }
+
+    var isConfigured: Bool { name != nil }
+
+    /// Adopts a folder freshly picked in Settings. The caller must still hold
+    /// its security scope (the file importer grants it) for the bookmark.
+    func choose(_ folder: URL) -> Bool {
+        let accessing = folder.startAccessingSecurityScopedResource()
+        defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
+        do {
+            let bookmark = try folder.bookmarkData()
+            UserDefaults.standard.set(bookmark, forKey: ENUpdateSettings.dataFolderBookmarkKey)
+        } catch {
+            appLog("Couldn't bookmark the Every Noise data folder: \(error.localizedDescription)",
+                   level: .error, category: "Browse")
+            return false
+        }
+        release()
+        resolve()
+        appLog("Every Noise data folder set to \"\(folder.lastPathComponent)\".",
+               level: .success, category: "Browse")
+        return url != nil
+    }
+
+    /// Forgets the folder. Whatever was written there stays where it is —
+    /// that's the point of having put it somewhere you can reach.
+    func clear() {
+        release()
+        UserDefaults.standard.removeObject(forKey: ENUpdateSettings.dataFolderBookmarkKey)
+        url = nil
+        name = nil
+    }
+
+    /// Writes `data` as `fileName` in the folder; empty data removes it.
+    /// Coordinated and off the main actor, because the folder may well be a
+    /// cloud provider's and either call can block on the network.
+    func write(_ data: Data, named fileName: String) {
+        guard let folder = url else { return }
+        let file = folder.appendingPathComponent(fileName)
+        Task.detached(priority: .utility) {
+            guard !data.isEmpty else {
+                Self.coordinatedDelete(at: file)
+                return
+            }
+            // The record file only ever grows, so equal sizes mean equal
+            // contents — worth checking, since this runs on every launch and
+            // writing into a cloud folder is neither free nor silent.
+            if Self.byteCount(of: file) == data.count { return }
+            Self.coordinatedWrite(data, to: file, name: fileName)
+        }
+    }
+
+    private func resolve() {
+        guard let bookmark = UserDefaults.standard.data(forKey: ENUpdateSettings.dataFolderBookmarkKey) else {
+            return
+        }
+        var stale = false
+        do {
+            let resolved = try URL(resolvingBookmarkData: bookmark, bookmarkDataIsStale: &stale)
+            name = resolved.lastPathComponent
+            guard resolved.startAccessingSecurityScopedResource() else {
+                throw CocoaError(.fileReadNoPermission)
+            }
+            if stale, let fresh = try? resolved.bookmarkData() {
+                UserDefaults.standard.set(fresh, forKey: ENUpdateSettings.dataFolderBookmarkKey)
+            }
+            url = resolved
+        } catch {
+            // Keep the name: the folder may simply be offline, and a row that
+            // says which folder is unreachable beats one that says nothing.
+            url = nil
+            appLog("Couldn't open the Every Noise data folder: \(error.localizedDescription)",
+                   level: .warning, category: "Browse")
+        }
+    }
+
+    private func release() {
+        url?.stopAccessingSecurityScopedResource()
+        url = nil
+    }
+
+    nonisolated private static func byteCount(of url: URL) -> Int? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path))
+            .flatMap { ($0[.size] as? NSNumber)?.intValue }
+    }
+
+    nonisolated private static func coordinatedWrite(_ data: Data, to url: URL, name: String) {
+        var coordinationError: NSError?
+        NSFileCoordinator().coordinate(writingItemAt: url, options: .forReplacing,
+                                       error: &coordinationError) { writeURL in
+            do {
+                try data.write(to: writeURL, options: .atomic)
+                appLog("Wrote \(name) (\(data.count / 1024) KB) to the Every Noise data folder.",
+                       level: .debug, category: "Browse")
+            } catch {
+                appLog("Couldn't write \(name) to the Every Noise data folder: \(error.localizedDescription)",
+                       level: .warning, category: "Browse")
+            }
+        }
+        if let coordinationError {
+            appLog("Every Noise data folder unavailable: \(coordinationError.localizedDescription)",
+                   level: .warning, category: "Browse")
+        }
+    }
+
+    nonisolated private static func coordinatedDelete(at url: URL) {
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        var coordinationError: NSError?
+        NSFileCoordinator().coordinate(writingItemAt: url, options: .forDeleting,
+                                       error: &coordinationError) { writeURL in
+            try? FileManager.default.removeItem(at: writeURL)
+        }
+    }
 }
 
 extension AppPaths {
@@ -127,12 +272,21 @@ final class ENUpdateStore: ObservableObject {
     /// of the bundled dataset.
     @Published private(set) var harvestVersion = 0
 
+    /// The name of the chosen data folder, published so Settings' row follows
+    /// a change without being told.
+    @Published private(set) var dataFolderName: String?
+
     var hasRecords: Bool { recordCount > 0 }
 
-    /// Hands the accumulated record file to whoever mirrors app data into the
-    /// sync folder — wired to `LocalSyncStore` in the app entry, and left nil
-    /// on a build (or a device) with no sync configured.
-    var syncMirror: ((Data) -> Void)?
+    /// Where a copy of the records is kept, when a folder has been chosen —
+    /// its own thing, quite apart from the library's sync folders.
+    private let dataFolder = ENDataFolder()
+
+    init() {
+        // The folder resolves in its own init; this is only publishing what it
+        // found, so Settings has a name to show before anything else runs.
+        dataFolderName = dataFolder.name
+    }
 
     /// The file Settings exports, when there's anything in it.
     var exportURL: URL? {
@@ -302,7 +456,7 @@ final class ENUpdateStore: ObservableObject {
             // The genre whose map is very likely still on screen: bumping the
             // version is what makes these artists appear on it now.
             harvestVersion += 1
-            mirrorToSyncFolder()
+            writeToDataFolder()
         }
         saveState()
         publishCounts()
@@ -452,21 +606,43 @@ final class ENUpdateStore: ObservableObject {
         }
     }
 
-    // MARK: The copy in the sync folder
+    // MARK: The copy in the data folder
 
-    /// Writes the record file into `OfflineListenData/` in the **first** sync
-    /// folder, whenever it changes.
+    /// Picks the folder the records are kept in. Its own folder on purpose —
+    /// see `ENDataFolder`.
+    @discardableResult
+    func chooseDataFolder(_ folder: URL) -> Bool {
+        let ok = dataFolder.choose(folder)
+        dataFolderName = dataFolder.name
+        if ok { writeToDataFolder() }
+        return ok
+    }
+
+    /// Stops keeping a copy. The file already written stays where it is.
+    func clearDataFolder() {
+        dataFolder.clear()
+        dataFolderName = nil
+        appLog("Every Noise data folder cleared — the file already there is untouched.",
+               category: "Browse")
+    }
+
+    /// True when a folder is configured but can't be opened right now (its
+    /// provider is offline, or it's been moved) — Settings says so rather than
+    /// leaving someone to wonder why nothing appears in it.
+    var dataFolderUnreachable: Bool {
+        dataFolder.isConfigured && dataFolder.url == nil
+    }
+
+    /// Writes the records into the chosen folder, whenever they change.
     ///
-    /// The records are only useful off the device — `merge_updates.py` eats
-    /// them — and until now the only way out was Settings ▸ Download New Data
-    /// and a share sheet. A configured sync folder is already a two-way door
-    /// to a computer, so the file simply lives there too, kept current. It's a
-    /// copy, not a move: `Documents/` stays the original, and a sync folder
-    /// that's unreachable (provider offline) just means the copy is stale
-    /// until the next harvest.
-    func mirrorToSyncFolder() {
-        guard let syncMirror else { return }
-        syncMirror((try? Data(contentsOf: AppPaths.everyNoiseUpdatesFile)) ?? Data())
+    /// They're only useful off the device — `merge_updates.py` eats them — and
+    /// the only way out used to be Settings ▸ Download New Data and a share
+    /// sheet. It's a copy, not a move: `Documents/` stays the original, and an
+    /// unreachable folder just means the copy is stale until next time.
+    func writeToDataFolder() {
+        guard dataFolder.url != nil else { return }
+        dataFolder.write((try? Data(contentsOf: AppPaths.everyNoiseUpdatesFile)) ?? Data(),
+                         named: AppPaths.everyNoiseUpdatesFileName)
     }
 
     /// Throws away everything collected — after an export has been merged
@@ -484,16 +660,18 @@ final class ENUpdateStore: ObservableObject {
         stateLoaded = true
         lastError = nil
         publishCounts()
-        // The sync folder's copy goes with it — leaving it there would offer
+        // The data folder's copy goes with it — leaving it there would offer
         // a merge of records the app no longer believes in.
-        mirrorToSyncFolder()
+        writeToDataFolder()
         appLog("Every Noise updates cleared.", category: "Browse")
     }
 
-    /// Loads the counts for the Settings screen without waiting for a harvest.
+    /// Loads the counts (and the data folder's name) for the Settings screen
+    /// without waiting for a harvest.
     func refreshCounts() {
         loadIfNeeded()
         publishCounts()
+        dataFolderName = dataFolder.name
     }
 
     // MARK: Helpers

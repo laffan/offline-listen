@@ -121,9 +121,6 @@ final class LocalSyncStore: ObservableObject {
     private let library: LibraryStore
     private var records: [SyncRootRecord] = []
     private var resolvedURLs: [UUID: URL] = [:]
-    /// The primary root as last published, so `onPrimaryRootChanged` fires on
-    /// a real change rather than on every republish.
-    private var lastPrimaryPath: String?
 
     private static let legacyBookmarkKey = "localSyncBookmark"
     private static var rootsURL: URL { AppPaths.documents.appendingPathComponent("sync-roots.json") }
@@ -255,56 +252,6 @@ final class LocalSyncStore: ObservableObject {
 
     private func publishStates() {
         roots = records.map { SyncRootState(id: $0.id, name: $0.name, url: resolvedURLs[$0.id]) }
-        let primary = primaryRootURL?.standardizedFileURL.path
-        if primary != lastPrimaryPath {
-            lastPrimaryPath = primary
-            onPrimaryRootChanged?()
-        }
-    }
-
-    // MARK: - App data in the sync folder
-
-    /// The folder the app's own data is mirrored into: the **first** sync
-    /// folder configured, when it's resolvable. First rather than all of them
-    /// because this is one copy of one thing, not a mirror of the library —
-    /// writing it into every root would just be several stale copies to keep
-    /// straight.
-    var primaryRootURL: URL? {
-        records.first.flatMap { resolvedURLs[$0.id] }
-    }
-
-    /// Fires when the primary root changes — one configured, one removed, or
-    /// the bookmarks resolved at launch — so whoever mirrors data into it can
-    /// write a fresh copy. Wired in the app entry.
-    var onPrimaryRootChanged: (() -> Void)?
-
-    /// Writes `data` to `OfflineListenData/<fileName>` in the primary sync
-    /// folder; empty data removes it. Coordinated and off the main actor, like
-    /// every other write into a replica — a cloud provider can block for a
-    /// while on either.
-    ///
-    /// Nothing here touches the manifest or the journal: this is app data
-    /// travelling *out*, not a synced library item, and the importer skips the
-    /// directory by name.
-    func mirrorAppData(named fileName: String, data: Data) {
-        guard let root = primaryRootURL else { return }
-        Task.detached(priority: .utility) {
-            let dir = root.appendingPathComponent(AppPaths.syncAppDataDirName, isDirectory: true)
-            let file = dir.appendingPathComponent(fileName)
-            guard !data.isEmpty else {
-                _ = Self.coordinatedDelete(at: file)
-                return
-            }
-            // The record file only ever grows, so equal sizes mean equal
-            // contents — worth checking, since this runs on every launch and
-            // writing to a cloud folder is neither free nor silent.
-            if Self.stamp(of: file)?.size == Int64(data.count) { return }
-            guard Self.coordinatedCreateDir(at: dir) else { return }
-            if Self.coordinatedWrite(data, to: file) {
-                appLog("Mirrored \(fileName) (\(data.count / 1024) KB) into the sync folder.",
-                       level: .debug, category: "Sync")
-            }
-        }
     }
 
     // MARK: - Legacy migration (single sync folder → roots list)
@@ -668,11 +615,6 @@ final class LocalSyncStore: ObservableObject {
             if name.hasPrefix(".") { continue }
             let isDirectory = (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
             let relative = relativePath(of: entry, from: root)
-            // The app's own data drop (see `mirrorAppData`) sits at the top of
-            // the folder and is not part of the library. Matched on the exact
-            // top-level path, so a user folder of the same name further down
-            // still syncs like any other.
-            if isDirectory, relative == AppPaths.syncAppDataDirName { continue }
             if isDirectory {
                 let dataDir = entry.appendingPathComponent(AppPaths.mixtapeDataDirName, isDirectory: true)
                 let styleURL = dataDir.appendingPathComponent("style.json")
@@ -798,24 +740,6 @@ final class LocalSyncStore: ObservableObject {
             }
         }
         return moved && coordinationError == nil
-    }
-
-    /// Coordinated write of one file — the app-data mirror's counterpart to
-    /// `coordinatedCopy`, for bytes the app holds rather than a file it has.
-    nonisolated private static func coordinatedWrite(_ data: Data, to url: URL) -> Bool {
-        var coordinationError: NSError?
-        var written = false
-        NSFileCoordinator().coordinate(writingItemAt: url, options: .forReplacing,
-                                       error: &coordinationError) { writeURL in
-            do {
-                try data.write(to: writeURL, options: .atomic)
-                written = true
-            } catch {
-                appLog("Couldn't write \(url.lastPathComponent) into the sync folder: \(error.localizedDescription)",
-                       level: .warning, category: "Sync")
-            }
-        }
-        return written && coordinationError == nil
     }
 
     nonisolated private static func coordinatedWriteMixtapeData(into dataDir: URL, style: Data, cover: Data?) -> Bool {

@@ -24,8 +24,7 @@ struct OfflineListenApp: App {
         let library = LibraryStore()
         // Resolves the sync-folder bookmark and kicks the first sync pass
         // (export any journaled changes, then reconcile against the folder).
-        let localSync = LocalSyncStore(library: library)
-        _localSync = StateObject(wrappedValue: localSync)
+        _localSync = StateObject(wrappedValue: LocalSyncStore(library: library))
         let aiSettings = AISettingsStore()
         let aiOrganizer = AIOrganizer(library: library, settings: aiSettings)
         let spotifySettings = SpotifySettingsStore()
@@ -37,17 +36,7 @@ struct OfflineListenApp: App {
                                                               aiOrganizer: aiOrganizer,
                                                               spotifySettings: spotifySettings))
         _browse = StateObject(wrappedValue: BrowseStore(aiSettings: aiSettings))
-        // The harvest's records are only useful on a computer, so a copy rides
-        // along in the first sync folder — written whenever a harvest adds to
-        // it, and re-written when the sync folder itself changes.
-        let everyNoiseUpdates = ENUpdateStore()
-        _everyNoiseUpdates = StateObject(wrappedValue: everyNoiseUpdates)
-        everyNoiseUpdates.syncMirror = { [weak localSync] data in
-            localSync?.mirrorAppData(named: AppPaths.everyNoiseUpdatesFileName, data: data)
-        }
-        localSync.onPrimaryRootChanged = { [weak everyNoiseUpdates] in
-            everyNoiseUpdates?.mirrorToSyncFolder()
-        }
+        _everyNoiseUpdates = StateObject(wrappedValue: ENUpdateStore())
         let playback = PlaybackManager(library: library)
         _playback = StateObject(wrappedValue: playback)
 
@@ -103,10 +92,11 @@ struct OfflineListenApp: App {
                 }
                 #endif
                 .task { playback.restoreLastSession() }
-                // The sync folder's copy of the harvest, brought up to date at
-                // launch — the wiring above only fires on a *change* of sync
-                // folder, and the roots resolve before it exists.
-                .task { everyNoiseUpdates.mirrorToSyncFolder() }
+                // The copy of the harvest's records in its chosen folder,
+                // brought up to date at launch (it may have been collecting on
+                // another device, or the folder may have been offline last
+                // time). Skipped outright when no folder is configured.
+                .task { everyNoiseUpdates.writeToDataFolder() }
                 #if os(macOS)
                 // Whether the Mac has a yt-dlp binary behind the native
                 // extractors is the single biggest thing separating one install
@@ -121,11 +111,11 @@ struct OfflineListenApp: App {
                         // Catch anything that changed in the sync folder while
                         // the app was in the background.
                         localSync.scheduleRescan()
-                        // And catch a folder that was unreachable last time we
-                        // tried to leave the harvest's records in it. The write
-                        // is skipped when the copy is already current, so this
-                        // costs nothing in the ordinary case.
-                        everyNoiseUpdates.mirrorToSyncFolder()
+                        // And catch a data folder that was unreachable last
+                        // time we tried to leave the harvest's records in it.
+                        // The write is skipped when the copy is already
+                        // current, so this costs nothing in the ordinary case.
+                        everyNoiseUpdates.writeToDataFolder()
                     } else {
                         playback.saveState()
                         // Snapshot the download history so completed rows (with
