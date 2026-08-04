@@ -45,6 +45,27 @@ struct ENArtist: Codable, Hashable, Identifiable {
     let preview: String?
     /// Spotify artist id, when the page carried one.
     let spotify: String?
+    /// True for a row the app **harvested** from Spotify rather than one the
+    /// bundled scrape carried (see `ENUpdateStore`). No shard has this key, so
+    /// everything from the dataset decodes `nil`. Two things follow from it,
+    /// and they say the same thing — the map doesn't really know where this
+    /// artist goes yet: the position is arbitrary (hashed into the genre's
+    /// existing spread), and the popularity order puts them last.
+    let harvested: Bool?
+
+    var isHarvested: Bool { harvested == true }
+
+    init(name: String, x: Int, y: Int, color: String, size: Int,
+         preview: String? = nil, spotify: String? = nil, harvested: Bool? = nil) {
+        self.name = name
+        self.x = x
+        self.y = y
+        self.color = color
+        self.size = size
+        self.preview = preview
+        self.spotify = spotify
+        self.harvested = harvested
+    }
 
     /// Shard rows have no ids of their own; position disambiguates the rare
     /// same-name collision within one genre.

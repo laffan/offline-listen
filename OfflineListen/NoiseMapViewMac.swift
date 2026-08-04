@@ -23,6 +23,10 @@ struct NoiseMapView: NSViewRepresentable {
     /// ordinary SwiftUI re-renders.
     let mapID: String
     let items: [NoiseMapItem]
+    /// Bumped by the caller when `items` changes for the **same** map — the
+    /// Every Noise harvest adding artists to a genre already on screen. Kept
+    /// apart from `mapID` because a rebuild re-centers the canvas.
+    var itemsVersion: Int = 0
     /// The item drawn inverted (its color as background), e.g. what's playing.
     var highlightedID: String?
     var centerRequest: NoiseMapCenter?
@@ -63,7 +67,9 @@ struct NoiseMapView: NSViewRepresentable {
         c.onTap = onTap
         c.setBottomInset(bottomInset)
         if c.mapID != mapID {
-            c.rebuild(mapID: mapID, items: items)
+            c.rebuild(mapID: mapID, items: items, version: itemsVersion)
+        } else if c.itemsVersion != itemsVersion {
+            c.refresh(items: items, version: itemsVersion)
         }
         c.setHighlight(highlightedID)
         if let request = centerRequest, request.token != c.lastCenterToken {
@@ -89,6 +95,7 @@ struct NoiseMapView: NSViewRepresentable {
         var lastCenterToken: UUID?
 
         private(set) var mapID = ""
+        private(set) var itemsVersion = 0
         private var items: [NoiseMapItem] = []
         /// Precomputed label frames in content coordinates, parallel to `items`.
         private var frames: [CGRect] = []
@@ -128,10 +135,28 @@ struct NoiseMapView: NSViewRepresentable {
             }
         }
 
-        func rebuild(mapID: String, items: [NoiseMapItem]) {
+        /// A different dataset: lay it out and open centered on the canvas.
+        func rebuild(mapID: String, items: [NoiseMapItem], version: Int) {
             self.mapID = mapID
-            self.items = items
+            self.itemsVersion = version
             highlightedID = nil
+            layout(items)
+            pendingCenterID = nil
+            pendingInitialCenter = true
+            applyInitialCenterIfReady()
+            updateVisible()
+        }
+
+        /// The same dataset with rows added — relaid out where the reader left
+        /// it, no re-centering and no loss of the highlight.
+        func refresh(items: [NoiseMapItem], version: Int) {
+            itemsVersion = version
+            layout(items)
+            updateVisible()
+        }
+
+        private func layout(_ items: [NoiseMapItem]) {
+            self.items = items
 
             for label in visible.values { label.removeFromSuperview() }
             visible.removeAll()
@@ -176,10 +201,6 @@ struct NoiseMapView: NSViewRepresentable {
 
             let contentSize = CGSize(width: maxX + Self.padding, height: maxY + Self.padding)
             contentView?.frame = CGRect(origin: .zero, size: contentSize)
-            pendingCenterID = nil
-            pendingInitialCenter = true
-            applyInitialCenterIfReady()
-            updateVisible()
         }
 
         /// Scroll and resize both land here; re-evaluate only when the viewport

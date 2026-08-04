@@ -263,6 +263,16 @@ struct SettingsView: View {
                     .foregroundStyle(.orange)
             }
 
+            // With a sync folder configured the export is already happening on
+            // its own; say so, so nobody hunts for a share sheet they don't
+            // need. Named so it can be found in Files.
+            if let syncRoot = localSync.roots.first {
+                Label("Also kept in \(syncRoot.name)/\(AppPaths.syncAppDataDirName)",
+                      systemImage: "arrow.triangle.2.circlepath")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
             Button {
                 exportingUpdates = true
             } label: {

@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// Keeping the bundled Every Noise dataset from ageing, one browsed genre at
 /// a time.
@@ -80,13 +81,16 @@ extension AppPaths {
 
     /// The append-only record file — the thing Settings exports.
     static var everyNoiseUpdatesFile: URL {
-        everyNoiseUpdates.appendingPathComponent("everynoise-updates.jsonl")
+        everyNoiseUpdates.appendingPathComponent(everyNoiseUpdatesFileName)
     }
 
     /// Harvest bookkeeping (which genres, how many requests today).
     static var everyNoiseUpdatesState: URL {
         everyNoiseUpdates.appendingPathComponent("state.json")
     }
+
+    /// The record file's name, reused for the copy kept in the sync folder.
+    static let everyNoiseUpdatesFileName = "everynoise-updates.jsonl"
 }
 
 // MARK: - The store
@@ -117,8 +121,18 @@ final class ENUpdateStore: ObservableObject {
     /// The last thing that went wrong, for the Settings row. Cleared by a
     /// harvest that succeeds.
     @Published private(set) var lastError: String?
+    /// Bumped whenever the harvest records something new. A genre on screen
+    /// reads it through `merged(_:genre:)`, which is what puts freshly found
+    /// artists on the map **as they arrive** rather than at the next rebuild
+    /// of the bundled dataset.
+    @Published private(set) var harvestVersion = 0
 
     var hasRecords: Bool { recordCount > 0 }
+
+    /// Hands the accumulated record file to whoever mirrors app data into the
+    /// sync folder — wired to `LocalSyncStore` in the app entry, and left nil
+    /// on a build (or a device) with no sync configured.
+    var syncMirror: ((Data) -> Void)?
 
     /// The file Settings exports, when there's anything in it.
     var exportURL: URL? {
@@ -146,13 +160,24 @@ final class ENUpdateStore: ObservableObject {
     /// re-harvest months later doesn't write the same rows twice. Rebuilt
     /// from the file on first use.
     private var recorded: Set<String> = []
+    /// The same records grouped by the genre they were found under — what
+    /// `merged(_:genre:)` draws from.
+    private var byGenre: [String: [ENUpdateRecord]] = [:]
+    /// Memoized `ENArtist` renderings per genre, tagged with the harvest
+    /// version they were built at. `merged` is called from a view body, and
+    /// finding a genre's spread means walking a shard that can hold thousands
+    /// of artists — not something to redo on every redraw.
+    private var renderCache: [String: (version: Int, artists: [ENArtist])] = [:]
     /// The bundled genre index, folded — memoized on first harvest.
     private var knownGenres: Set<String> = []
 
     // MARK: Lifecycle
 
-    /// Reads the bookkeeping (and the record file's keys) once, lazily — the
-    /// feature costs nothing at all until it's used.
+    /// Reads the bookkeeping (and the records themselves) once, lazily — the
+    /// feature costs nothing at all until it's used. Deliberately publishes
+    /// nothing: `merged(_:genre:)` calls this from a view body, where changing
+    /// an `@Published` mid-update is exactly the thing SwiftUI complains
+    /// about. Callers that want the Settings counts refreshed say so.
     private func loadIfNeeded() {
         guard !stateLoaded else { return }
         stateLoaded = true
@@ -160,8 +185,10 @@ final class ENUpdateStore: ObservableObject {
            let decoded = try? JSONDecoder().decode(HarvestState.self, from: data) {
             state = decoded
         }
-        recorded = Self.recordedKeys(in: AppPaths.everyNoiseUpdatesFile)
-        publishCounts()
+        for record in Self.loadRecords(in: AppPaths.everyNoiseUpdatesFile) {
+            recorded.insert("\(record.genreKey)|\(Self.fold(record.artist))")
+            byGenre[record.genreKey, default: []].append(record)
+        }
     }
 
     private func publishCounts() {
@@ -187,6 +214,7 @@ final class ENUpdateStore: ObservableObject {
                      client: SpotifyClient?) {
         guard ENUpdateSettings.isEnabled, let client else { return }
         loadIfNeeded()
+        publishCounts()
         guard harvestTask == nil else { return }
         if let last = state.harvested[genre.key],
            Date().timeIntervalSince(last) < Self.revisitInterval { return }
@@ -247,10 +275,12 @@ final class ENUpdateStore: ObservableObject {
         state.harvested[genre.key] = Date()
 
         var fresh: [ENUpdateRecord] = []
+        var seenThisPass: Set<String> = []
         for hit in hits {
             let folded = Self.fold(hit.name)
             let key = "\(genre.key)|\(folded)"
-            guard !knownArtists.contains(folded), !recorded.contains(key) else { continue }
+            guard !knownArtists.contains(folded), !recorded.contains(key),
+                  seenThisPass.insert(folded).inserted else { continue }
             recorded.insert(key)
             fresh.append(ENUpdateRecord(genreKey: genre.key,
                                         genreName: genre.name,
@@ -268,12 +298,127 @@ final class ENUpdateStore: ObservableObject {
         if !fresh.isEmpty {
             append(fresh)
             state.records += fresh.count
+            byGenre[genre.key, default: []].append(contentsOf: fresh)
+            // The genre whose map is very likely still on screen: bumping the
+            // version is what makes these artists appear on it now.
+            harvestVersion += 1
+            mirrorToSyncFolder()
         }
         saveState()
         publishCounts()
         appLog("Every Noise update: \"\(genre.name)\" — \(hits.count) artist(s) live, \(fresh.count) new to the map.",
                level: fresh.isEmpty ? .debug : .info, category: "Browse")
     }
+
+    // MARK: Showing them straight away
+
+    /// A genre's artists as the browser should draw them: the bundled shard,
+    /// plus everything the harvest has since found under that label.
+    ///
+    /// The bundled dataset is only rebuilt when someone runs
+    /// `merge_updates.py` against an export, which could be months after the
+    /// app noticed an artist. Until then the finding sat in a file nobody
+    /// could see. These rows are shown as what they are:
+    ///
+    /// - **Positioned at random.** The site's layout came from Spotify's
+    ///   audio-feature API, withdrawn with everything else, so there is no
+    ///   honest place to put a new artist. They're hashed deterministically
+    ///   into the spread their genre's own artists occupy — among the right
+    ///   company, not at a meaningful point within it — which is exactly what
+    ///   the merge tool does, off the same seed, so an artist doesn't jump
+    ///   when the dataset is eventually rebuilt.
+    /// - **Assumed unpopular.** Nothing about a live catalogue hit says how
+    ///   the frozen page would have sized it, so they're drawn at the small
+    ///   end of the sizes the genre already uses and sorted last by
+    ///   popularity, ordered among themselves by Spotify's own score.
+    func merged(_ shardArtists: [ENArtist], genre: ENGenre) -> [ENArtist] {
+        loadIfNeeded()
+        guard let records = byGenre[genre.key], !records.isEmpty else { return shardArtists }
+        if let cached = renderCache[genre.key], cached.version == harvestVersion {
+            return cached.artists
+        }
+        let merged = shardArtists + Self.render(records, into: shardArtists, genre: genre)
+        // A merged list is a whole shard's worth of artists; a handful of them
+        // is plenty for backing out and tapping again, and the shard cache
+        // behind it is bounded the same way.
+        if renderCache.count >= 12 { renderCache.removeAll() }
+        renderCache[genre.key] = (harvestVersion, merged)
+        return merged
+    }
+
+    /// Builds the `ENArtist` rows for one genre's harvested records.
+    private static func render(_ records: [ENUpdateRecord],
+                               into shardArtists: [ENArtist],
+                               genre: ENGenre) -> [ENArtist] {
+        var present = Set(shardArtists.map { fold($0.name) })
+        let box = spread(of: shardArtists)
+        let sizes = sizeBand(of: shardArtists)
+        var fresh: [ENArtist] = []
+        for record in records {
+            let name = record.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, present.insert(fold(name)).inserted else { continue }
+            let seed = "\(genre.key)|\(name)"
+            fresh.append(ENArtist(
+                name: name,
+                x: max(0, box.centerX - box.width / 2 + jitter(seed + "|x", span: box.width)),
+                y: max(0, box.centerY - box.height / 2 + jitter(seed + "|y", span: box.height)),
+                // Artists on a genre page share the genre's hue on the site;
+                // a harvested row has no colour of its own to copy.
+                color: genre.color,
+                size: sizes.low + Int((Double(sizes.high - sizes.low)
+                                       * Double(max(0, min(100, record.popularity))) / 100).rounded()),
+                // Spotify serves no `preview_url` to apps created after
+                // November 2024, so there is genuinely no snippet to play.
+                preview: nil,
+                spotify: record.spotifyID,
+                harvested: true))
+        }
+        return fresh
+    }
+
+    /// The box a genre's existing artists occupy, with a floor under it: a
+    /// genre holding one artist has *no* spread, and without the floor every
+    /// addition would land on that one point in a stack of labels.
+    private static func spread(of artists: [ENArtist]) -> (centerX: Int, centerY: Int, width: Int, height: Int) {
+        let xs = artists.map(\.x)
+        let ys = artists.map(\.y)
+        guard let minX = xs.min(), let maxX = xs.max(),
+              let minY = ys.min(), let maxY = ys.max() else {
+            // An empty shard: the canvas a brand-new genre's map would use.
+            return (1000, 700, 2000, 1400)
+        }
+        return ((minX + maxX) / 2, (minY + maxY) / 2,
+                max(maxX - minX, minSpread), max(maxY - minY, minSpread))
+    }
+
+    /// The narrow band at the **bottom** of a genre's own sizes that harvested
+    /// artists are drawn in — small enough to read as "we don't know", big
+    /// enough to still be legible, because it's a size the genre already uses.
+    private static func sizeBand(of artists: [ENArtist]) -> (low: Int, high: Int) {
+        let sizes = artists.map(\.size)
+        guard let low = sizes.min(), let high = sizes.max(), high > low else {
+            return defaultSizeBand
+        }
+        return (low, low + max(1, (high - low) / 8))
+    }
+
+    /// A stable pseudo-random offset in `0..<span`, keyed on a name.
+    ///
+    /// SHA-1 over the seed's first four bytes, big-endian — the same thing
+    /// `merge_updates.py`'s `jitter()` computes, so an artist the app placed
+    /// lands in the same spot once the export is merged into the dataset.
+    private static func jitter(_ seed: String, span: Int) -> Int {
+        guard span > 0 else { return 0 }
+        let digest = Insecure.SHA1.hash(data: Data(seed.utf8))
+        let word = digest.prefix(4).reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+        return Int(word % UInt32(span))
+    }
+
+    /// The size range a shard falls back to when it has too few artists to
+    /// imply one — the merge tool's `DEFAULT_SIZE_RANGE`, bottom band only.
+    private static let defaultSizeBand = (low: 60, high: 72)
+    /// The merge tool's `MIN_SPREAD`.
+    private static let minSpread = 400
 
     private func noteRequest() {
         if state.day != Self.today {
@@ -307,6 +452,23 @@ final class ENUpdateStore: ObservableObject {
         }
     }
 
+    // MARK: The copy in the sync folder
+
+    /// Writes the record file into `OfflineListenData/` in the **first** sync
+    /// folder, whenever it changes.
+    ///
+    /// The records are only useful off the device — `merge_updates.py` eats
+    /// them — and until now the only way out was Settings ▸ Download New Data
+    /// and a share sheet. A configured sync folder is already a two-way door
+    /// to a computer, so the file simply lives there too, kept current. It's a
+    /// copy, not a move: `Documents/` stays the original, and a sync folder
+    /// that's unreachable (provider offline) just means the copy is stale
+    /// until the next harvest.
+    func mirrorToSyncFolder() {
+        guard let syncMirror else { return }
+        syncMirror((try? Data(contentsOf: AppPaths.everyNoiseUpdatesFile)) ?? Data())
+    }
+
     /// Throws away everything collected — after an export has been merged
     /// into the dataset, the records are just history.
     func clear() {
@@ -316,9 +478,15 @@ final class ENUpdateStore: ObservableObject {
         try? FileManager.default.removeItem(at: AppPaths.everyNoiseUpdatesState)
         state = HarvestState()
         recorded = []
+        byGenre = [:]
+        renderCache = [:]
+        harvestVersion += 1
         stateLoaded = true
         lastError = nil
         publishCounts()
+        // The sync folder's copy goes with it — leaving it there would offer
+        // a merge of records the app no longer believes in.
+        mirrorToSyncFolder()
         appLog("Every Noise updates cleared.", category: "Browse")
     }
 
@@ -345,19 +513,19 @@ final class ENUpdateStore: ObservableObject {
         return formatter.string(from: Date())
     }
 
-    /// Rebuilds the "already recorded" set from the file — one pass, only
-    /// decoding the two fields the key needs.
-    private static func recordedKeys(in url: URL) -> Set<String> {
+    /// Reads the whole record file back — one pass, in the order written, so
+    /// the dedup keys and the per-genre grouping both come out of it.
+    private static func loadRecords(in url: URL) -> [ENUpdateRecord] {
         guard let data = try? Data(contentsOf: url),
               let text = String(data: data, encoding: .utf8) else { return [] }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        var keys: Set<String> = []
+        var records: [ENUpdateRecord] = []
         for line in text.split(separator: "\n") {
             guard let lineData = line.data(using: .utf8),
                   let record = try? decoder.decode(ENUpdateRecord.self, from: lineData) else { continue }
-            keys.insert("\(record.genreKey)|\(fold(record.artist))")
+            records.append(record)
         }
-        return keys
+        return records
     }
 }

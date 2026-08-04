@@ -768,7 +768,8 @@ struct ENGenreView: View {
     /// rides in as extra content inset, same as the genre map.
     @Environment(\.miniPlayerHeight) private var miniPlayerHeight
 
-    @State private var artists: [ENArtist]?
+    /// The bundled shard, as unpacked. Nil while it's loading.
+    @State private var shardArtists: [ENArtist]?
     @State private var mode: ENBrowseMode = .map
     @State private var query = ""
     /// List mode's order, and the artist a similarity sort is anchored on.
@@ -781,6 +782,16 @@ struct ENGenreView: View {
     @State private var selected: ENArtist?
     /// The artist whose live Spotify discography is being pushed.
     @State private var discographyArtist: ENArtist?
+
+    /// What the screen actually draws: the shard plus everything the harvest
+    /// has found under this label since the scrape froze. Computed rather than
+    /// stored so a harvest that lands while you're looking at the map shows up
+    /// on it — `harvestVersion` changes, this view is observing `updates`, and
+    /// the merge (memoized in the store) runs again. The alternative was
+    /// waiting for someone to rebuild the bundled dataset.
+    private var artists: [ENArtist]? {
+        shardArtists.map { updates.merged($0, genre: genre) }
+    }
 
     var body: some View {
         Group {
@@ -828,17 +839,22 @@ struct ENGenreView: View {
         }
         .task(id: genre.key) {
             let loaded = await store.artists(for: genre)
-            artists = loaded
+            shardArtists = loaded
+            // Off the view-update path, where publishing the harvest's counts
+            // would be a state change mid-render.
+            updates.refreshCounts()
             if let initialArtistID,
-               let target = loaded.first(where: { $0.id == initialArtistID }) {
+               let target = (artists ?? loaded).first(where: { $0.id == initialArtistID }) {
                 select(target)
                 centerRequest = NoiseMapCenter(id: target.id, token: UUID())
             }
             // Ask the live catalogue who it files under this label now, and
             // record whoever the frozen shard is missing. Declines itself
             // when the feature is off, when this genre was harvested
-            // recently, or when Spotify is anywhere near a rate limit.
-            updates.genreOpened(genre, localArtists: loaded,
+            // recently, or when Spotify is anywhere near a rate limit. It's
+            // handed the *merged* list, so artists an earlier harvest already
+            // found count as known rather than as fresh discoveries.
+            updates.genreOpened(genre, localArtists: artists ?? loaded,
                                 genreIndex: store.genres,
                                 client: spotifySettings.client)
         }
@@ -903,6 +919,10 @@ struct ENGenreView: View {
                                       x: CGFloat($0.x), y: CGFloat($0.y),
                                       colorHex: $0.color, size: $0.size)
                      },
+                     // A harvest landing while this genre is open adds rows to
+                     // the map it's already drawing; this is what makes them
+                     // appear, without throwing away the scroll position.
+                     itemsVersion: updates.harvestVersion,
                      highlightedID: player.currentID ?? flashID,
                      centerRequest: centerRequest,
                      bottomInset: miniPlayerHeight) { id in
@@ -934,10 +954,15 @@ struct ENGenreView: View {
                 shown = base
             }
         case .popularity:
-            shown = base.sorted {
-                $0.size != $1.size
-                    ? $0.size > $1.size
-                    : $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            shown = base.sorted { a, b in
+                // Harvested artists sort last, whatever their size. The frozen
+                // page never rated them, so the app is assuming — and the
+                // honest assumption for someone the scrape didn't have is
+                // "less popular than everyone it did". Among themselves they
+                // order by size, which carries Spotify's own score.
+                if a.isHarvested != b.isHarvested { return b.isHarvested }
+                if a.size != b.size { return a.size > b.size }
+                return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
             }
         }
         return ScrollViewReader { proxy in

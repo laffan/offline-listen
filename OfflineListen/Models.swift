@@ -102,6 +102,13 @@ enum AppPaths {
     /// and style in, so the mixtape travels with the files.
     static let mixtapeDataDirName = ".mixtapedata"
 
+    /// A directory the app keeps **its own** data in, at the top of the first
+    /// sync folder — today the Every Noise harvest's records, which are only
+    /// useful on a computer. Deliberately not hidden (the point is that you
+    /// can find it), so the importer has to skip it by name or it would come
+    /// back into the library as a folder full of nothing playable.
+    static let syncAppDataDirName = "OfflineListenData"
+
     /// A file name based on `base` that doesn't collide with anything already
     /// in `directory`, disambiguating with " (2)", " (3)", … if needed.
     /// `ext` may be empty for a directory name.
