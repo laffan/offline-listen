@@ -82,6 +82,31 @@ struct BrowsePreviewView: View {
         model.currentItem ?? items[min(startIndex, items.count - 1)]
     }
 
+    /// Where in the queue the preview is. `items` is resolved at `init`, so
+    /// this is right from the very first render — before the model has been
+    /// handed anything — which is what lets the transport below be live from
+    /// the moment the sheet opens rather than after the first `.task`.
+    private var position: Int {
+        model.isConfigured ? model.index : startIndex
+    }
+
+    private var canStepBack: Bool { items.indices.contains(position - 1) }
+    private var canStepForward: Bool { items.indices.contains(position + 1) }
+
+    /// Walks the queue. It configures first — idempotent, and the same call the
+    /// `.task` makes — so a tap can never land on a model that hasn't been
+    /// given the list it's meant to walk, whatever order SwiftUI ran things in.
+    private func step(by delta: Int) {
+        configureModel()
+        model.go(to: position + delta)
+    }
+
+    private func configureModel() {
+        model.configure(items: items, startAt: startIndex, mode: mode,
+                        quality: quality, downloads: downloads,
+                        playback: playback, browse: browse)
+    }
+
     var body: some View {
         NavigationStack {
             // Audio previews are deliberately tighter than video ones: with no
@@ -134,9 +159,7 @@ struct BrowsePreviewView: View {
         // from here on the loading, the advancing and the lock screen are all
         // the model's, so none of it depends on this view being on screen.
         .task {
-            model.configure(items: items, startAt: startIndex, mode: mode,
-                            quality: quality, downloads: downloads,
-                            playback: playback, browse: browse)
+            configureModel()
             model.begin()
         }
         .onDisappear {
@@ -174,12 +197,12 @@ struct BrowsePreviewView: View {
         VStack(spacing: 4) {
             HStack(spacing: 30) {
                 Button {
-                    model.previous()
+                    step(by: -1)
                 } label: {
                     Image(systemName: "backward.end.fill")
                         .font(.title2)
                 }
-                .disabled(!model.canGoPrevious)
+                .disabled(!canStepBack)
                 .accessibilityLabel("Previous track")
 
                 Button {
@@ -192,12 +215,12 @@ struct BrowsePreviewView: View {
                 .accessibilityLabel(model.isPlaying ? "Pause" : "Play")
 
                 Button {
-                    model.next()
+                    step(by: 1)
                 } label: {
                     Image(systemName: "forward.end.fill")
                         .font(.title2)
                 }
-                .disabled(!model.canGoNext)
+                .disabled(!canStepForward)
                 .accessibilityLabel("Next track")
             }
             // Borderless so the three buttons stay independently tappable and
@@ -205,7 +228,7 @@ struct BrowsePreviewView: View {
             .buttonStyle(.borderless)
 
             if items.count > 1 {
-                Text("\(model.index + 1) of \(items.count)")
+                Text("\(position + 1) of \(items.count)")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                     .monospacedDigit()
@@ -584,6 +607,11 @@ final class BrowsePreviewModel: ObservableObject, RemoteAudioSource {
     /// is a call into this object.
     @Published private(set) var items: [BrowseItem] = []
     @Published private(set) var index = 0
+    /// Whether the queue and the stores have been handed over yet. Published
+    /// because the transport's own enabled state depends on it: until this is
+    /// true there is nothing here to walk, and a button that looks live but
+    /// calls into an unconfigured model is a tap that does nothing.
+    @Published private(set) var isConfigured = false
     /// Set by the slider while dragging so observer ticks don't fight the thumb.
     var isScrubbing = false
 
@@ -602,7 +630,6 @@ final class BrowsePreviewModel: ObservableObject, RemoteAudioSource {
     private var downloads: DownloadManager?
     private var playback: PlaybackManager?
     private var browse: BrowseStore?
-    private var configured = false
     private var started = false
 
     private var media: ExtractedMedia?
@@ -610,6 +637,25 @@ final class BrowsePreviewModel: ObservableObject, RemoteAudioSource {
     private(set) var player: AVPlayer?
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
+    /// The preview's end-of-track watchdog, and the reason a hands-off audition
+    /// gets through a record. `AVPlayerItemDidPlayToEndTime` was the only thing
+    /// watching for the end here, and it is the same not-always-delivered
+    /// signal the library player long ago stopped trusting on its own: a file
+    /// whose container over-reports its length runs out of samples at a
+    /// timestamp AVFoundation doesn't consider the end, so the notification
+    /// never comes and the queue stops between two tracks.
+    ///
+    /// It has to be a wall-clock timer rather than the periodic time observer
+    /// above, because that observer is driven by the item's *own* timeline — it
+    /// stops firing the instant the playhead does, which is exactly the moment
+    /// something needs to notice.
+    private var watchdog: Timer?
+    private var lastWatchdogPosition: Double = -1
+    private var stalledTicks = 0
+    private var playheadHasMoved = false
+    /// True once the loaded track's end has been acted on, so the two routes to
+    /// it can't both advance the queue.
+    private var didFinishCurrent = false
     private var downloadTask: Task<Void, Never>?
     /// The item's cover, fetched for the lock screen (best-effort — a miss just
     /// leaves the artwork blank, as it does everywhere else in the app).
@@ -624,13 +670,19 @@ final class BrowsePreviewModel: ObservableObject, RemoteAudioSource {
 
     // MARK: - Setup
 
-    /// Hands over the queue and the stores. Called once, from the modal's
-    /// `.task`; re-running it would restart a preview that's already going.
+    /// Hands over the queue and the stores. Idempotent: the modal calls it from
+    /// its `.task` and again before every transport move, so a tap can never
+    /// land on a model that hasn't been given the list it is supposed to walk.
+    /// Re-running it beyond the first time is a no-op — it must not restart a
+    /// preview that's already going.
     func configure(items: [BrowseItem], startAt: Int, mode: DownloadMode,
                    quality: VideoQuality, downloads: DownloadManager,
                    playback: PlaybackManager, browse: BrowseStore) {
-        guard !configured else { return }
-        configured = true
+        guard !isConfigured else {
+            adopt(items: items, startAt: startAt)
+            return
+        }
+        isConfigured = true
         self.items = items
         self.index = items.indices.contains(startAt) ? startAt : 0
         self.mode = mode
@@ -638,12 +690,29 @@ final class BrowsePreviewModel: ObservableObject, RemoteAudioSource {
         self.downloads = downloads
         self.playback = playback
         self.browse = browse
+        appLog("Preview queue: \(items.count) track(s), starting at \(self.index + 1).",
+               level: .debug, category: "Browse")
+    }
+
+    /// Takes on a queue the modal has been handed after it was already
+    /// configured. A sheet re-presented on a new item while it is still on
+    /// screen keeps its view — and so this object — so the list underneath it
+    /// can change without a teardown, and a transport walking the record it
+    /// was opened with two records ago is one that does nothing you asked for.
+    /// The same list is the common case and costs nothing.
+    private func adopt(items newItems: [BrowseItem], startAt: Int) {
+        guard newItems.map(\.id) != items.map(\.id) else { return }
+        items = newItems
+        index = newItems.indices.contains(startAt) ? startAt : 0
+        appLog("Preview handed a new queue: \(newItems.count) track(s), starting at \(index + 1).",
+               level: .debug, category: "Browse")
+        startCurrent()
     }
 
     /// Starts the first track. Idempotent, so a view that appears twice doesn't
     /// restart the download.
     func begin() {
-        guard configured, !started else { return }
+        guard isConfigured, !started else { return }
         started = true
         startCurrent()
     }
@@ -653,8 +722,17 @@ final class BrowsePreviewModel: ObservableObject, RemoteAudioSource {
     /// Moves to a position and loads it. The transport's buttons, the lock
     /// screen's, and the end-of-track advance all come through here.
     func go(to position: Int) {
-        guard items.indices.contains(position) else { return }
+        guard items.indices.contains(position) else {
+            appLog("Preview: nothing at position \(position + 1) of \(items.count) — staying put.",
+                   level: .debug, category: "Browse")
+            return
+        }
         index = position
+        // A move *is* a start, so a `begin()` arriving afterwards mustn't drag
+        // the preview back to where the modal opened.
+        started = true
+        appLog("Preview → \(position + 1) of \(items.count): \"\(currentItem?.title ?? "")\"",
+               level: .debug, category: "Browse")
         startCurrent()
     }
 
@@ -677,7 +755,18 @@ final class BrowsePreviewModel: ObservableObject, RemoteAudioSource {
     /// previewed (so a list walked hands-off still fills in its breadcrumbs),
     /// fetch its cover for the lock screen, then run it through the pipeline.
     private func startCurrent() {
-        guard let downloads, let item = currentItem else { return }
+        // Both of these are "can't happen" — the modal configures before it
+        // ever calls in, and the queue is never empty — but a silent return
+        // here reads from the outside exactly like a dead button, so say so.
+        guard let downloads else {
+            appLog("Preview can't start: the modal hasn't handed over the download pipeline.",
+                   level: .warning, category: "Browse")
+            return
+        }
+        guard let item = currentItem else {
+            appLog("Preview can't start: the queue is empty.", level: .warning, category: "Browse")
+            return
+        }
         reset()
         browse?.markPreviewed(item)
         loadArtwork(for: item)
@@ -722,8 +811,19 @@ final class BrowsePreviewModel: ObservableObject, RemoteAudioSource {
                 attachPlayer(to: media)
             }
         } catch {
-            if !isCancellation(error), generation == gen {
-                phase = .failed(error.localizedDescription)
+            // A bumped generation is the *only* thing that supersedes a
+            // preview, and it's bumped before anything that would cancel one.
+            // So still being on the same generation means nobody moved on, and
+            // whatever went wrong has to be shown — including a cancellation.
+            // Swallowing those left the modal on a spinner that nothing would
+            // ever replace, which from the outside is a next button that did
+            // nothing at all.
+            if generation == gen {
+                appLog("Preview failed: \(error.localizedDescription)",
+                       level: .error, category: "Browse")
+                phase = .failed(isCancellation(error)
+                                ? "The download was cancelled before it finished."
+                                : error.localizedDescription)
                 playback?.remoteAudioDidChange(self)
             }
         }
@@ -756,6 +856,7 @@ final class BrowsePreviewModel: ObservableObject, RemoteAudioSource {
         isVideo = false
         currentTime = 0
         duration = 0
+        didFinishCurrent = false
         phase = .waiting
     }
 
@@ -794,9 +895,7 @@ final class BrowsePreviewModel: ObservableObject, RemoteAudioSource {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.isPlaying = false
-                self.advanceAtEnd()
+                self?.finishTrack(reason: "played to the end")
             }
         }
 
@@ -814,6 +913,7 @@ final class BrowsePreviewModel: ObservableObject, RemoteAudioSource {
         AudioSession.activate()
         player.play()
         isPlaying = true
+        startWatchdog()
         playback?.remoteAudioDidChange(self)
     }
 
@@ -830,6 +930,82 @@ final class BrowsePreviewModel: ObservableObject, RemoteAudioSource {
         }
     }
 
+    // MARK: - Noticing the end without being told
+
+    /// Ticks (at 2 Hz) a frozen playhead is given before the track is called
+    /// over wherever it sits, and the shorter count that applies once the item
+    /// has drained its buffer with nothing left to fill it. Both mirror the
+    /// library player's.
+    private static let stalledTickLimit = 12
+    private static let drainedTickLimit = 6
+
+    private func startWatchdog() {
+        watchdog?.invalidate()
+        lastWatchdogPosition = -1
+        stalledTicks = 0
+        playheadHasMoved = false
+        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.checkForSilentEnd() }
+        }
+        // `.common`, so scrolling the list behind the sheet can't stop the
+        // clock the auto-advance depends on.
+        RunLoop.main.add(timer, forMode: .common)
+        watchdog = timer
+    }
+
+    /// A playhead that has stopped while the preview still believes it's
+    /// playing means the track is over, whatever the player reports: an item
+    /// that runs out of samples short of its stated duration doesn't pause, it
+    /// sits in `.waitingToPlayAtSpecifiedRate` for good.
+    private func checkForSilentEnd() {
+        guard isPlaying, let player, let item = player.currentItem,
+              item.status == .readyToPlay else {
+            stalledTicks = 0
+            lastWatchdogPosition = -1
+            return
+        }
+        let position = player.currentTime().seconds
+        let advanced = position.isFinite && lastWatchdogPosition >= 0
+            && abs(position - lastWatchdogPosition) > 0.05
+        let moved = advanced || !position.isFinite || lastWatchdogPosition < 0
+        lastWatchdogPosition = position.isFinite ? position : -1
+        if advanced { playheadHasMoved = true }
+        guard !moved else {
+            stalledTicks = 0
+            return
+        }
+        stalledTicks += 1
+
+        let atEnd = position.isFinite && position > 0
+            && duration > 0 && position >= duration - 1.5
+        // A track that hasn't started yet hasn't run out of anything, so the
+        // drained-buffer reading only counts once the playhead has moved.
+        let ranOut = playheadHasMoved
+            && item.isPlaybackBufferEmpty && !item.isPlaybackLikelyToKeepUp
+
+        if atEnd, stalledTicks >= 2 {
+            finishTrack(reason: "the playhead stopped at the end")
+        } else if ranOut, stalledTicks >= Self.drainedTickLimit {
+            finishTrack(reason: "the file ran out of audio before its stated end")
+        } else if stalledTicks >= Self.stalledTickLimit {
+            finishTrack(reason: "playback stalled with nothing more to play")
+        }
+    }
+
+    /// One claim per track. The notification and the watchdog are two views of
+    /// the same event and can arrive together; acting on the second would skip
+    /// the track the first just started. Cleared by `reset()`.
+    private func finishTrack(reason: String) {
+        guard !didFinishCurrent else { return }
+        didFinishCurrent = true
+        stalledTicks = 0
+        watchdog?.invalidate()
+        watchdog = nil
+        isPlaying = false
+        appLog("Preview: track over — \(reason).", level: .debug, category: "Browse")
+        advanceAtEnd()
+    }
+
     func togglePlayPause() {
         guard let player else { return }
         if isPlaying {
@@ -839,6 +1015,17 @@ final class BrowsePreviewModel: ObservableObject, RemoteAudioSource {
             player.play()
         }
         isPlaying.toggle()
+        if isPlaying {
+            // Also covers replaying the last track of a queue, which was left
+            // rewound with its watchdog retired and its end already claimed.
+            didFinishCurrent = false
+            startWatchdog()
+        } else {
+            // The last reading is from before the pause, so comparing against
+            // it would read as a frozen playhead.
+            lastWatchdogPosition = -1
+            stalledTicks = 0
+        }
         playback?.remoteAudioDidChange(self)
     }
 
@@ -846,6 +1033,12 @@ final class BrowsePreviewModel: ObservableObject, RemoteAudioSource {
         currentTime = time
         player?.seek(to: CMTime(seconds: time, preferredTimescale: 600),
                      toleranceBefore: .zero, toleranceAfter: .zero)
+        // Moving the playhead puts the track back in play, whatever the
+        // watchdog thought of it a moment ago — otherwise a track rewound at
+        // its end could never report finishing again.
+        didFinishCurrent = false
+        lastWatchdogPosition = -1
+        stalledTicks = 0
         playback?.remoteAudioDidChange(self)
     }
 
@@ -994,6 +1187,11 @@ final class BrowsePreviewModel: ObservableObject, RemoteAudioSource {
     private func stopPlayer() {
         player?.pause()
         isPlaying = false
+        watchdog?.invalidate()
+        watchdog = nil
+        stalledTicks = 0
+        lastWatchdogPosition = -1
+        playheadHasMoved = false
         if let timeObserver, let player {
             player.removeTimeObserver(timeObserver)
         }

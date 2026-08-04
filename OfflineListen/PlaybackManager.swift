@@ -91,9 +91,26 @@ final class PlaybackManager: NSObject, ObservableObject {
     private var failObserver: NSObjectProtocol?
     /// Interruption / route-change observers, live for the app's lifetime.
     private var sessionObservers: [NSObjectProtocol] = []
-    /// Consecutive ticks on which the player was stopped while we still
+    /// Consecutive ticks on which the player reported `.paused` while we still
     /// believed it was playing — see `checkForSilentStop()`.
     private var stoppedTicks = 0
+    /// Consecutive ticks on which the **playhead** hasn't moved while the
+    /// player still claims to be playing. The other, load-bearing half of the
+    /// watchdog: a file that runs out of samples early doesn't pause, it
+    /// stalls — see `checkForSilentStop()`.
+    private var stalledTicks = 0
+    /// Consecutive ticks spent waiting for a swapped-in item to become
+    /// playable. Bounded, so a file that neither loads nor reports a failure
+    /// can't end the queue in silence.
+    private var loadingTicks = 0
+    /// The playhead as of the previous tick, for the stall check above.
+    /// Negative means "no reading yet", which counts as movement.
+    private var lastTickPosition: Double = -1
+    /// True once the playhead has actually advanced for the item now loaded.
+    /// Until then the track hasn't begun, and an item that hasn't begun reads
+    /// exactly like one that has run out — which is why `ranOutOfMedia` waits
+    /// for this.
+    private var playheadHasMoved = false
     /// True once the current track's end has been acted on. The end is reported
     /// by three independent routes (the end notification, the failure
     /// notification, and the rate/watchdog pair below) and they can easily
@@ -117,6 +134,20 @@ final class PlaybackManager: NSObject, ObservableObject {
     private var hasRestored = false
     private var lastPersist = Date.distantPast
     private let library: LibraryStore
+
+    /// Ticks (at 2 Hz) a frozen playhead is given before the track is called
+    /// over regardless of where the playhead sits. Local files have nothing to
+    /// buffer, so six seconds of "playing" without the clock moving is not a
+    /// stall it recovers from.
+    private static let stalledTickLimit = 12
+    /// The same, for a playhead frozen with the item's buffer already drained.
+    /// Shorter, because that combination is close to conclusive on a local
+    /// file — but not instant, since an item still getting going can read the
+    /// same way for a moment.
+    private static let drainedTickLimit = 6
+    /// Ticks a freshly swapped-in item gets to become playable. Generous: a
+    /// cold read on a locked phone with the CPU throttled is genuinely slow.
+    private static let loadingTickLimit = 40
 
     private enum Keys {
         static let trackID = "lastTrackID"
@@ -227,7 +258,7 @@ final class PlaybackManager: NSObject, ObservableObject {
         // of it a moment ago — otherwise a track rewound at the end of the
         // queue could never report finishing again.
         didFinishCurrent = false
-        stoppedTicks = 0
+        resetStopDetection()
         updateNowPlaying()
         persistState()
     }
@@ -273,7 +304,7 @@ final class PlaybackManager: NSObject, ObservableObject {
         progress.duration = track.duration
         updateTransportButtons()
         releaseItemObservers()
-        stoppedTicks = 0
+        resetStopDetection()
         didFinishCurrent = false
 
         // Everything between the old item stopping and the new one playing is
@@ -338,6 +369,9 @@ final class PlaybackManager: NSObject, ObservableObject {
         AudioSession.activate()
         player.play()
         isPlaying = true
+        // The playhead reading the watchdog last took was from before the
+        // pause, so comparing against it would read as a stall.
+        resetStopDetection()
         startTicker()
         updateNowPlaying()
     }
@@ -346,7 +380,7 @@ final class PlaybackManager: NSObject, ObservableObject {
         // Flag first, then the player: the watchdog in `tick()` reads a stopped
         // player as "the track ended" *unless* we're the ones who stopped it.
         isPlaying = false
-        stoppedTicks = 0
+        resetStopDetection()
         player.pause()
         updateNowPlaying()
         persistState()
@@ -478,13 +512,27 @@ final class PlaybackManager: NSObject, ObservableObject {
     /// HE-AAC/SBR audio as roughly twice its real duration, the same quirk
     /// `tick()` refuses to trust for the scrubber — runs out of samples at a
     /// timestamp the player never considers "the end", so the notification
-    /// simply never comes and the queue sits there for good.
+    /// simply never comes.
     ///
-    /// A player that has stopped while we still think it's playing is the
-    /// ground truth, whatever the notification did. Two consecutive ticks
-    /// (~1s) before acting, so a seek or a momentary stall can't be mistaken
-    /// for a stop.
+    /// **What that second case actually looks like is the thing this watchdog
+    /// used to get wrong.** It only ever asked whether the player had *paused*,
+    /// and an item that runs out of samples short of its declared duration does
+    /// not pause: `AVPlayer` believes there is more media coming and sits in
+    /// `.waitingToPlayAtSpecifiedRate` for good. So the notification never
+    /// arrived, the rate observer (which wants `.paused` too) never fired, and
+    /// the watchdog written for exactly this file kept resetting its own
+    /// counter — three routes to "this track is over" and the queue stopped
+    /// dead between two songs, with nothing on a locked screen to say why.
+    ///
+    /// The ground truth is the **playhead**, not the rate: a clock that has
+    /// stopped while we still think we're playing means playback has stopped,
+    /// whatever `timeControlStatus` claims. Two consecutive ticks (~1s) before
+    /// acting, so a seek or a momentary hitch can't be mistaken for the end.
     private func checkForSilentStop() {
+        guard isPlaying else {
+            resetStopDetection()
+            return
+        }
         // An item that hasn't finished loading is not a stopped one — and this
         // is the difference between a locked phone and an unlocked one. A
         // freshly swapped-in item reports `.paused` until its asset is ready,
@@ -493,29 +541,103 @@ final class PlaybackManager: NSObject, ObservableObject {
         // found it nowhere near the end, concluded "stopped mid-track" and
         // marked playback paused — one second after autoplay had just started
         // it. From outside, autoplay simply stopped working while locked.
+        //
+        // The wait is bounded, though: an item that never becomes playable and
+        // never reports `.failed` either (it just sits at `.unknown`) would
+        // otherwise switch the watchdog off for the rest of the session.
         guard player.currentItem?.status == .readyToPlay else {
             stoppedTicks = 0
+            stalledTicks = 0
+            lastTickPosition = -1
+            loadingTicks += 1
+            guard loadingTicks >= Self.loadingTickLimit else { return }
+            loadingTicks = 0
+            handleTrackFinished(reason: "the file never became playable")
             return
         }
-        guard isPlaying, player.timeControlStatus == .paused else {
+        loadingTicks = 0
+
+        let position = player.currentTime().seconds
+        let advanced = position.isFinite && lastTickPosition >= 0
+            && abs(position - lastTickPosition) > 0.05
+        // A reading we can't compare with anything yet counts as movement, so
+        // the first tick after a track change can't start the stall count off
+        // on the wrong foot.
+        let moved = advanced || !position.isFinite || lastTickPosition < 0
+        lastTickPosition = position.isFinite ? position : -1
+        if advanced { playheadHasMoved = true }
+
+        if player.timeControlStatus == .paused {
+            stalledTicks = 0
+            stoppedTicks += 1
+            guard stoppedTicks >= 2 else { return }
             stoppedTicks = 0
+            if isAtEnd {
+                handleTrackFinished(reason: "the player stopped at the end of the track")
+            } else {
+                // Stopped mid-track: something took the audio away. Reflect that
+                // rather than showing a play state that isn't happening — and
+                // don't skip the track the user was in the middle of.
+                appLog("Playback stopped mid-track (interrupted) — showing it as paused.",
+                       level: .debug, category: "Player")
+                isPlaying = false
+                updateNowPlaying()
+                persistState()
+            }
             return
         }
-        stoppedTicks += 1
-        guard stoppedTicks >= 2 else { return }
+
+        // Still "playing" as far as the player is concerned — the stalled case.
         stoppedTicks = 0
-        if isAtEnd {
-            handleTrackFinished(reason: "the player stopped at the end of the track")
-        } else {
-            // Stopped mid-track: something took the audio away. Reflect that
-            // rather than showing a play state that isn't happening — and
-            // don't skip the track the user was in the middle of.
-            appLog("Playback stopped mid-track (interrupted) — showing it as paused.",
-                   level: .debug, category: "Player")
-            isPlaying = false
-            updateNowPlaying()
-            persistState()
+        guard !moved else {
+            stalledTicks = 0
+            return
         }
+        stalledTicks += 1
+        // At the end by either clock, one second of a frozen playhead is
+        // conclusive. Short of that, a drained buffer on a file with nothing
+        // left to stream in says the samples ran out even though both clocks
+        // claim otherwise — a slower call, since a cold item can read that way
+        // for a moment before it gets going.
+        if isAtEnd {
+            guard stalledTicks >= 2 else { return }
+            stalledTicks = 0
+            handleTrackFinished(reason: "the playhead stopped at the end of the track")
+        } else if ranOutOfMedia, stalledTicks >= Self.drainedTickLimit {
+            stalledTicks = 0
+            handleTrackFinished(reason: "the file ran out of audio before its stated end")
+        } else if stalledTicks >= Self.stalledTickLimit {
+            // Frozen somewhere in the middle, for longer than any local file
+            // legitimately takes to recover. Better to move the queue on than
+            // to leave the listening session ended in silence.
+            stalledTicks = 0
+            handleTrackFinished(
+                reason: "playback stalled for \(Int(Double(Self.stalledTickLimit) / 2))s with the file offering nothing more")
+        }
+    }
+
+    /// Clears every counter the watchdog keeps. Called wherever playback state
+    /// changes under our own hand — a load, a seek, a pause, a resume — so a
+    /// reading taken before the change can't be compared with one taken after.
+    private func resetStopDetection() {
+        stoppedTicks = 0
+        stalledTicks = 0
+        loadingTicks = 0
+        lastTickPosition = -1
+        playheadHasMoved = false
+    }
+
+    /// Whether the current item has drained its buffer with nothing coming to
+    /// refill it. Local files have nothing to stream, so once the playhead has
+    /// also frozen this means the samples ran out — which is the end of the
+    /// track even when the container claims there is more to come.
+    ///
+    /// A track that hasn't started yet hasn't run out of anything — a cold item
+    /// on a locked phone reads the same way — so this only speaks once the
+    /// playhead has been seen to move for the item now loaded.
+    private var ranOutOfMedia: Bool {
+        guard playheadHasMoved, let item = player.currentItem else { return false }
+        return item.isPlaybackBufferEmpty && !item.isPlaybackLikelyToKeepUp
     }
 
     /// Whether the playhead has reached the end of the media, judged against
@@ -546,7 +668,7 @@ final class PlaybackManager: NSObject, ObservableObject {
         if let track = currentTrack, track.remembersPosition {
             library.updatePosition(for: track.id, to: 0)
         }
-        stoppedTicks = 0
+        resetStopDetection()
         // Auto-advance to the next track in the (category-filtered) queue and keep
         // going to the end of the list; stop, rather than loop, once it's done.
         if index + 1 < queue.count {
@@ -607,7 +729,7 @@ final class PlaybackManager: NSObject, ObservableObject {
             guard isPlaying else { return }
             appLog("Audio interrupted — pausing.", level: .debug, category: "Player")
             isPlaying = false
-            stoppedTicks = 0
+            resetStopDetection()
             updateNowPlaying()
             persistState()
         case .ended:
@@ -639,7 +761,7 @@ final class PlaybackManager: NSObject, ObservableObject {
         }
         guard isPlaying else { return }
         isPlaying = false
-        stoppedTicks = 0
+        resetStopDetection()
         updateNowPlaying()
         persistState()
     }

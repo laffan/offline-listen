@@ -427,6 +427,24 @@ beneath the Browse title:
   hands-off. Each track it moves to is marked previewed, so the breadcrumbs
   fill in as it goes.
 
+  The transport is deliberately hard to leave dead. Which entry it's on and
+  whether there's one either side are read from the list the modal was **built
+  with**, so the side buttons are live from the first frame rather than from
+  whenever the model behind them got handed the queue — and a tap hands it over
+  itself before moving, so a button can never call into a model that hasn't
+  been given the list it's meant to walk. Re-presenting the sheet on a track
+  from a *different* list while it's still up (SwiftUI updates a sheet in place
+  rather than rebuilding it) swaps the queue rather than leaving the transport
+  walking the record before last. End-of-track is noticed the same way the
+  library player notices it — a **frozen playhead**, not a paused player — so
+  the auto-advance survives the same over-reporting files (see
+  [Why autoplay keeps going](#why-autoplay-keeps-going)); relying on the end
+  notification alone, as it used to, meant those tracks quietly ended the
+  audition. And a preview that fails now *says* so, cancellations included:
+  swallowing those left the modal on a spinner nothing would ever replace,
+  which from the outside is indistinguishable from a next button that did
+  nothing. Every move through the queue is logged under `Browse`.
+
   **It's a real listen, so it behaves like one.** The preview shows up on the
   **lock screen and in Control Center** exactly as a library track does —
   song and artist, the album's cover where the list knew one, a working
@@ -997,7 +1015,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `PlaylistResolver.swift` | Detects playlist links and flat-resolves their entries (on-device yt-dlp) so a playlist downloads into a folder. |
 | `ChapterSplitter.swift` | Exports one file per chapter (AVFoundation) for "Break Chapters into Playlist". |
 | `VideoMerger.swift` | Muxes a video-only + audio-only stream into one MP4. |
-| `PlaybackManager.swift` | `AVPlayer` engine (audio + video), audio session (including interruption/route-change handling), the lock screen (its own and any **borrowed** by a `RemoteAudioSource` — see [Lending the lock screen out](#lending-the-lock-screen-out)), and the end-of-track watchdog that keeps autoplay advancing; exposes the queue's next/previous entries for the Player's neighbour labels. |
+| `PlaybackManager.swift` | `AVPlayer` engine (audio + video), audio session (including interruption/route-change handling), the lock screen (its own and any **borrowed** by a `RemoteAudioSource` — see [Lending the lock screen out](#lending-the-lock-screen-out)), and the frozen-playhead watchdog that keeps autoplay advancing; exposes the queue's next/previous entries for the Player's neighbour labels. |
 | `Logger.swift` | `LogStore` — thread-safe, app-wide log sink. |
 | `AISettings.swift` | `AISettingsStore` (model/key/assist, Keychain-backed), `AIModel`, `Keychain` helper. |
 | `AnthropicClient.swift` | Minimal Anthropic Messages API client (verify + single-shot completion) over URLSession. |
@@ -1021,7 +1039,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `EveryNoiseView.swift` | The Every Noise browser: Map/List/Scan modes + Find at both levels (with the root's genre/artist toggle), the scan transport, and the artist bar whose "+" opens the live discography (or creates Artist sources when Spotify isn't set up). |
 | `EveryNoiseData/` | Bundled (folder reference): `genres.json` index + per-genre artist shards from the one-time `tools/everynoise/scrape.py`, plus the derived `artists.idx.z` from `build_artist_index.py`. |
 | `BrowseSourceView.swift` | One source's items with per-row Download/Preview/Discard, plus a **Select** mode for bulk download; also `BrowseTrackStatusButton`, the green play button every browse list shows once a download is in the library. |
-| `BrowsePreviewView.swift` | The preview modal: pipeline download, mini player with prev/play-pause/next over the queue it was opened with (auto-advancing at the end of each track, phone locked or not), the lock-screen metadata it borrows while it plays, Save/Discard. |
+| `BrowsePreviewView.swift` | The preview modal: pipeline download, mini player with prev/play-pause/next over the queue it was opened with (auto-advancing at the end of each track — off its own frozen-playhead watchdog, not just the end notification — phone locked or not), the lock-screen metadata it borrows while it plays, Save/Discard. |
 | `*View.swift` | The five SwiftUI screens (Download, Browse, Library, Player, Settings — which embeds the Log). `PlayerView.swift` also holds the tap-to-seek scrubber and the `MiniPlayerBar` the other tabs inset above the tab bar. |
 | `FolderView.swift` | Folder detail (tap-to-play, reorder, subfolders, mixtape header/Edit Cover) and Inbox screens. |
 | `MixtapeViews.swift` | Mixtape banner rendering (non-destructive crop), the shared folder-row label, and the Edit Cover sheet (PhotosPicker + drag/pinch + font picker). |
@@ -1326,6 +1344,33 @@ With three independent routes to "this track is over", they can and do arrive
 together, so the advance is claimed once per track and the duplicates are
 dropped — otherwise the second report would skip the song the first one had
 just started.
+
+A third pass found why the queue could still stop dead between two tracks, and
+it was the same file the watchdog was *written* for: **all three routes asked
+whether the player had paused, and this one never does.** An item that runs out
+of samples short of its declared duration doesn't stop — `AVPlayer` believes
+there is more media coming, so it sits in `.waitingToPlayAtSpecifiedRate`
+indefinitely. The end notification never arrives (the playhead never reaches
+what AVFoundation calls the end), the rate observer wants `.paused`, and the
+watchdog wanted `.paused` too, so it kept resetting its own counter while the
+music stayed off. Three ways to notice, and the one case that needed them all
+was invisible to every one.
+
+The ground truth is the **playhead**, not the rate: a clock that has stopped
+while the app still believes it is playing means playback has stopped, whatever
+`timeControlStatus` claims. So the watchdog now watches the playhead, and reads
+a frozen one three ways — at the end by either clock, the track is over after a
+second; short of that, an item whose buffer has drained with nothing left to
+fill it (a local file has nothing to stream, so that means the samples ran out)
+is called after three; and anything still frozen after six seconds is called
+regardless, because no local file recovers from that and a stopped queue is the
+worse outcome. Two smaller holes closed with it: an item that never becomes
+playable and never reports failing either — it just sits at `.unknown` — used
+to switch the watchdog off for the rest of the session, so that wait is now
+bounded; and every counter is cleared on any change the app makes itself (a
+load, a seek, a pause, a resume), so a reading from before the change can't be
+compared with one from after. The reason for each advance still goes to the Log
+under `Player`, and now names which of the three noticed.
 
 ### Lending the lock screen out
 
