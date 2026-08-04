@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import MediaPlayer
 #if canImport(UIKit)
 import UIKit
 #else
@@ -19,6 +20,13 @@ import AppKit
 /// that list and a track that plays to its end rolls straight into the next
 /// one. A caller with nothing to walk (a one-off search result) passes no
 /// queue and the side buttons are simply disabled.
+///
+/// The queue itself lives on the **model**, not in this view's state. That
+/// isn't tidiness: a queue that only advanced when SwiftUI re-rendered stopped
+/// advancing the moment the phone was locked, because a backgrounded app draws
+/// nothing. Everything the transport does — the buttons here, the lock screen's,
+/// and the end-of-track hand-off — is a call into the model, which can move
+/// with the screen off.
 struct BrowsePreviewView: View {
     /// The list this preview walks: the caller's queue when it contains the
     /// tapped item, otherwise that item on its own. Resolved once, at init,
@@ -26,12 +34,22 @@ struct BrowsePreviewView: View {
     let items: [BrowseItem]
     /// Audio (the default) or video — the Browse toggle / Download tab mode.
     let mode: DownloadMode
+    /// Where in `items` the tapped item sits.
+    private let startIndex: Int
 
     init(item: BrowseItem, mode: DownloadMode = .audio, queue: [BrowseItem] = []) {
-        let walkable = queue.contains(where: { $0.id == item.id }) ? queue : [item]
+        // Membership by id *or* url: the discography browser mints its items on
+        // the fly (a `BrowseItem` takes a fresh id each time it's built), so an
+        // album's queue and the track tapped in it can be equal in every way
+        // that matters and still not share an id — which used to drop the whole
+        // record and leave the modal walking a queue of one.
+        let walkable = queue.contains(where: { $0.id == item.id || $0.url == item.url })
+            ? queue : [item]
         self.items = walkable
         self.mode = mode
-        _index = State(initialValue: walkable.firstIndex(where: { $0.id == item.id }) ?? 0)
+        self.startIndex = walkable.firstIndex(where: { $0.id == item.id })
+            ?? walkable.firstIndex(where: { $0.url == item.url })
+            ?? 0
     }
 
     @EnvironmentObject private var browse: BrowseStore
@@ -42,9 +60,6 @@ struct BrowsePreviewView: View {
     @Environment(\.dismiss) private var dismiss
 
     @StateObject private var model = BrowsePreviewModel()
-    /// Where in `items` the preview currently is. Changing it *is* the
-    /// "load the next track" action — the `.task(id:)` below follows it.
-    @State private var index: Int
     /// The artist just added via the selection menu's "Browse Artist" (drives
     /// the confirmation alert).
     @State private var addedArtist: String?
@@ -61,9 +76,10 @@ struct BrowsePreviewView: View {
                 set: { qualityRaw = $0.rawValue })
     }
 
-    /// What's loaded right now. `items` is never empty, so this always resolves.
+    /// What's loaded right now — the model's answer once it has been handed the
+    /// queue, and the tapped item for the one render before that.
     private var current: BrowseItem {
-        items.indices.contains(index) ? items[index] : items[0]
+        model.currentItem ?? items[min(startIndex, items.count - 1)]
     }
 
     var body: some View {
@@ -86,10 +102,7 @@ struct BrowsePreviewView: View {
                     .pickerStyle(.segmented)
                     .padding(.horizontal)
                     .onChange(of: qualityRaw) { _ in
-                        Task {
-                            await model.restart(item: current, mode: mode, quality: quality,
-                                                downloads: downloads, mainPlayback: playback)
-                        }
+                        model.setQuality(quality)
                     }
                 }
 
@@ -117,18 +130,14 @@ struct BrowsePreviewView: View {
         // A video preview needs the room for its picture; audio keeps the
         // half-height option.
         .presentationDetents(mode == .video ? [.large] : [.medium, .large])
-        .onAppear {
-            model.onFinished = { autoAdvance() }
-        }
-        // Keyed on the position, so moving through the queue *is* the load:
-        // the previous track's task is cancelled and the new one starts,
-        // structurally, the same way the first one did. Marking previewed
-        // here covers the auto-advance too, so a list walked hands-off ends
-        // up with its "you've heard this one" breadcrumbs filled in.
-        .task(id: index) {
-            browse.markPreviewed(current)
-            await model.load(item: current, mode: mode, quality: quality,
-                             downloads: downloads, mainPlayback: playback)
+        // Hands the model the queue and the stores it drives, then lets go:
+        // from here on the loading, the advancing and the lock screen are all
+        // the model's, so none of it depends on this view being on screen.
+        .task {
+            model.configure(items: items, startAt: startIndex, mode: mode,
+                            quality: quality, downloads: downloads,
+                            playback: playback, browse: browse)
+            model.begin()
         }
         .onDisappear {
             model.teardown()
@@ -165,12 +174,12 @@ struct BrowsePreviewView: View {
         VStack(spacing: 4) {
             HStack(spacing: 30) {
                 Button {
-                    go(to: index - 1)
+                    model.previous()
                 } label: {
                     Image(systemName: "backward.end.fill")
                         .font(.title2)
                 }
-                .disabled(!items.indices.contains(index - 1))
+                .disabled(!model.canGoPrevious)
                 .accessibilityLabel("Previous track")
 
                 Button {
@@ -183,12 +192,12 @@ struct BrowsePreviewView: View {
                 .accessibilityLabel(model.isPlaying ? "Pause" : "Play")
 
                 Button {
-                    go(to: index + 1)
+                    model.next()
                 } label: {
                     Image(systemName: "forward.end.fill")
                         .font(.title2)
                 }
-                .disabled(!items.indices.contains(index + 1))
+                .disabled(!model.canGoNext)
                 .accessibilityLabel("Next track")
             }
             // Borderless so the three buttons stay independently tappable and
@@ -196,28 +205,12 @@ struct BrowsePreviewView: View {
             .buttonStyle(.borderless)
 
             if items.count > 1 {
-                Text("\(index + 1) of \(items.count)")
+                Text("\(model.index + 1) of \(items.count)")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                     .monospacedDigit()
             }
         }
-    }
-
-    /// Moves to a position in the queue — the transport's own buttons and the
-    /// auto-advance both come through here. Setting `index` is all it takes;
-    /// the `.task(id:)` above does the loading.
-    private func go(to newIndex: Int) {
-        guard items.indices.contains(newIndex) else { return }
-        index = newIndex
-    }
-
-    /// A track played through to its end: roll into the next one, so a list
-    /// can be auditioned without touching the phone. At the end of the queue
-    /// there's nothing to advance to and the player just rewinds, as before.
-    private func autoAdvance() {
-        guard items.indices.contains(index + 1) else { return }
-        go(to: index + 1)
     }
 
     /// The selection menu's "Browse Artist": adds an Artist source for the
@@ -276,10 +269,7 @@ struct BrowsePreviewView: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
                 Button("Try Again") {
-                    Task {
-                        await model.load(item: current, mode: mode, quality: quality,
-                                         downloads: downloads, mainPlayback: playback)
-                    }
+                    model.retry()
                 }
                 .buttonStyle(.bordered)
             }
@@ -556,10 +546,19 @@ struct SelectableText: NSViewRepresentable {
 
 #endif
 
-/// State machine + mini audio player behind the preview modal. Owns the temp
-/// file: it's deleted on teardown unless `saveToLibrary` moved it first.
+/// The preview's player: the queue it's walking, the pipeline download behind
+/// each entry, the AVPlayer that plays it, and the lock screen it borrows while
+/// it does. Owns the temp file too — it's deleted on teardown unless
+/// `saveToLibrary` moved it first.
+///
+/// Three things live here that used to live in the view, and all three for the
+/// same reason: **a locked phone draws nothing**. The queue and the position in
+/// it, the decision to load the next track, and the now-playing metadata are
+/// all state a backgrounded app still has to be able to change. Driven from
+/// `@State` and a `.task(id:)`, none of them moved once the screen went off —
+/// the audio finished and the modal simply sat there.
 @MainActor
-final class BrowsePreviewModel: ObservableObject {
+final class BrowsePreviewModel: ObservableObject, RemoteAudioSource {
     enum Phase {
         case waiting
         case preparing
@@ -579,11 +578,32 @@ final class BrowsePreviewModel: ObservableObject {
     @Published private(set) var duration: Double = 0
     /// True when the previewed media is a video (the modal shows a picture).
     @Published private(set) var isVideo = false
+    /// The list being auditioned, and where in it the preview is. The modal
+    /// hands these over once and then only reads them: every move through the
+    /// queue — its own buttons, the lock screen's, the end-of-track advance —
+    /// is a call into this object.
+    @Published private(set) var items: [BrowseItem] = []
+    @Published private(set) var index = 0
     /// Set by the slider while dragging so observer ticks don't fight the thumb.
     var isScrubbing = false
-    /// Called when the track plays through to its end — the modal's cue to
-    /// advance to the next item in the queue it was opened with.
-    var onFinished: (() -> Void)?
+
+    /// What's loaded (or loading) right now.
+    var currentItem: BrowseItem? {
+        items.indices.contains(index) ? items[index] : items.first
+    }
+
+    var canGoNext: Bool { items.indices.contains(index + 1) }
+    var canGoPrevious: Bool { items.indices.contains(index - 1) }
+
+    private var mode: DownloadMode = .audio
+    private var quality: VideoQuality = .best
+    // Held strongly: these are the app's own long-lived stores, and none of
+    // them holds this model back (`PlaybackManager` keeps its borrower weak).
+    private var downloads: DownloadManager?
+    private var playback: PlaybackManager?
+    private var browse: BrowseStore?
+    private var configured = false
+    private var started = false
 
     private var media: ExtractedMedia?
     /// Exposed (read-only) so the modal's video surface can render it.
@@ -591,6 +611,10 @@ final class BrowsePreviewModel: ObservableObject {
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
     private var downloadTask: Task<Void, Never>?
+    /// The item's cover, fetched for the lock screen (best-effort — a miss just
+    /// leaves the artwork blank, as it does everywhere else in the app).
+    private var artworkTask: Task<Void, Never>?
+    private var artwork: MPMediaItemArtwork?
     /// Bumped on every start/teardown so a stale task can't clear a newer
     /// task's handle when a cancel and a retry overlap.
     private var generation = 0
@@ -598,62 +622,119 @@ final class BrowsePreviewModel: ObservableObject {
     /// delete it then.
     private var savedToLibrary = false
 
-    /// Kicks off (or retries) the preview download and, on success, starts the
-    /// mini player — pausing the app's main playback so they don't talk over
-    /// each other.
-    func start(item: BrowseItem, mode: DownloadMode, quality: VideoQuality = .best,
-               downloads: DownloadManager, mainPlayback: PlaybackManager) async {
-        guard downloadTask == nil, media == nil else { return }
-        phase = .waiting
-        generation += 1
+    // MARK: - Setup
+
+    /// Hands over the queue and the stores. Called once, from the modal's
+    /// `.task`; re-running it would restart a preview that's already going.
+    func configure(items: [BrowseItem], startAt: Int, mode: DownloadMode,
+                   quality: VideoQuality, downloads: DownloadManager,
+                   playback: PlaybackManager, browse: BrowseStore) {
+        guard !configured else { return }
+        configured = true
+        self.items = items
+        self.index = items.indices.contains(startAt) ? startAt : 0
+        self.mode = mode
+        self.quality = quality
+        self.downloads = downloads
+        self.playback = playback
+        self.browse = browse
+    }
+
+    /// Starts the first track. Idempotent, so a view that appears twice doesn't
+    /// restart the download.
+    func begin() {
+        guard configured, !started else { return }
+        started = true
+        startCurrent()
+    }
+
+    // MARK: - Walking the queue
+
+    /// Moves to a position and loads it. The transport's buttons, the lock
+    /// screen's, and the end-of-track advance all come through here.
+    func go(to position: Int) {
+        guard items.indices.contains(position) else { return }
+        index = position
+        startCurrent()
+    }
+
+    func next() { go(to: index + 1) }
+    func previous() { go(to: index - 1) }
+
+    /// Re-runs the current entry — the failure view's Try Again.
+    func retry() { startCurrent() }
+
+    /// Re-runs it at a different resolution. Noted in the Log because nothing
+    /// on screen says why the download restarted.
+    func setQuality(_ newQuality: VideoQuality) {
+        guard newQuality != quality else { return }
+        quality = newQuality
+        appLog("Preview restarting at \(newQuality.displayName) quality…", category: "Browse")
+        startCurrent()
+    }
+
+    /// Drops whatever is in flight and starts the entry at `index`: mark it
+    /// previewed (so a list walked hands-off still fills in its breadcrumbs),
+    /// fetch its cover for the lock screen, then run it through the pipeline.
+    private func startCurrent() {
+        guard let downloads, let item = currentItem else { return }
+        reset()
+        browse?.markPreviewed(item)
+        loadArtwork(for: item)
+        playback?.remoteAudioDidChange(self)
+
         let gen = generation
-        let task = Task { [weak self] in
-            do {
-                let media = try await downloads.downloadPreview(
-                    urlString: item.url,
-                    mode: mode,
-                    quality: quality,
-                    onBegin: { [weak self] in self?.phase = .preparing },
-                    onDownloadStart: { [weak self] in self?.phase = .downloading(0) },
-                    onProgress: { [weak self] fraction in self?.phase = .downloading(fraction) }
-                )
-                if Task.isCancelled || self == nil || self?.generation != gen {
-                    // The modal went away while the extraction was finishing —
-                    // nobody will play or save this file.
-                    try? FileManager.default.removeItem(at: media.fileURL)
-                } else {
-                    self?.attachPlayer(to: media, mainPlayback: mainPlayback)
-                }
-            } catch {
-                if !isCancellation(error) {
-                    self?.phase = .failed(error.localizedDescription)
-                }
-            }
-            if self?.generation == gen {
-                self?.downloadTask = nil
+        let mode = self.mode
+        let quality = self.quality
+        downloadTask = Task { [weak self] in
+            // Resolving and downloading the next track is *seconds* of silence,
+            // not the milliseconds a library track's item swap costs. An app
+            // with the audio background mode is alive because it is playing, so
+            // that gap is exactly where a locked phone had the app suspended and
+            // the audition simply ended.
+            await BackgroundActivity.spanning("Preview download") {
+                guard let self else { return }
+                await self.runDownload(item: item, mode: mode, quality: quality,
+                                       downloads: downloads, generation: gen)
             }
         }
-        downloadTask = task
-        await task.value
     }
 
-    /// Switches the mini player to a different item — the queue's next/previous
-    /// and the end-of-track auto-advance both land here. Whatever is in flight
-    /// is cancelled and its file dropped before the new preview starts.
-    func load(item: BrowseItem, mode: DownloadMode, quality: VideoQuality,
-              downloads: DownloadManager, mainPlayback: PlaybackManager) async {
-        reset()
-        await start(item: item, mode: mode, quality: quality,
-                    downloads: downloads, mainPlayback: mainPlayback)
+    private func runDownload(item: BrowseItem, mode: DownloadMode, quality: VideoQuality,
+                             downloads: DownloadManager, generation gen: Int) async {
+        phase = .waiting
+        do {
+            let media = try await downloads.downloadPreview(
+                urlString: item.url,
+                mode: mode,
+                quality: quality,
+                onBegin: { [weak self] in self?.setPhase(.preparing, generation: gen) },
+                onDownloadStart: { [weak self] in self?.setPhase(.downloading(0), generation: gen) },
+                onProgress: { [weak self] fraction in
+                    self?.setPhase(.downloading(fraction), generation: gen)
+                }
+            )
+            if Task.isCancelled || generation != gen {
+                // The modal moved on (or went away) while the extraction was
+                // finishing — nobody will play or save this file.
+                try? FileManager.default.removeItem(at: media.fileURL)
+            } else {
+                attachPlayer(to: media)
+            }
+        } catch {
+            if !isCancellation(error), generation == gen {
+                phase = .failed(error.localizedDescription)
+                playback?.remoteAudioDidChange(self)
+            }
+        }
+        if generation == gen {
+            downloadTask = nil
+        }
     }
 
-    /// Re-runs the preview at a different quality: the same reset-and-start,
-    /// noted in the Log because nothing on screen says why it restarted.
-    func restart(item: BrowseItem, mode: DownloadMode, quality: VideoQuality,
-                 downloads: DownloadManager, mainPlayback: PlaybackManager) async {
-        appLog("Preview restarting at \(quality.displayName) quality…", category: "Browse")
-        await load(item: item, mode: mode, quality: quality,
-                   downloads: downloads, mainPlayback: mainPlayback)
+    private func setPhase(_ newPhase: Phase, generation gen: Int) {
+        guard generation == gen else { return }
+        phase = newPhase
     }
 
     /// Back to square one for a fresh item. Bumping the generation first means
@@ -678,7 +759,7 @@ final class BrowsePreviewModel: ObservableObject {
         phase = .waiting
     }
 
-    private func attachPlayer(to media: ExtractedMedia, mainPlayback: PlaybackManager) {
+    private func attachPlayer(to media: ExtractedMedia) {
         self.media = media
         isVideo = media.isVideo
         duration = media.duration
@@ -686,11 +767,16 @@ final class BrowsePreviewModel: ObservableObject {
             // Extractor metadata can lack a duration; read it off the file.
             Task { [weak self] in
                 let real = await mediaDuration(of: media.fileURL)
-                self?.duration = real
+                guard let self else { return }
+                self.duration = real
+                self.playback?.remoteAudioDidChange(self)
             }
         }
 
         let player = AVPlayer(url: media.fileURL)
+        // A preview is as much a background listen as a library track is —
+        // without this a video preview goes silent the moment the phone locks.
+        player.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible
         self.player = player
 
         timeObserver = player.addPeriodicTimeObserver(
@@ -710,24 +796,38 @@ final class BrowsePreviewModel: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.isPlaying = false
-                // Rewind first, then tell the modal: at the end of a queue
-                // (or with no queue at all) nothing advances and this is the
-                // whole behaviour, exactly as it was before.
-                self.currentTime = 0
-                self.player?.seek(to: .zero)
-                self.onFinished?()
+                self.advanceAtEnd()
             }
         }
 
         // Don't talk over the main player.
-        if mainPlayback.isPlaying {
-            mainPlayback.togglePlayPause()
+        if let playback {
+            if playback.isPlaying { playback.togglePlayPause() }
+            // Now that there's sound to attach it to, take the lock screen:
+            // from here the preview is what Control Center, the headphones and
+            // the watch are talking to, and its title/artist/cover are what
+            // shows. Handed back in `teardown`.
+            playback.beginRemoteAudio(self)
         }
 
         phase = .ready
         AudioSession.activate()
         player.play()
         isPlaying = true
+        playback?.remoteAudioDidChange(self)
+    }
+
+    /// A track played through to its end: roll into the next one, so a list can
+    /// be auditioned without touching the phone. At the end of the queue there's
+    /// nothing to advance to and the player just rewinds, as before.
+    private func advanceAtEnd() {
+        if canGoNext {
+            next()
+        } else {
+            currentTime = 0
+            player?.seek(to: .zero)
+            playback?.remoteAudioDidChange(self)
+        }
     }
 
     func togglePlayPause() {
@@ -739,13 +839,91 @@ final class BrowsePreviewModel: ObservableObject {
             player.play()
         }
         isPlaying.toggle()
+        playback?.remoteAudioDidChange(self)
     }
 
     func scrub(to time: Double) {
         currentTime = time
         player?.seek(to: CMTime(seconds: time, preferredTimescale: 600),
                      toleranceBefore: .zero, toleranceAfter: .zero)
+        playback?.remoteAudioDidChange(self)
     }
+
+    // MARK: - The lock screen
+
+    /// What the lock screen, Control Center and the watch show while this modal
+    /// owns them. Deliberately answered even mid-download, so the *next* track's
+    /// name is up before its audio is — the alternative is the library player's
+    /// paused metadata flickering back in between every pair of previews.
+    var remoteAudioInfo: RemoteAudioInfo? {
+        guard let item = currentItem else { return nil }
+        let named = splitTitle(of: item)
+        return RemoteAudioInfo(id: item.id,
+                               title: named.title,
+                               artist: named.artist,
+                               duration: duration,
+                               elapsed: currentTime,
+                               isPlaying: isPlaying,
+                               artwork: artwork)
+    }
+
+    func remotePlay() { if !isPlaying { togglePlayPause() } }
+
+    func remotePause() { if isPlaying { togglePlayPause() } }
+
+    func remoteTogglePlayPause() { togglePlayPause() }
+
+    func remoteNext() { next() }
+
+    /// Mirrors the library player: more than three seconds in — or with nothing
+    /// behind it — "previous" means "start this one again".
+    func remotePrevious() {
+        if currentTime > 3 || !canGoPrevious {
+            scrub(to: 0)
+        } else {
+            previous()
+        }
+    }
+
+    func remoteSeek(to time: Double) {
+        scrub(to: max(0, min(time, duration > 0 ? duration : time)))
+    }
+
+    /// Song and artist out of a Browse item's single title string.
+    ///
+    /// The lists that *know* the artist spell it "Artist — Song" — the
+    /// discography browser's matched tracks, the AI song lists — which is the
+    /// same split the Browse rows draw name-over-artist from. Anything else is a
+    /// video title and goes up whole, with the item's own detail line (a channel
+    /// name, the release it came from) standing in for the artist when it's
+    /// short enough to read as one; a feed's paragraph of description isn't.
+    private func splitTitle(of item: BrowseItem) -> (title: String, artist: String) {
+        if let range = item.title.range(of: " — ") {
+            let artist = item.title[..<range.lowerBound].trimmingCharacters(in: .whitespaces)
+            let song = item.title[range.upperBound...].trimmingCharacters(in: .whitespaces)
+            if !artist.isEmpty, !song.isEmpty { return (song, artist) }
+        }
+        let detail = item.detail
+            .split(separator: "\n").first
+            .map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+        return (item.title, detail.count <= 60 ? detail : "")
+    }
+
+    private func loadArtwork(for item: BrowseItem) {
+        artworkTask?.cancel()
+        artworkTask = nil
+        artwork = nil
+        guard let urlString = item.artworkURL, let url = URL(string: urlString) else { return }
+        artworkTask = Task { [weak self] in
+            guard let fetched = try? await URLSession.shared.data(from: url),
+                  let image = PlatformImage(data: fetched.0),
+                  !Task.isCancelled, let self else { return }
+            self.artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+            self.playback?.remoteAudioDidChange(self)
+        }
+    }
+
+    // MARK: - Saving and tearing down
 
     /// Moves the previewed file into Documents and adds a library track for
     /// it. Returns the new track, or nil when there's nothing ready to save.
@@ -786,20 +964,27 @@ final class BrowsePreviewModel: ObservableObject {
     /// Discard tapped: stop playback and delete the file right away (teardown
     /// would too, but the intent is explicit here).
     func markDiscardedAndCleanUp() {
+        generation += 1
         downloadTask?.cancel()
+        downloadTask = nil
+        playback?.endRemoteAudio(self)
         stopPlayer()
         deleteTempFile()
     }
 
     /// Called when the modal goes away for any reason: cancel an in-flight
-    /// download, stop the player, and delete the temp file unless it was saved.
+    /// download, hand the lock screen back, stop the player, and delete the temp
+    /// file unless it was saved.
     func teardown() {
         generation += 1
         downloadTask?.cancel()
         downloadTask = nil
-        // The callback holds the (dismissed) modal; dropping it here keeps a
-        // finished track from advancing a queue nobody is watching.
-        onFinished = nil
+        artworkTask?.cancel()
+        artworkTask = nil
+        artwork = nil
+        // Before `stopPlayer`, so the library player's own metadata is what
+        // goes back up rather than a preview frozen at whatever it was showing.
+        playback?.endRemoteAudio(self)
         stopPlayer()
         if !savedToLibrary {
             deleteTempFile()
@@ -813,6 +998,8 @@ final class BrowsePreviewModel: ObservableObject {
             player.removeTimeObserver(timeObserver)
         }
         timeObserver = nil
+        // Removed here, which is also what keeps a dismissed modal from
+        // advancing a queue nobody is listening to.
         if let endObserver {
             NotificationCenter.default.removeObserver(endObserver)
         }

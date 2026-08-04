@@ -208,6 +208,72 @@ enum AudioSession {
     }
 }
 
+// MARK: - Background execution
+
+/// An assertion that keeps the app running through a **silent gap**.
+///
+/// An app with the `audio` background mode stays alive *because* it is playing
+/// audio; the instant the sound stops, iOS is entitled to suspend it — and a
+/// suspended app never gets to start the next track. Every gap the app opens on
+/// purpose is therefore wrapped in one of these: swapping the player's item at
+/// the end of a track, and (much longer) resolving and downloading the next
+/// preview in the Browse modal, which is seconds of silence rather than
+/// milliseconds. The system grants roughly half a minute, which is what makes
+/// hands-off auditioning survive a locked phone.
+///
+/// macOS has no such notion — a backgrounded Mac app just keeps running — so
+/// the whole thing compiles down to nothing there.
+@MainActor
+final class BackgroundActivity {
+    #if os(iOS)
+    private var id: UIBackgroundTaskIdentifier = .invalid
+    #endif
+
+    init(_ name: String) {
+        #if os(iOS)
+        take(name)
+        #endif
+    }
+
+    #if os(iOS)
+    private func take(_ name: String) {
+        id = UIApplication.shared.beginBackgroundTask(withName: name) { [weak self] in
+            Task { @MainActor in self?.end() }
+        }
+    }
+    #endif
+
+    /// Hands the assertion back. Idempotent — iOS kills an app that lets one
+    /// run to its deadline, so every path out of the gap calls this.
+    func end() {
+        #if os(iOS)
+        guard id != .invalid else { return }
+        let handle = id
+        id = .invalid
+        UIApplication.shared.endBackgroundTask(handle)
+        #endif
+    }
+
+    /// Holds one across an async span — the shape most callers want.
+    static func spanning<T>(_ name: String, _ work: () async throws -> T) async rethrows -> T {
+        let activity = BackgroundActivity(name)
+        defer { activity.end() }
+        return try await work()
+    }
+
+    /// Holds one for a few seconds past a synchronous hand-off. `AVPlayer.play()`
+    /// returns long before the audio is actually running, so letting go the
+    /// moment the call returns gives the app back to the scheduler mid-gap.
+    static func bridging(_ name: String, seconds: Double = 5, _ work: () -> Void) {
+        let activity = BackgroundActivity(name)
+        work()
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            activity.end()
+        }
+    }
+}
+
 // MARK: - Screen
 
 enum PlatformScreen {

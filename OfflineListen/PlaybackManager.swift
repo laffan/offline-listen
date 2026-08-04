@@ -22,6 +22,46 @@ final class PlaybackProgress: ObservableObject {
     @Published var duration: Double = 0
 }
 
+/// What a **borrowed** lock screen should show — see `RemoteAudioSource`.
+/// Deliberately not a `Track`: the thing borrowing it is auditioning something
+/// that isn't in the library yet, so all it can offer is the metadata the list
+/// it came from knew.
+struct RemoteAudioInfo {
+    /// A stable id for the thing playing, so the watch can tell one from the next.
+    var id: UUID
+    var title: String
+    var artist: String
+    var duration: Double
+    var elapsed: Double
+    var isPlaying: Bool
+    var artwork: MPMediaItemArtwork?
+}
+
+/// A player *other than* the library's own that is making sound and should own
+/// the lock screen while it does — today, the Browse preview modal.
+///
+/// Two players sharing one `MPNowPlayingInfoCenter` is not a thing iOS
+/// arbitrates for you: whoever writes last wins, and `PlaybackManager`'s ticker
+/// writes twice a second, so an unannounced second player is simply invisible on
+/// the lock screen. The same goes for `MPRemoteCommandCenter` — the transport
+/// buttons act on whatever the targets were wired to, which was always the
+/// library player, even when the audio you could hear was a preview.
+///
+/// So a preview *borrows* both (`PlaybackManager.beginRemoteAudio`) and hands
+/// them back when it closes.
+@MainActor
+protocol RemoteAudioSource: AnyObject {
+    /// Nil while the borrower has nothing to show — the lock screen then falls
+    /// back to the library player.
+    var remoteAudioInfo: RemoteAudioInfo? { get }
+    func remotePlay()
+    func remotePause()
+    func remoteTogglePlayPause()
+    func remoteNext()
+    func remotePrevious()
+    func remoteSeek(to time: Double)
+}
+
 @MainActor
 final class PlaybackManager: NSObject, ObservableObject {
     @Published var currentTrack: Track?
@@ -54,10 +94,25 @@ final class PlaybackManager: NSObject, ObservableObject {
     /// Consecutive ticks on which the player was stopped while we still
     /// believed it was playing — see `checkForSilentStop()`.
     private var stoppedTicks = 0
+    /// True once the current track's end has been acted on. The end is reported
+    /// by three independent routes (the end notification, the failure
+    /// notification, and the rate/watchdog pair below) and they can easily
+    /// arrive together; whichever gets there first owns it, because acting on
+    /// the second would skip the song we just advanced to.
+    private var didFinishCurrent = false
+    /// The player's rate, watched directly. See `playerRateChanged()`.
+    private var rateObservation: NSKeyValueObservation?
+    /// The current item's load status. An item that fails outright posts no
+    /// end-of-play notification at all — left unwatched it stops the queue dead.
+    private var itemStatusObservation: NSKeyValueObservation?
     /// The current track's album art for the lock screen / Control Center,
     /// loaded once per track change — `updateNowPlaying` runs at 2 Hz and
     /// must never touch the disk.
     private var lockScreenArtwork: MPMediaItemArtwork?
+    /// The Browse preview modal while it has borrowed the lock screen (see
+    /// `beginRemoteAudio`). Weak on purpose: a modal torn down without handing
+    /// back mustn't keep the lock screen hostage.
+    private weak var remoteAudio: (any RemoteAudioSource)?
 
     private var hasRestored = false
     private var lastPersist = Date.distantPast
@@ -74,6 +129,7 @@ final class PlaybackManager: NSObject, ObservableObject {
         player.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible
         configureAudioSession()
         observeAudioSession()
+        observePlayerRate()
         setupRemoteCommands()
     }
 
@@ -93,6 +149,9 @@ final class PlaybackManager: NSObject, ObservableObject {
     /// user auditioned the track but hasn't "listened" to it from the library.
     func play(_ track: Track, in tracks: [Track], startAt: Double? = nil,
               restrictToCategory: Bool = true, countsAsListened: Bool = true) {
+        // A library track starting is the borrower's cue that it's over — the
+        // preview modal's Save hand-off is exactly this call.
+        remoteAudio = nil
         let pool = tracks.isEmpty ? [track] : tracks
         queue = restrictToCategory ? pool.filter { $0.playbackCategory == track.playbackCategory } : pool
         if queue.isEmpty { queue = [track] }
@@ -164,6 +223,11 @@ final class PlaybackManager: NSObject, ObservableObject {
         let target = max(0, min(time, upperBound))
         player.seek(to: CMTime(seconds: target, preferredTimescale: 600))
         progress.currentTime = target
+        // Moving the playhead puts the track back in play, whatever we thought
+        // of it a moment ago — otherwise a track rewound at the end of the
+        // queue could never report finishing again.
+        didFinishCurrent = false
+        stoppedTicks = 0
         updateNowPlaying()
         persistState()
     }
@@ -207,49 +271,67 @@ final class PlaybackManager: NSObject, ObservableObject {
         currentTrack = track
         progress.currentTime = 0
         progress.duration = track.duration
-        // The queue holds snapshots; the library's live copy has the artwork
-        // if it arrived after this queue was built.
-        let liveTrack = library.track(withID: track.id) ?? track
-        lockScreenArtwork = TrackArtwork.image(for: liveTrack).map { image in
-            MPMediaItemArtwork(boundsSize: image.size) { _ in image }
-        }
         updateTransportButtons()
         releaseItemObservers()
         stoppedTicks = 0
+        didFinishCurrent = false
 
-        let item = AVPlayerItem(url: track.fileURL)
-        // Swapped straight in, never through nil. Dropping the old item first
-        // leaves the player with nothing to play for an instant, and in the
-        // background that gap of silence is exactly when iOS suspends an audio
-        // app — which is how a locked phone could stop dead between tracks
-        // instead of rolling on to the next one.
-        player.replaceCurrentItem(with: item)
-        observeItem(item)
+        // Everything between the old item stopping and the new one playing is
+        // silence, and a background audio app is alive *because* it is playing
+        // — so the swap is held under a background assertion. Without it a
+        // locked phone can have the app suspended mid-swap and simply never
+        // start the next track.
+        BackgroundActivity.bridging("Track change") {
+            let item = AVPlayerItem(url: track.fileURL)
+            // Swapped straight in, never through nil. Dropping the old item
+            // first leaves the player with nothing to play for an instant,
+            // which is exactly the gap described above.
+            player.replaceCurrentItem(with: item)
+            observeItem(item)
 
-        if startAt > 0 {
-            player.seek(to: CMTime(seconds: startAt, preferredTimescale: 600))
-            progress.currentTime = startAt
+            if startAt > 0 {
+                player.seek(to: CMTime(seconds: startAt, preferredTimescale: 600))
+                progress.currentTime = startAt
+            }
+
+            isPlaying = autoPlay
+            if autoPlay {
+                AudioSession.activate()
+                player.play()
+            } else {
+                // `replaceCurrentItem` inherits the player's rate, so an item
+                // swapped in while playing would otherwise start on its own.
+                player.pause()
+            }
         }
 
-        isPlaying = autoPlay
-        if autoPlay {
-            AudioSession.activate()
-            player.play()
-            // Starting playback counts as listened — the track leaves the
-            // Inbox and joins the Recent log. (The preview-save handoff opts
-            // out: an auditioned save should still land in the Inbox.)
-            if countsAsListened {
-                library.markPlayed(track.id)
-                library.recordListen(track.id)
-            }
-        } else {
-            // `replaceCurrentItem` inherits the player's rate, so an item
-            // swapped in while playing would otherwise start on its own.
-            player.pause()
+        // Past the hand-off, so nothing that touches the disk sits between the
+        // two items. The artwork is a JPEG read and decode (memoized, but an
+        // `NSCache` is emptied under background memory pressure), and the
+        // library writes are a JSON encode apiece.
+        loadLockScreenArtwork(for: track)
+        // Starting playback counts as listened — the track leaves the Inbox and
+        // joins the Recent log. (The preview-save handoff opts out: an
+        // auditioned save should still land in the Inbox.)
+        if autoPlay, countsAsListened {
+            library.markPlayed(track.id)
+            library.recordListen(track.id)
         }
         startTicker()
         updateNowPlaying()
         persistState()
+    }
+
+    /// The album art the lock screen and Control Center draw, read once per
+    /// track change — `updateNowPlaying` runs at 2 Hz and must never touch the
+    /// disk.
+    private func loadLockScreenArtwork(for track: Track) {
+        // The queue holds snapshots; the library's live copy has the artwork if
+        // it arrived after this queue was built.
+        let liveTrack = library.track(withID: track.id) ?? track
+        lockScreenArtwork = TrackArtwork.image(for: liveTrack).map { image in
+            MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+        }
     }
 
     private func resume() {
@@ -270,14 +352,22 @@ final class PlaybackManager: NSObject, ObservableObject {
         persistState()
     }
 
-    /// Watches one item for the two ways it can end: normally, and by giving
-    /// up. Both advance the queue — a file that fails three seconds from the
-    /// end shouldn't be the last thing you hear.
+    /// Watches one item for the three ways it can end: normally, by giving up
+    /// partway, and by never loading at all. All three advance the queue — a
+    /// file that fails three seconds from the end shouldn't be the last thing
+    /// you hear, and one that won't open at all shouldn't be either.
     private func observeItem(_ item: AVPlayerItem) {
+        // Each handler re-checks that `item` is *still* what's loaded: these are
+        // delivered asynchronously, so a notification about the track we just
+        // advanced away from can land after the advance and would otherwise
+        // skip the one that replaced it.
         endObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.handleTrackFinished(reason: "played to the end") }
+            Task { @MainActor in
+                guard let self, self.player.currentItem === item else { return }
+                self.handleTrackFinished(reason: "played to the end")
+            }
         }
         failObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemFailedToPlayToEndTime, object: item, queue: .main
@@ -285,7 +375,19 @@ final class PlaybackManager: NSObject, ObservableObject {
             let message = (note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error)?
                 .localizedDescription ?? "unknown error"
             Task { @MainActor in
-                self?.handleTrackFinished(reason: "stopped early (\(message))")
+                guard let self, self.player.currentItem === item else { return }
+                self.handleTrackFinished(reason: "stopped early (\(message))")
+            }
+        }
+        // An item whose asset never becomes playable posts *neither*
+        // notification — it just sits at rate 0 forever. Nothing watched for
+        // that, so a single unreadable file ended the queue in silence.
+        itemStatusObservation = item.observe(\.status) { [weak self] item, _ in
+            guard item.status == .failed else { return }
+            let message = item.error?.localizedDescription ?? "unknown error"
+            Task { @MainActor in
+                guard let self, self.player.currentItem === item, self.isPlaying else { return }
+                self.handleTrackFinished(reason: "the file wouldn't load (\(message))")
             }
         }
     }
@@ -296,6 +398,25 @@ final class PlaybackManager: NSObject, ObservableObject {
         }
         endObserver = nil
         failObserver = nil
+        itemStatusObservation?.invalidate()
+        itemStatusObservation = nil
+    }
+
+    /// The player's rate is the *fastest* signal that a track has run out —
+    /// faster than the 0.5 s ticker, and it arrives whatever mode the run loop
+    /// happens to be in. That matters most with the phone locked: a background
+    /// audio app is alive because it is playing, so a second of silence spent
+    /// waiting for the watchdog's second tick is a second in which iOS may
+    /// suspend it before the next track ever starts.
+    private func observePlayerRate() {
+        rateObservation = player.observe(\.timeControlStatus) { [weak self] _, _ in
+            Task { @MainActor in self?.playerRateChanged() }
+        }
+    }
+
+    private func playerRateChanged() {
+        guard isPlaying, player.timeControlStatus == .paused, isAtEnd else { return }
+        handleTrackFinished(reason: "the player's rate dropped at the end of the track")
     }
 
     private func persistState() {
@@ -364,6 +485,18 @@ final class PlaybackManager: NSObject, ObservableObject {
     /// (~1s) before acting, so a seek or a momentary stall can't be mistaken
     /// for a stop.
     private func checkForSilentStop() {
+        // An item that hasn't finished loading is not a stopped one — and this
+        // is the difference between a locked phone and an unlocked one. A
+        // freshly swapped-in item reports `.paused` until its asset is ready,
+        // and in the background (cold file, throttled CPU) that can outlast the
+        // two ticks below. The watchdog then read the *new* track's playhead,
+        // found it nowhere near the end, concluded "stopped mid-track" and
+        // marked playback paused — one second after autoplay had just started
+        // it. From outside, autoplay simply stopped working while locked.
+        guard player.currentItem?.status == .readyToPlay else {
+            stoppedTicks = 0
+            return
+        }
         guard isPlaying, player.timeControlStatus == .paused else {
             stoppedTicks = 0
             return
@@ -403,6 +536,12 @@ final class PlaybackManager: NSObject, ObservableObject {
     }
 
     private func handleTrackFinished(reason: String) {
+        // Whichever of the end signals arrives first owns the advance. They
+        // routinely overlap — the notification and the rate change are the same
+        // event seen twice — and acting on the second would skip the track the
+        // first one just started. Cleared by `loadCurrent` and by any seek.
+        guard !didFinishCurrent else { return }
+        didFinishCurrent = true
         // A finished podcast or video resets so a later tap starts it fresh.
         if let track = currentTrack, track.remembersPosition {
             library.updatePosition(for: track.id, to: 0)
@@ -458,7 +597,13 @@ final class PlaybackManager: NSObject, ObservableObject {
               let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
         switch type {
         case .began:
-            // The system has already stopped the audio; catch up with it.
+            // The system has already stopped the audio; catch up with it —
+            // whichever player it was that lost it.
+            if let remoteAudio {
+                appLog("Audio interrupted — pausing the preview.", level: .debug, category: "Player")
+                remoteAudio.remotePause()
+                return
+            }
             guard isPlaying else { return }
             appLog("Audio interrupted — pausing.", level: .debug, category: "Player")
             isPlaying = false
@@ -468,7 +613,13 @@ final class PlaybackManager: NSObject, ObservableObject {
         case .ended:
             let options = (note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt)
                 .map(AVAudioSession.InterruptionOptions.init(rawValue:)) ?? []
-            guard options.contains(.shouldResume), currentTrack != nil, !isPlaying else { return }
+            guard options.contains(.shouldResume) else { return }
+            if let remoteAudio {
+                appLog("Interruption over — resuming the preview.", level: .debug, category: "Player")
+                remoteAudio.remotePlay()
+                return
+            }
+            guard currentTrack != nil, !isPlaying else { return }
             appLog("Interruption over — resuming.", level: .debug, category: "Player")
             resume()
         @unknown default:
@@ -479,9 +630,14 @@ final class PlaybackManager: NSObject, ObservableObject {
     private func handleRouteChange(_ note: Notification) {
         guard let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
               let reason = AVAudioSession.RouteChangeReason(rawValue: raw),
-              reason == .oldDeviceUnavailable, isPlaying else { return }
+              reason == .oldDeviceUnavailable else { return }
         // Headphones pulled / Bluetooth gone: iOS pauses so nothing blares out
         // of the speaker. Reflect it instead of drifting out of step.
+        if let remoteAudio {
+            remoteAudio.remotePause()
+            return
+        }
+        guard isPlaying else { return }
         isPlaying = false
         stoppedTicks = 0
         updateNowPlaying()
@@ -495,6 +651,95 @@ final class PlaybackManager: NSObject, ObservableObject {
         AudioSession.configureForPlayback()
     }
 
+    // MARK: - Lending the lock screen out
+
+    /// Hands the lock screen, Control Center and the watch transport to
+    /// `source` — the Browse preview modal, which is what's actually making
+    /// sound while it's open.
+    ///
+    /// Without this the modal was invisible from outside the app: the ticker
+    /// below rewrites `MPNowPlayingInfoCenter` twice a second from the library
+    /// player, so a preview's title and artist were overwritten as fast as they
+    /// could have been set, and the lock screen's next-track button walked the
+    /// library queue you couldn't hear instead of the album you were
+    /// auditioning.
+    func beginRemoteAudio(_ source: any RemoteAudioSource) {
+        remoteAudio = source
+        // The ticker is what republishes now-playing, and it only starts once a
+        // library track has been loaded — a preview can easily be the first
+        // thing that plays in a session.
+        startTicker()
+        updateTransportButtons()
+        updateNowPlaying()
+    }
+
+    /// Hands the lock screen back to the library player. A no-op unless
+    /// `source` is the current borrower, so a modal torn down after another one
+    /// took over can't snatch it from the newcomer.
+    func endRemoteAudio(_ source: any RemoteAudioSource) {
+        guard remoteAudio === source else { return }
+        remoteAudio = nil
+        updateTransportButtons()
+        updateNowPlaying()
+    }
+
+    /// The borrower's cue that something changed (a new track, play/pause, a
+    /// scrub, artwork arriving) and the lock screen should be redrawn now
+    /// rather than on the next tick.
+    func remoteAudioDidChange(_ source: any RemoteAudioSource) {
+        guard remoteAudio === source else { return }
+        updateTransportButtons()
+        updateNowPlaying()
+    }
+
+    // MARK: - The transport as the outside world sees it
+
+    // Every control that isn't the in-app Player screen — the lock screen,
+    // Control Center, the headphones, the watch — comes through these, and they
+    // route to whatever is actually making sound. The Player screen keeps
+    // calling `next()` / `previous()` / `togglePlayPause()` directly, because
+    // it is only ever showing the library player.
+
+    func remotePlay() {
+        if let remoteAudio { remoteAudio.remotePlay() } else { resume() }
+    }
+
+    func remotePause() {
+        if let remoteAudio { remoteAudio.remotePause() } else { pause() }
+    }
+
+    func remoteTogglePlayPause() {
+        if let remoteAudio { remoteAudio.remoteTogglePlayPause() } else { togglePlayPause() }
+    }
+
+    func remoteNext() {
+        if let remoteAudio { remoteAudio.remoteNext() } else { next() }
+    }
+
+    func remotePrevious() {
+        if let remoteAudio { remoteAudio.remotePrevious() } else { previous() }
+    }
+
+    func remoteSeek(to time: Double) {
+        if let remoteAudio { remoteAudio.remoteSeek(to: time) } else { seek(to: time) }
+    }
+
+    func remoteSkipForward(_ seconds: Double = 30) {
+        if let remoteAudio {
+            remoteAudio.remoteSeek(to: (remoteAudio.remoteAudioInfo?.elapsed ?? 0) + seconds)
+        } else {
+            skipForward(seconds)
+        }
+    }
+
+    func remoteSkipBackward(_ seconds: Double = 15) {
+        if let remoteAudio {
+            remoteAudio.remoteSeek(to: max(0, (remoteAudio.remoteAudioInfo?.elapsed ?? 0) - seconds))
+        } else {
+            skipBackward(seconds)
+        }
+    }
+
     // MARK: - Lock screen
 
     private func setupRemoteCommands() {
@@ -502,15 +747,15 @@ final class PlaybackManager: NSObject, ObservableObject {
 
         center.playCommand.isEnabled = true
         center.playCommand.addTarget { [weak self] _ in
-            self?.resume(); return .success
+            self?.remotePlay(); return .success
         }
         center.pauseCommand.isEnabled = true
         center.pauseCommand.addTarget { [weak self] _ in
-            self?.pause(); return .success
+            self?.remotePause(); return .success
         }
         center.togglePlayPauseCommand.isEnabled = true
         center.togglePlayPauseCommand.addTarget { [weak self] _ in
-            self?.togglePlayPause(); return .success
+            self?.remoteTogglePlayPause(); return .success
         }
 
         // The lock screen / Control Center only renders three transport buttons
@@ -521,29 +766,29 @@ final class PlaybackManager: NSObject, ObservableObject {
         // (more useful for long episodes). Targets for all four are installed
         // here; only their `isEnabled` flags are toggled as the track changes.
         center.nextTrackCommand.addTarget { [weak self] _ in
-            self?.next(); return .success
+            self?.remoteNext(); return .success
         }
         center.previousTrackCommand.addTarget { [weak self] _ in
-            self?.previous(); return .success
+            self?.remotePrevious(); return .success
         }
 
         center.skipForwardCommand.preferredIntervals = [30]
         center.skipForwardCommand.addTarget { [weak self] event in
             let interval = (event as? MPSkipIntervalCommandEvent)?.interval ?? 30
-            self?.skipForward(interval)
+            self?.remoteSkipForward(interval)
             return .success
         }
         center.skipBackwardCommand.preferredIntervals = [15]
         center.skipBackwardCommand.addTarget { [weak self] event in
             let interval = (event as? MPSkipIntervalCommandEvent)?.interval ?? 15
-            self?.skipBackward(interval)
+            self?.remoteSkipBackward(interval)
             return .success
         }
         updateTransportButtons()
         center.changePlaybackPositionCommand.isEnabled = true
         center.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard let event = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
-            self?.seek(to: event.positionTime)
+            self?.remoteSeek(to: event.positionTime)
             return .success
         }
     }
@@ -553,7 +798,10 @@ final class PlaybackManager: NSObject, ObservableObject {
     /// podcasts. iOS renders only one pair, so the other is disabled.
     private func updateTransportButtons() {
         let center = MPRemoteCommandCenter.shared()
-        let useTrackButtons = currentTrack.map { $0.playbackCategory != .podcast } ?? false
+        // A preview is a song being auditioned out of a list — its side buttons
+        // walk that list, never the podcast jumps.
+        let useTrackButtons = remoteAudio != nil
+            || (currentTrack.map { $0.playbackCategory != .podcast } ?? false)
         center.nextTrackCommand.isEnabled = useTrackButtons
         center.previousTrackCommand.isEnabled = useTrackButtons
         center.skipForwardCommand.isEnabled = !useTrackButtons
@@ -562,46 +810,63 @@ final class PlaybackManager: NSObject, ObservableObject {
 
     private func updateNowPlaying() {
         let center = MPNowPlayingInfoCenter.default()
+        // A borrower owns the lock screen outright while it's making sound —
+        // including through the silent gap where it's fetching its next track,
+        // which is when the library player's own (paused) metadata would
+        // otherwise flicker back in.
+        if let remoteAudio, let borrowed = remoteAudio.remoteAudioInfo {
+            publish(borrowed, to: center)
+            return
+        }
         guard let track = currentTrack else {
             center.nowPlayingInfo = nil
             center.playbackState = .stopped
             lockScreenArtwork = nil
-            return
-        }
-        var info: [String: Any] = [
-            MPMediaItemPropertyTitle: track.title,
-            MPMediaItemPropertyArtist: track.artist,
-            MPMediaItemPropertyPlaybackDuration: duration,
-            MPNowPlayingInfoPropertyElapsedPlaybackTime: currentTime,
-            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0
-        ]
-        info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = 1.0
-        if let lockScreenArtwork {
-            info[MPMediaItemPropertyArtwork] = lockScreenArtwork
-        }
-        center.nowPlayingInfo = info
-        // iOS 13+ uses an explicit playback state to decide whether (and how) to
-        // present the Now Playing controls on the lock screen; without it the
-        // controls can fail to surface or get stuck out of sync with playback.
-        center.playbackState = isPlaying ? .playing : .paused
-        broadcastRemoteState()
-    }
-
-    /// Pushes the current now-playing snapshot to the watch (so it can act as a
-    /// remote). Driven off `updateNowPlaying`, which fires on every transition and
-    /// on the ticker; `WatchSync` throttles the actual sends.
-    private func broadcastRemoteState() {
-        guard let track = currentTrack else {
             onNowPlayingChange?(nil)
             return
         }
-        onNowPlayingChange?(RemoteNowPlaying(
-            trackID: track.id,
-            title: track.title,
-            artist: track.artist,
-            duration: duration,
-            elapsed: currentTime,
-            isPlaying: isPlaying,
-            isPodcast: track.playbackCategory == .podcast))
+        publish(RemoteAudioInfo(id: track.id,
+                                title: track.title,
+                                artist: track.artist,
+                                duration: duration,
+                                elapsed: currentTime,
+                                isPlaying: isPlaying,
+                                artwork: lockScreenArtwork),
+                to: center,
+                isPodcast: track.playbackCategory == .podcast)
+    }
+
+    /// Writes one snapshot to the lock screen / Control Center and mirrors it to
+    /// the watch. The library player and a borrower go through the same call, so
+    /// a preview appears exactly as a library track does — title, artist, cover,
+    /// scrubber and all.
+    private func publish(_ info: RemoteAudioInfo,
+                         to center: MPNowPlayingInfoCenter,
+                         isPodcast: Bool = false) {
+        var payload: [String: Any] = [
+            MPMediaItemPropertyTitle: info.title,
+            MPMediaItemPropertyArtist: info.artist,
+            MPMediaItemPropertyPlaybackDuration: info.duration,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: info.elapsed,
+            MPNowPlayingInfoPropertyPlaybackRate: info.isPlaying ? 1.0 : 0.0
+        ]
+        payload[MPNowPlayingInfoPropertyDefaultPlaybackRate] = 1.0
+        if let artwork = info.artwork {
+            payload[MPMediaItemPropertyArtwork] = artwork
+        }
+        center.nowPlayingInfo = payload
+        // iOS 13+ uses an explicit playback state to decide whether (and how) to
+        // present the Now Playing controls on the lock screen; without it the
+        // controls can fail to surface or get stuck out of sync with playback.
+        center.playbackState = info.isPlaying ? .playing : .paused
+        // The watch acts as a remote off the same snapshot; `WatchSync`
+        // throttles the actual sends.
+        onNowPlayingChange?(RemoteNowPlaying(trackID: info.id,
+                                            title: info.title,
+                                            artist: info.artist,
+                                            duration: info.duration,
+                                            elapsed: info.elapsed,
+                                            isPlaying: info.isPlaying,
+                                            isPodcast: isPodcast))
     }
 }

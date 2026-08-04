@@ -1059,7 +1059,11 @@ private struct DiscographyReleaseRow: View {
                    detail: release.name,
                    url: url,
                    videoID: URLComponents(string: url)?.queryItems?.first(where: { $0.name == "v" })?.value,
-                   artworkURL: track.artworkURL)
+                   // Falls back to the release's cover the way `enqueue` does:
+                   // it's what the preview shows on the lock screen, and a
+                   // track sitting on an album whose sleeve we have shouldn't
+                   // come up blank there.
+                   artworkURL: track.artworkURL ?? release.imageURL)
     }
 
     private var detailLine: String {

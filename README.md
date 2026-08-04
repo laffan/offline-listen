@@ -424,7 +424,17 @@ beneath the Browse title:
   that plays to its end **rolls straight into the next one**, so a source's
   new items — or a whole album in the discography browser — can be auditioned
   hands-off. Each track it moves to is marked previewed, so the breadcrumbs
-  fill in as it goes. The transport sits *outside* the loading state, so you
+  fill in as it goes.
+
+  **It's a real listen, so it behaves like one.** The preview shows up on the
+  **lock screen and in Control Center** exactly as a library track does —
+  song and artist, the album's cover where the list knew one, a working
+  scrubber — and the lock screen's transport walks *its* queue: next plays
+  (downloads, then plays) the next track of the record you're auditioning, not
+  the next one in the library. It keeps going with the phone **locked**, too:
+  the queue and everything that moves it live below the view, so a finished
+  track still rolls into the next with the screen off. (What makes both true
+  is in [Lending the lock screen out](#lending-the-lock-screen-out).) The transport sits *outside* the loading state, so you
   can skip past a slow resolve instead of waiting for it, and the audio layout
   is deliberately tight — with no picture to frame, the sheet doesn't need the
   vertical space a video preview does. A caller with nothing to walk (one
@@ -943,7 +953,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `PlaylistResolver.swift` | Detects playlist links and flat-resolves their entries (on-device yt-dlp) so a playlist downloads into a folder. |
 | `ChapterSplitter.swift` | Exports one file per chapter (AVFoundation) for "Break Chapters into Playlist". |
 | `VideoMerger.swift` | Muxes a video-only + audio-only stream into one MP4. |
-| `PlaybackManager.swift` | `AVPlayer` engine (audio + video), audio session (including interruption/route-change handling), lock screen, and the end-of-track watchdog that keeps autoplay advancing; exposes the queue's next/previous entries for the Player's neighbour labels. |
+| `PlaybackManager.swift` | `AVPlayer` engine (audio + video), audio session (including interruption/route-change handling), the lock screen (its own and any **borrowed** by a `RemoteAudioSource` — see [Lending the lock screen out](#lending-the-lock-screen-out)), and the end-of-track watchdog that keeps autoplay advancing; exposes the queue's next/previous entries for the Player's neighbour labels. |
 | `Logger.swift` | `LogStore` — thread-safe, app-wide log sink. |
 | `AISettings.swift` | `AISettingsStore` (model/key/assist, Keychain-backed), `AIModel`, `Keychain` helper. |
 | `AnthropicClient.swift` | Minimal Anthropic Messages API client (verify + single-shot completion) over URLSession. |
@@ -967,7 +977,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `EveryNoiseView.swift` | The Every Noise browser: Map/List/Scan modes + Find at both levels (with the root's genre/artist toggle), the scan transport, and the artist bar whose "+" opens the live discography (or creates Artist sources when Spotify isn't set up). |
 | `EveryNoiseData/` | Bundled (folder reference): `genres.json` index + per-genre artist shards from the one-time `tools/everynoise/scrape.py`, plus the derived `artists.idx.z` from `build_artist_index.py`. |
 | `BrowseSourceView.swift` | One source's items with per-row Download/Preview/Discard, plus a **Select** mode for bulk download; also `BrowseTrackStatusButton`, the green play button every browse list shows once a download is in the library. |
-| `BrowsePreviewView.swift` | The preview modal: pipeline download, mini player with prev/play-pause/next over the queue it was opened with (auto-advancing at the end of each track), Save/Discard. |
+| `BrowsePreviewView.swift` | The preview modal: pipeline download, mini player with prev/play-pause/next over the queue it was opened with (auto-advancing at the end of each track, phone locked or not), the lock-screen metadata it borrows while it plays, Save/Discard. |
 | `*View.swift` | The five SwiftUI screens (Download, Browse, Library, Player, Settings — which embeds the Log). `PlayerView.swift` also holds the tap-to-seek scrubber and the `MiniPlayerBar` the other tabs inset above the tab bar. |
 | `FolderView.swift` | Folder detail (tap-to-play, reorder, subfolders, mixtape header/Edit Cover) and Inbox screens. |
 | `MixtapeViews.swift` | Mixtape banner rendering (non-destructive crop), the shared folder-row label, and the Edit Cover sheet (PhotosPicker + drag/pinch + font picker). |
@@ -1238,6 +1248,64 @@ shouldn't be the last thing you hear), and the ticker runs in the run loop's
 `.common` modes so scrolling a list doesn't stop the watchdog's clock. Every
 advance logs its reason at debug level under the `Player` category, so a
 queue that stops can be diagnosed from the Log rather than guessed at.
+
+A later pass closed the case that was left: the queue advanced with the phone
+locked, and then **stopped a second later**, which from outside is
+indistinguishable from never having advanced at all. Four things came out of it,
+and the first is the actual culprit:
+
+- **The watchdog was mistaking a *loading* item for a stopped one.** A freshly
+  swapped-in `AVPlayerItem` reports `.paused` until its asset is ready, and in
+  the background — cold file, throttled CPU — that can outlast the two ticks
+  the watchdog waits. It then read the *new* track's playhead, found it nowhere
+  near the end, concluded "stopped mid-track", and marked playback paused one
+  second after autoplay had just started it. Unlocked, the swap was quick
+  enough that the window never opened. The watchdog now stands down until
+  `currentItem.status == .readyToPlay` — an item that hasn't finished loading
+  is not a stopped one.
+- **The gap is held open on purpose.** An app with the `audio` background mode
+  is alive *because* it is playing; the swap between two items is a moment of
+  silence in which iOS is entitled to suspend it. Both the library player's
+  track change and (much longer — seconds, not milliseconds) the preview
+  modal's download of its next track now run under a `BackgroundActivity`
+  assertion, which is what buys the time to get the next sound started.
+- **The player's rate is watched directly**, so the end of a track is noticed
+  the instant it happens rather than up to a second later on the ticker. KVO
+  fires whatever mode the run loop is in, and a second of silence saved is a
+  second less in which a locked phone can suspend the app.
+- **An item that never loads at all** posts *neither* end-of-play notification —
+  it simply sits at rate 0 — so a single unreadable file used to end the queue
+  in silence. Its `status` is now watched too, and a failure advances like any
+  other ending.
+
+With three independent routes to "this track is over", they can and do arrive
+together, so the advance is claimed once per track and the duplicates are
+dropped — otherwise the second report would skip the song the first one had
+just started.
+
+### Lending the lock screen out
+
+There is one `MPNowPlayingInfoCenter` and one `MPRemoteCommandCenter` for the
+whole app, and iOS arbitrates neither: whoever writes last wins, and the ticker
+above rewrites both twice a second on the library player's behalf. So a second
+player — the Browse **preview modal**, which is a real listen, often a whole
+album's worth — was invisible from outside the app. Its title and artist were
+overwritten as fast as they could have been set, and the lock screen's
+next-track button walked the library queue you *couldn't* hear rather than the
+record you were auditioning.
+
+A preview now **borrows** both. `PlaybackManager` takes a `RemoteAudioSource`
+(`beginRemoteAudio` / `endRemoteAudio`); while one is installed it publishes
+that source's now-playing instead of its own — title and artist split out of
+the item's "Artist — Song" line, the release's cover art, duration and
+playhead — and every control that isn't the in-app Player screen routes to it:
+the lock screen, Control Center, the headphones, and the watch. The library
+player is paused behind it and gets the lock screen back, with its own track on
+it, the moment the modal closes or its Save hands playback over.
+
+It keeps the lock screen through the **silent gap** between two previews as
+well, so the next track's name is up while it is still downloading rather than
+the paused library track flickering back in.
 
 The lock screen / Control Center renders only **three** transport buttons (a
 centre play/pause plus two side buttons), and iOS shows *either* the

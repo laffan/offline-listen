@@ -50,13 +50,16 @@ struct OfflineListenApp: App {
         // The watch acting as a remote: mirror the phone's now-playing to it, and
         // run the transport commands it sends back.
         playback.onNowPlayingChange = { state in WatchSync.shared.sendNowPlaying(state) }
+        // Routed through the `remote…` transport, not the library player's own,
+        // so the watch drives whatever is actually making sound — a Browse
+        // preview included.
         WatchSync.shared.onRemoteCommand = { [weak playback] command in
             switch command {
-            case RemoteCommand.togglePlayPause: playback?.togglePlayPause()
-            case RemoteCommand.next: playback?.next()
-            case RemoteCommand.previous: playback?.previous()
-            case RemoteCommand.skipForward: playback?.skipForward()
-            case RemoteCommand.skipBackward: playback?.skipBackward()
+            case RemoteCommand.togglePlayPause: playback?.remoteTogglePlayPause()
+            case RemoteCommand.next: playback?.remoteNext()
+            case RemoteCommand.previous: playback?.remotePrevious()
+            case RemoteCommand.skipForward: playback?.remoteSkipForward()
+            case RemoteCommand.skipBackward: playback?.remoteSkipBackward()
             default: break
             }
         }
