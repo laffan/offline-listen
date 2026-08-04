@@ -278,23 +278,43 @@ struct NoiseMapView: NSViewRepresentable {
         }
 
         private func configure(_ label: NSTextField, for i: Int) {
-            label.stringValue = items[i].label
-            label.font = fonts[i]
             label.frame = frames[i]
             style(label, index: i)
         }
 
         /// Normal: colored text, clear background. Highlighted: inverted, the
-        /// site's own "now playing" cue.
+        /// site's own "now playing" cue. An underlined item needs attributed
+        /// text, so the text goes on here rather than in `configure` — the
+        /// UIKit engine's reasoning applies verbatim.
         private func style(_ label: NSTextField, index: Int) {
-            if items[index].id == highlightedID {
-                label.textColor = .textBackgroundColor
-                label.layer?.backgroundColor = colors[index].cgColor
+            let highlighted = items[index].id == highlightedID
+            let color = highlighted ? NSColor.textBackgroundColor : colors[index]
+            label.layer?.backgroundColor = highlighted
+                ? colors[index].cgColor
+                : NSColor.clear.cgColor
+            if items[index].underlined {
+                label.attributedStringValue = NSAttributedString(
+                    string: items[index].label,
+                    attributes: [.font: fonts[index],
+                                 .foregroundColor: color,
+                                 .underlineStyle: NSUnderlineStyle.single.rawValue,
+                                 .underlineColor: color,
+                                 .paragraphStyle: Self.centered])
             } else {
-                label.textColor = colors[index]
-                label.layer?.backgroundColor = NSColor.clear.cgColor
+                label.stringValue = items[index].label
+                label.font = fonts[index]
+                label.textColor = color
+                label.alignment = .center
             }
         }
+
+        /// `attributedStringValue` ignores the field's own `alignment`, so the
+        /// underlined labels carry it in their attributes.
+        private static let centered: NSParagraphStyle = {
+            let style = NSMutableParagraphStyle()
+            style.alignment = .center
+            return style
+        }()
 
         func setHighlight(_ id: String?) {
             guard id != highlightedID else { return }

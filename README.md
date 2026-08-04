@@ -797,11 +797,13 @@ under.
 after the app noticed an artist, so a harvested name is drawn into its genre's
 map and list the moment it's found — the genre you're looking at when the
 harvest lands redraws with the new arrivals on it. They're shown as what they
-are: **positioned at random** (hashed into the spread their genre's own
-artists occupy, so they land among the right company but at no meaningful
-point within it) and **assumed unpopular** (drawn at the small end of the
-sizes the genre already uses, and sorted *last* in the list's Popularity
-order, where they order among themselves by Spotify's own score). Everything
+are — **underlined**, on the map and in the list alike, since everything
+around them came from the scrape and means something — and beyond the mark,
+**positioned at random** (hashed into the spread their genre's own artists
+occupy, so they land among the right company but at no meaningful point within
+it) and **assumed unpopular** (drawn at the small end of the sizes the genre
+already uses, and sorted *last* in the list's Popularity order, where they
+order among themselves by Spotify's own score). Everything
 else about them is real: tapping one opens the action bar, and its **+** leads
 to the artist's live Spotify discography like any other. The hash is the same
 one `merge_updates.py` uses, off the same seed, so an artist doesn't jump

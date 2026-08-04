@@ -15,6 +15,11 @@ struct NoiseMapItem {
     let colorHex: String
     /// Font-size percent (the site's popularity cue), 100 = normal.
     let size: Int
+    /// Drawn underlined. The one thing on these maps that isn't from the
+    /// scrape: an artist the app harvested from Spotify, whose position is
+    /// arbitrary and whose size is a guess (see `ENUpdateStore`). Worth
+    /// marking, since everything around it means something.
+    var underlined: Bool = false
 }
 
 /// A programmatic "scroll the map here" request. A fresh token re-triggers
@@ -338,23 +343,45 @@ struct NoiseMapView: UIViewRepresentable {
         }
 
         private func configure(_ label: UILabel, for i: Int) {
-            label.text = items[i].label
-            label.font = fonts[i]
             label.frame = frames[i]
             style(label, index: i)
         }
 
         /// Normal: colored text, clear background. Highlighted: inverted, the
-        /// site's own "now playing" cue.
+        /// site's own "now playing" cue. An underlined item needs attributed
+        /// text (a `UILabel` has no underline of its own), so the text goes on
+        /// here rather than in `configure` — otherwise a recycled label could
+        /// keep the last occupant's underline, or lose its own to a highlight.
         private func style(_ label: UILabel, index: Int) {
-            if items[index].id == highlightedID {
-                label.textColor = .systemBackground
-                label.layer.backgroundColor = colors[index].cgColor
+            let highlighted = items[index].id == highlightedID
+            let color = highlighted ? UIColor.systemBackground : colors[index]
+            label.layer.backgroundColor = highlighted
+                ? colors[index].cgColor
+                : UIColor.clear.cgColor
+            if items[index].underlined {
+                label.attributedText = NSAttributedString(
+                    string: items[index].label,
+                    attributes: [.font: fonts[index],
+                                 .foregroundColor: color,
+                                 .underlineStyle: NSUnderlineStyle.single.rawValue,
+                                 .underlineColor: color,
+                                 // Carried in the attributes rather than left
+                                 // to the label's own `textAlignment`, which
+                                 // attributed text doesn't reliably inherit.
+                                 .paragraphStyle: Self.centered])
             } else {
-                label.textColor = colors[index]
-                label.layer.backgroundColor = UIColor.clear.cgColor
+                label.attributedText = nil
+                label.text = items[index].label
+                label.font = fonts[index]
+                label.textColor = color
             }
         }
+
+        private static let centered: NSParagraphStyle = {
+            let style = NSMutableParagraphStyle()
+            style.alignment = .center
+            return style
+        }()
 
         func setHighlight(_ id: String?) {
             guard id != highlightedID else { return }

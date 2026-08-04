@@ -917,7 +917,11 @@ struct ENGenreView: View {
                      items: artists.map {
                          NoiseMapItem(id: $0.id, label: $0.name,
                                       x: CGFloat($0.x), y: CGFloat($0.y),
-                                      colorHex: $0.color, size: $0.size)
+                                      colorHex: $0.color, size: $0.size,
+                                      // Harvested rather than scraped: the one
+                                      // thing on this map whose position is
+                                      // arbitrary, so it's marked as such.
+                                      underlined: $0.isHarvested)
                      },
                      // A harvest landing while this genre is open adds rows to
                      // the map it's already drawing; this is what makes them
@@ -972,7 +976,10 @@ struct ENGenreView: View {
                         select(artist)
                     } label: {
                         HStack {
+                            // Underlined for a harvested artist, matching the
+                            // map — the app found this one, the scrape didn't.
                             Text(artist.name)
+                                .underline(artist.isHarvested)
                                 .foregroundStyle(Color(noiseHex: artist.color))
                             Spacer()
                             if player.currentID == artist.id && player.isPlaying {
