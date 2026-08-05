@@ -486,15 +486,31 @@ final class PlaybackManager: NSObject, ObservableObject {
             progress.currentTime = now
         }
         // The duration recorded at download time (track.duration, shown in the
-        // library) is authoritative. We only read it off the player item as a
-        // fallback when we never got one — overwriting a known-good value here
-        // is wrong because AVFoundation over-reports the duration of some
-        // YouTube audio (HE-AAC/SBR streams report ~2x their real length), which
-        // made the player show double the library's figure for the same track.
-        if progress.duration <= 0,
-           let itemDuration = player.currentItem?.duration.seconds,
+        // library) leads, because AVFoundation over-reports the duration of some
+        // YouTube audio (HE-AAC/SBR streams read as ~2x their real length) and
+        // the player showing double the library's figure for the same track is
+        // the worse error.
+        //
+        // It leads; it doesn't win outright. When the playhead runs *past* the
+        // recorded figure the media has settled the argument — the file really
+        // is longer than the metadata said — and holding the old number leaves
+        // the scrubber pinned at 100% with the clock still climbing past it,
+        // which is what the Player was showing. Switch to the file's own clock
+        // then, and say so, since it also means the two ends of the track
+        // disagree by more than a rounding error.
+        if let itemDuration = player.currentItem?.duration.seconds,
            itemDuration.isFinite, itemDuration > 0 {
-            progress.duration = itemDuration
+            if progress.duration <= 0 {
+                progress.duration = itemDuration
+            } else if progress.currentTime > progress.duration + 0.5,
+                      itemDuration > progress.duration {
+                // `itemDuration > progress.duration` is also what keeps this to
+                // one line per track: once the longer figure is adopted there is
+                // nothing left to adopt.
+                appLog("\"\(currentTrack?.title ?? "")\" runs to \(Int(itemDuration))s, not the \(Int(progress.duration))s recorded at download — following the file.",
+                       level: .debug, category: "Player")
+                progress.duration = itemDuration
+            }
         }
         checkForSilentStop()
         updateNowPlaying()
@@ -572,13 +588,21 @@ final class PlaybackManager: NSObject, ObservableObject {
             stoppedTicks += 1
             guard stoppedTicks >= 2 else { return }
             stoppedTicks = 0
-            if isAtEnd {
+            // Both clocks count here, unlike during playback: the player has
+            // genuinely stopped, so a playhead resting at or past *either*
+            // stated end has run out of audio rather than been interrupted. A
+            // drained buffer says the same thing from the other direction — a
+            // real interruption (a call, Siri) stops a player whose buffer is
+            // still full, so this only reads true when the file itself ended.
+            if isAtEnd || stoppedAtRecordedEnd || ranOutOfMedia {
                 handleTrackFinished(reason: "the player stopped at the end of the track")
             } else {
                 // Stopped mid-track: something took the audio away. Reflect that
                 // rather than showing a play state that isn't happening — and
-                // don't skip the track the user was in the middle of.
-                appLog("Playback stopped mid-track (interrupted) — showing it as paused.",
+                // don't skip the track the user was in the middle of. The
+                // numbers go in the line because this is the one branch that
+                // ends a listening session without advancing.
+                appLog("Playback stopped at \(Int(currentTime))s of \(Int(duration))s (interrupted) — showing it as paused.",
                        level: .debug, category: "Player")
                 isPlaying = false
                 updateNowPlaying()
@@ -599,7 +623,7 @@ final class PlaybackManager: NSObject, ObservableObject {
         // left to stream in says the samples ran out even though both clocks
         // claim otherwise — a slower call, since a cold item can read that way
         // for a moment before it gets going.
-        if isAtEnd {
+        if isAtEnd || stoppedAtRecordedEnd {
             guard stalledTicks >= 2 else { return }
             stalledTicks = 0
             handleTrackFinished(reason: "the playhead stopped at the end of the track")
@@ -640,21 +664,40 @@ final class PlaybackManager: NSObject, ObservableObject {
         return item.isPlaybackBufferEmpty && !item.isPlaybackLikelyToKeepUp
     }
 
-    /// Whether the playhead has reached the end of the media, judged against
-    /// **both** clocks: the item's own duration and the duration recorded at
-    /// download time. They disagree on the over-reporting files described
-    /// above, and whichever one the audio actually ran out on, the track is
-    /// over.
+    /// Whether the playhead has reached the end of the media.
+    ///
+    /// Judged against the **item's** clock, because that is the timeline the
+    /// playhead itself lives in. This used to take whichever of the two clocks
+    /// — the item's and the duration recorded at download — the playhead
+    /// reached first, and that is wrong in the common direction: a file that
+    /// runs *longer* than its metadata said (which is exactly what the Player
+    /// shows when the elapsed time climbs past the stated length) was "at the
+    /// end" from the moment it passed the recorded figure, so any momentary
+    /// pause in the back half of a track ended it early.
+    ///
+    /// The recorded duration still has a job — a playhead that has *stopped*
+    /// at or past it has run out of audio whatever the container claims — but
+    /// that only makes sense once the clock has frozen, so it lives in
+    /// `stoppedAtRecordedEnd` and is consulted by the watchdog alone.
     private var isAtEnd: Bool {
         let now = player.currentTime().seconds
         guard now.isFinite, now > 0 else { return false }
         let tolerance = 1.5
-        if let item = player.currentItem?.duration.seconds,
-           item.isFinite, item > 0, now >= item - tolerance {
-            return true
+        if let item = player.currentItem?.duration.seconds, item.isFinite, item > 0 {
+            return now >= item - tolerance
         }
         let recorded = currentTrack?.duration ?? 0
         return recorded > 0 && now >= recorded - tolerance
+    }
+
+    /// The over-reporting case: the playhead sits at or past the length recorded
+    /// at download while the item insists there is more to come. Only meaningful
+    /// alongside a frozen playhead — during playback it is simply "the metadata
+    /// was short", which is not the end of anything.
+    private var stoppedAtRecordedEnd: Bool {
+        let now = player.currentTime().seconds
+        let recorded = currentTrack?.duration ?? 0
+        return now.isFinite && recorded > 0 && now >= recorded - 1.5
     }
 
     private func handleTrackFinished(reason: String) {

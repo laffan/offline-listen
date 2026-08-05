@@ -162,6 +162,14 @@ struct BrowsePreviewView: View {
             configureModel()
             model.begin()
         }
+        // The list can grow under an open preview — a release is matched
+        // against YouTube a track at a time, and the modal is opened on the
+        // first hit. The transport above already reads `items`, so it lights up
+        // on its own; this is what gets the longer queue to the model, which is
+        // what the end-of-track advance walks.
+        .onChange(of: items.count) { _ in
+            configureModel()
+        }
         .onDisappear {
             model.teardown()
         }
@@ -695,18 +703,39 @@ final class BrowsePreviewModel: ObservableObject, RemoteAudioSource {
     }
 
     /// Takes on a queue the modal has been handed after it was already
-    /// configured. A sheet re-presented on a new item while it is still on
-    /// screen keeps its view — and so this object — so the list underneath it
-    /// can change without a teardown, and a transport walking the record it
-    /// was opened with two records ago is one that does nothing you asked for.
-    /// The same list is the common case and costs nothing.
+    /// configured — which is the ordinary case, not an exotic one.
+    ///
+    /// A release is matched against YouTube a track at a time, and each one
+    /// offers Preview the moment *it* lands, so a preview opened on the first
+    /// hit was handed the only entry that existed yet and then kept it: a
+    /// record of one, its next/previous dimmed for good, while the other twelve
+    /// tracks lit up behind it. The list is now re-handed as it grows, and the
+    /// same applies to a sheet re-presented on a track from a different list
+    /// while it's still up (SwiftUI updates a sheet in place rather than
+    /// rebuilding it).
+    ///
+    /// The entry already loaded keeps playing and keeps its place, wherever it
+    /// has moved to in the longer list — growing the queue is not a reason to
+    /// restart the audition. Only a list the current entry has left entirely
+    /// counts as a different record.
     private func adopt(items newItems: [BrowseItem], startAt: Int) {
-        guard newItems.map(\.id) != items.map(\.id) else { return }
+        // Compared by url, not id: the discography browser mints its items on
+        // the fly, so the same record re-offered is a set of fresh ids for
+        // tracks that haven't changed at all.
+        guard newItems.map(\.url) != items.map(\.url) else { return }
+        let loaded = currentItem
         items = newItems
-        index = newItems.indices.contains(startAt) ? startAt : 0
-        appLog("Preview handed a new queue: \(newItems.count) track(s), starting at \(index + 1).",
-               level: .debug, category: "Browse")
-        startCurrent()
+        if let loaded,
+           let moved = newItems.firstIndex(where: { $0.id == loaded.id || $0.url == loaded.url }) {
+            index = moved
+            appLog("Preview queue grew to \(newItems.count) track(s); still on \(moved + 1).",
+                   level: .debug, category: "Browse")
+        } else {
+            index = newItems.indices.contains(startAt) ? startAt : 0
+            appLog("Preview handed a new queue: \(newItems.count) track(s), starting at \(index + 1).",
+                   level: .debug, category: "Browse")
+            startCurrent()
+        }
     }
 
     /// Starts the first track. Idempotent, so a view that appears twice doesn't

@@ -453,7 +453,8 @@ struct DiscographyBrowserView: View {
                         DiscographyReleaseRow(release: release,
                                               provider: provider,
                                               artistName: catalogue.artistName,
-                                              downloadFolderName: downloadFolderName) { item, queue in
+                                              downloadFolderName: downloadFolderName,
+                                              onQueueGrew: refreshPreviewQueue) { item, queue in
                             previewQueue = queue
                             previewItem = item
                         }
@@ -463,6 +464,22 @@ struct DiscographyBrowserView: View {
         }
         .insetGroupedListStyle()
         .miniPlayerClearance()
+    }
+
+    /// Keeps an open preview's queue current as the release it came from
+    /// finishes matching.
+    ///
+    /// A release is matched against YouTube a track at a time and each track
+    /// offers **Preview** the moment *it* lands, so a preview started on the
+    /// first hit used to be handed a queue of exactly one — and kept it, with
+    /// its next/previous dimmed, while the rest of the record lit up behind the
+    /// sheet. The row re-offers its queue as it grows; the release whose queue
+    /// still contains the track the modal was opened on is the one that owns
+    /// the modal, and nothing else can steal it.
+    private func refreshPreviewQueue(_ queue: [BrowseItem]) {
+        guard let showing = previewItem,
+              queue.contains(where: { $0.url == showing.url }) else { return }
+        previewQueue = queue
     }
 
     /// The page's masthead: the artist's portrait (when the catalogue carries
@@ -556,6 +573,12 @@ private struct DiscographyReleaseRow: View {
     /// bulk download files into (a release names its own).
     let artistName: String
     let downloadFolderName: String?
+    /// This release's queue, re-offered whenever another of its tracks finds a
+    /// YouTube match. Matching runs a track at a time and Preview appears per
+    /// row as each one lands, so the modal is routinely opened on a queue that
+    /// is still filling in; the browser takes this to keep an open preview's
+    /// next/previous walking the whole record.
+    let onQueueGrew: ([BrowseItem]) -> Void
     /// The tapped track and the release's other matched tracks — the queue the
     /// preview modal walks with next/previous.
     let onPreview: (BrowseItem, [BrowseItem]) -> Void
@@ -628,6 +651,11 @@ private struct DiscographyReleaseRow: View {
             // and runs its own load — reacting here too double-fetched.
             guard open, tracks == nil, trackError == nil, !searching else { return }
             Task { await loadTracks() }
+        }
+        // Every new match is another entry a preview opened from this release
+        // should be able to walk to.
+        .onChange(of: matches.count) { _ in
+            onQueueGrew(previewQueue)
         }
     }
 

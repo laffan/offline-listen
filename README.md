@@ -427,15 +427,25 @@ beneath the Browse title:
   hands-off. Each track it moves to is marked previewed, so the breadcrumbs
   fill in as it goes.
 
-  The transport is deliberately hard to leave dead. Which entry it's on and
-  whether there's one either side are read from the list the modal was **built
-  with**, so the side buttons are live from the first frame rather than from
-  whenever the model behind them got handed the queue — and a tap hands it over
-  itself before moving, so a button can never call into a model that hasn't
-  been given the list it's meant to walk. Re-presenting the sheet on a track
-  from a *different* list while it's still up (SwiftUI updates a sheet in place
-  rather than rebuilding it) swaps the queue rather than leaving the transport
-  walking the record before last. End-of-track is noticed the same way the
+  **The queue grows as the record does.** A release is matched against YouTube
+  a track at a time, and each track offers Preview the moment *it* lands — so a
+  preview started on the first hit was handed the only entry that existed yet,
+  and kept it: a queue of one, next and previous dimmed for good, while the
+  other twelve tracks lit up behind the sheet. That was the whole of the
+  "next/previous do nothing" report. The release re-offers its list as it
+  fills, the modal takes it, and the track being auditioned keeps playing and
+  keeps its place in the longer list — growing the queue is not a reason to
+  restart the audition.
+
+  The transport is deliberately hard to leave dead beyond that. Which entry
+  it's on and whether there's one either side are read from the list the modal
+  was **built with**, so the side buttons are live from the first frame rather
+  than from whenever the model behind them got handed the queue — and a tap
+  hands it over itself before moving, so a button can never call into a model
+  that hasn't been given the list it's meant to walk. Re-presenting the sheet
+  on a track from a *different* list while it's still up (SwiftUI updates a
+  sheet in place rather than rebuilding it) swaps the queue rather than leaving
+  the transport walking the record before last. End-of-track is noticed the same way the
   library player notices it — a **frozen playhead**, not a paused player — so
   the auto-advance survives the same over-reporting files (see
   [Why autoplay keeps going](#why-autoplay-keeps-going)); relying on the end
@@ -1356,10 +1366,28 @@ watchdog wanted `.paused` too, so it kept resetting its own counter while the
 music stayed off. Three ways to notice, and the one case that needed them all
 was invisible to every one.
 
-The ground truth is the **playhead**, not the rate: a clock that has stopped
-while the app still believes it is playing means playback has stopped, whatever
-`timeControlStatus` claims. So the watchdog now watches the playhead, and reads
-a frozen one three ways — at the end by either clock, the track is over after a
+The pass that followed found the other half, and it was **which clock the end
+is judged against**. The app knows two: the duration recorded at download (from
+the source's own metadata, and what the library shows) and the one the file
+itself declares. `isAtEnd` took whichever the playhead reached *first*, which
+is exactly backwards when the file runs longer than its metadata said — and it
+does: the Player was visibly showing the elapsed time climbing past the stated
+length, so those tracks counted as "at the end" from the moment they passed it,
+and any momentary pause in the back half finished them early. The playhead
+lives in the **file's** timeline, so that is the clock it's judged against
+while it's moving. The recorded duration still has a job — a playhead that has
+*stopped* at or past it has run out of audio whatever the container claims —
+but that only means anything once the clock has frozen, so it's the watchdog
+that consults it, not the rate observer. The scrubber follows the same
+correction: the recorded figure leads, and the moment the playhead runs past it
+the media has settled the argument, so the display switches to the file's own
+clock (and logs the disagreement) rather than sitting pinned at 100% while the
+elapsed time keeps climbing.
+
+The ground truth for *whether* playback has stopped is the **playhead**, not
+the rate: a clock that has stopped while the app still believes it is playing
+means playback has stopped, whatever `timeControlStatus` claims. So the
+watchdog now watches the playhead, and reads a frozen one three ways — at the end by either clock, the track is over after a
 second; short of that, an item whose buffer has drained with nothing left to
 fill it (a local file has nothing to stream, so that means the samples ran out)
 is called after three; and anything still frozen after six seconds is called
