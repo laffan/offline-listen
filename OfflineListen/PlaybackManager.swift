@@ -485,32 +485,22 @@ final class PlaybackManager: NSObject, ObservableObject {
         if now.isFinite, abs(progress.currentTime - now) > 0.01 {
             progress.currentTime = now
         }
-        // The duration recorded at download time (track.duration, shown in the
-        // library) leads, because AVFoundation over-reports the duration of some
-        // YouTube audio (HE-AAC/SBR streams read as ~2x their real length) and
-        // the player showing double the library's figure for the same track is
-        // the worse error.
+        // The duration recorded at download (track.duration, and what the
+        // library shows) is authoritative: it comes from the source's own
+        // metadata, while AVFoundation over-reports the length of some
+        // HE-AAC/SBR audio by about double — 306s for a 153s song, measured.
         //
-        // It leads; it doesn't win outright. When the playhead runs *past* the
-        // recorded figure the media has settled the argument — the file really
-        // is longer than the metadata said — and holding the old number leaves
-        // the scrubber pinned at 100% with the clock still climbing past it,
-        // which is what the Player was showing. Switch to the file's own clock
-        // then, and say so, since it also means the two ends of the track
-        // disagree by more than a rounding error.
+        // The item's figure is read only when we never got a recorded one, or
+        // when the file is the *shorter* of the two: that's the direction that
+        // isn't the over-read, and holding the longer number there leaves the
+        // bar short of an end the playhead has already reached. Adopting the
+        // longer one is what put the scrubber halfway back through a track that
+        // had just finished, so it doesn't happen — the track now *ends* at the
+        // recorded duration instead (see `isPastRecordedEnd`).
         if let itemDuration = player.currentItem?.duration.seconds,
-           itemDuration.isFinite, itemDuration > 0 {
-            if progress.duration <= 0 {
-                progress.duration = itemDuration
-            } else if progress.currentTime > progress.duration + 0.5,
-                      itemDuration > progress.duration {
-                // `itemDuration > progress.duration` is also what keeps this to
-                // one line per track: once the longer figure is adopted there is
-                // nothing left to adopt.
-                appLog("\"\(currentTrack?.title ?? "")\" runs to \(Int(itemDuration))s, not the \(Int(progress.duration))s recorded at download — following the file.",
-                       level: .debug, category: "Player")
-                progress.duration = itemDuration
-            }
+           itemDuration.isFinite, itemDuration > 0,
+           progress.duration <= 0 || itemDuration < progress.duration - 2 {
+            progress.duration = itemDuration
         }
         checkForSilentStop()
         updateNowPlaying()
@@ -572,6 +562,20 @@ final class PlaybackManager: NSObject, ObservableObject {
             return
         }
         loadingTicks = 0
+
+        // The container can claim more than the file holds, and when it does
+        // nothing stalls: the samples run out at the real end and the player
+        // carries on running its clock through silence that isn't there, all
+        // the way to the length it thinks the track is. None of the checks
+        // below can see that — the playhead is moving, the player is playing —
+        // so the queue waited out the phantom remainder, which on a doubled
+        // file is the length of the song over again. The recorded duration
+        // wins that argument, and the track ends there.
+        if isPastRecordedEnd, let recorded = currentTrack?.duration {
+            handleTrackFinished(
+                reason: "the audio ran out at the \(Int(recorded))s recorded at download, which the file over-states")
+            return
+        }
 
         let position = player.currentTime().seconds
         let advanced = position.isFinite && lastTickPosition >= 0
@@ -690,10 +694,35 @@ final class PlaybackManager: NSObject, ObservableObject {
         return recorded > 0 && now >= recorded - tolerance
     }
 
-    /// The over-reporting case: the playhead sits at or past the length recorded
-    /// at download while the item insists there is more to come. Only meaningful
-    /// alongside a frozen playhead — during playback it is simply "the metadata
-    /// was short", which is not the end of anything.
+    /// The over-read, caught while the player is still nominally playing.
+    ///
+    /// AVFoundation reads some HE-AAC/SBR audio as roughly twice its real
+    /// length — 306s for a 153s song, in the case that turned this up. The
+    /// samples run out at the true end, but the item still believes there is
+    /// half a track to come, so it doesn't stop or stall: it runs its clock on
+    /// through silence to the length it thinks the file is. Every stop check
+    /// there is looks for something that has *halted*, and nothing here has.
+    ///
+    /// The two conditions together are what identify it: the file claiming
+    /// *far* more than the source metadata recorded, and the playhead past the
+    /// recorded end. That is the audio being over, whatever the container says
+    /// is left.
+    ///
+    /// The gap has to be large before the recorded figure is allowed to end a
+    /// track early — a quarter as long again, and at least ten seconds — so
+    /// that ordinary slop between a container and its metadata (a muxed video
+    /// running a second or two past, a rounded feed duration) never clips
+    /// anything. An over-read is around double; nothing else comes close.
+    private var isPastRecordedEnd: Bool {
+        guard let recorded = currentTrack?.duration, recorded > 0,
+              let item = player.currentItem?.duration.seconds, item.isFinite,
+              item > max(recorded * 1.25, recorded + 10) else { return false }
+        let now = player.currentTime().seconds
+        return now.isFinite && now >= recorded
+    }
+
+    /// The same disagreement seen with the playhead already stopped, where the
+    /// margin can be looser — nothing is going to move again either way.
     private var stoppedAtRecordedEnd: Bool {
         let now = player.currentTime().seconds
         let recorded = currentTrack?.duration ?? 0

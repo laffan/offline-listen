@@ -1356,38 +1356,44 @@ dropped — otherwise the second report would skip the song the first one had
 just started.
 
 A third pass found why the queue could still stop dead between two tracks, and
-it was the same file the watchdog was *written* for: **all three routes asked
-whether the player had paused, and this one never does.** An item that runs out
-of samples short of its declared duration doesn't stop — `AVPlayer` believes
-there is more media coming, so it sits in `.waitingToPlayAtSpecifiedRate`
-indefinitely. The end notification never arrives (the playhead never reaches
-what AVFoundation calls the end), the rate observer wants `.paused`, and the
-watchdog wanted `.paused` too, so it kept resetting its own counter while the
-music stayed off. Three ways to notice, and the one case that needed them all
-was invisible to every one.
+the file that does it turned out to be measurable: `"City of New Orleans" runs
+to 306s, not the 153s recorded at download`. **Exactly double** — the HE-AAC/SBR
+over-read, caught in the act.
 
-The pass that followed found the other half, and it was **which clock the end
-is judged against**. The app knows two: the duration recorded at download (from
-the source's own metadata, and what the library shows) and the one the file
-itself declares. `isAtEnd` took whichever the playhead reached *first*, which
-is exactly backwards when the file runs longer than its metadata said — and it
-does: the Player was visibly showing the elapsed time climbing past the stated
-length, so those tracks counted as "at the end" from the moment they passed it,
-and any momentary pause in the back half finished them early. The playhead
-lives in the **file's** timeline, so that is the clock it's judged against
-while it's moving. The recorded duration still has a job — a playhead that has
-*stopped* at or past it has run out of audio whatever the container claims —
-but that only means anything once the clock has frozen, so it's the watchdog
-that consults it, not the rate observer. The scrubber follows the same
-correction: the recorded figure leads, and the moment the playhead runs past it
-the media has settled the argument, so the display switches to the file's own
-clock (and logs the disagreement) rather than sitting pinned at 100% while the
-elapsed time keeps climbing.
+What that file does is not what any of the three routes was watching for. The
+samples run out at the true end, 153 seconds in, but the item still believes
+there is half a track to come, so it doesn't stop, doesn't stall, doesn't report
+`.paused` and doesn't post its end notification. **It runs its clock on through
+silence that isn't there**, all the way to the length it thinks the file is.
+Every check the app had looks for something that has *halted*, and nothing here
+has. So the queue sat out the phantom remainder — on a doubled file, the length
+of the song over again — which from outside is a player that reached the end of
+a track and never moved on.
 
-The ground truth for *whether* playback has stopped is the **playhead**, not
-the rate: a clock that has stopped while the app still believes it is playing
-means playback has stopped, whatever `timeControlStatus` claims. So the
-watchdog now watches the playhead, and reads a frozen one three ways — at the end by either clock, the track is over after a
+**The duration recorded at download wins that argument**, and it's worth being
+precise about why: it comes from the source's own metadata, while the other
+figure is AVFoundation's reading of a container it is known to misread. (When a
+duration *is* read off the file — a local-sync import — the two are literally
+the same number, so there's no disagreement to have.) A playhead past the
+recorded end, on a file claiming far more than that, is the audio being over
+whatever the container says is left, and the track ends there. The gap has to be
+large before the recorded figure is allowed to end a track early — a quarter as
+long again, and at least ten seconds — so ordinary slop between a container and
+its metadata never clips anything. An over-read is around double; nothing else
+comes close.
+
+The scrubber follows the same rule, and for one revision it didn't: letting the
+display switch to the file's clock mid-play is what sent the bar jumping back to
+the halfway mark at the end of a track and doubled the time printed beside it.
+The recorded figure is what's shown, so the bar fills exactly as the music runs
+out; the file's own figure is read only when there is no recorded one, or when
+the file is the *shorter* of the two — the direction that isn't the over-read.
+
+That leaves the case where playback genuinely does halt, and there the ground
+truth is the **playhead**, not the rate: a clock that has stopped while the app
+still believes it is playing means playback has stopped, whatever
+`timeControlStatus` claims. So the watchdog watches the playhead too, and reads
+a frozen one three ways — at the end by either clock, the track is over after a
 second; short of that, an item whose buffer has drained with nothing left to
 fill it (a local file has nothing to stream, so that means the samples ran out)
 is called after three; and anything still frozen after six seconds is called
@@ -1397,8 +1403,8 @@ playable and never reports failing either — it just sits at `.unknown` — use
 to switch the watchdog off for the rest of the session, so that wait is now
 bounded; and every counter is cleared on any change the app makes itself (a
 load, a seek, a pause, a resume), so a reading from before the change can't be
-compared with one from after. The reason for each advance still goes to the Log
-under `Player`, and now names which of the three noticed.
+compared with one from after. The reason for each advance goes to the Log under
+`Player`, and names which route noticed.
 
 ### Lending the lock screen out
 
