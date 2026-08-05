@@ -9,6 +9,9 @@ import SwiftUI
 /// them into Browse as a regular Artist source (Top 10 or Search Discography).
 struct EveryNoiseView: View {
     @EnvironmentObject private var playback: PlaybackManager
+    /// Gates the Find field's Spotify target and the scan's "+", both of which
+    /// need the live catalogue to say anything.
+    @EnvironmentObject private var spotifySettings: SpotifySettingsStore
     /// The maps ignore the bottom safe area, so the mini player's height is
     /// handed to them as extra content inset (UIKit can't see the SwiftUI bar).
     @Environment(\.miniPlayerHeight) private var miniPlayerHeight
@@ -24,6 +27,20 @@ struct EveryNoiseView: View {
     /// Global artist search results, and whether a scan is still in flight.
     @State private var artistHits: [ENArtistHit] = []
     @State private var artistSearching = false
+    /// Live Spotify search results (Find ▸ Spotify), and its own in-flight flag.
+    @State private var spotifyHits: [SpotifyArtistHit] = []
+    @State private var spotifySearching = false
+    /// An artist being opened straight into their Spotify discography — a
+    /// Spotify search hit, a History row from one, or the artist behind a
+    /// genre's example track. Not on the map, so it can't go through
+    /// `pushedGenre`.
+    @State private var liveArtist: ENLiveArtist?
+    /// Set while a genre scan's "+" is resolving its example artist's name
+    /// into the id a discography needs.
+    @State private var resolvingScanArtist = false
+    /// The measured height of whatever bottom bar is up, so the map insets by
+    /// it and the Find dropdown stops above it.
+    @State private var bottomBarHeight: CGFloat = 0
     /// List mode's order, and the genre a similarity sort is anchored on.
     @State private var listSort: ENListSort = .alphabetical
     @State private var listAnchor: String?
@@ -65,10 +82,28 @@ struct EveryNoiseView: View {
                     .environmentObject(player)
             }
         }
+        // A second destination for artists that have no place on the map:
+        // Spotify search hits, and whoever a genre's example track is by.
+        .navigationDestination(isPresented: liveArtistIsPushed) {
+            if let liveArtist {
+                ENDiscographyView(artistName: liveArtist.name, spotifyID: liveArtist.spotifyID)
+            }
+        }
         .environmentObject(store)
         .environmentObject(player)
         .onAppear { store.loadIfNeeded() }
         .onDisappear { player.stop() }
+    }
+
+    /// The Find targets this level can actually answer. Spotify's needs
+    /// credentials, so without them it isn't offered — and a mode left
+    /// selected when they're removed falls back to the genre index.
+    private var findModes: [ENFindMode] {
+        spotifySettings.isConfigured ? ENFindMode.allCases : [.genre, .artist]
+    }
+
+    private var liveArtistIsPushed: Binding<Bool> {
+        Binding(get: { liveArtist != nil }, set: { if !$0 { liveArtist = nil } })
     }
 
     private var genreIsPushed: Binding<Bool> {
@@ -87,8 +122,16 @@ struct EveryNoiseView: View {
     }
 
     /// A History row: a genre re-opens directly; an artist re-opens their
-    /// genre with that artist selected (their own tap re-logs the visit).
+    /// genre with that artist selected (their own tap re-logs the visit); a
+    /// Spotify hit goes back to the discography it came from, since it has no
+    /// place on the map to return to.
     private func open(_ entry: ENHistoryEntry) {
+        if entry.kind == .spotify {
+            if let id = entry.artistID {
+                liveArtist = ENLiveArtist(name: entry.name, spotifyID: id)
+            }
+            return
+        }
         guard let genre = store.genres.first(where: { $0.key == entry.genreKey }) else { return }
         if entry.kind == .genre {
             push(genre)
@@ -96,6 +139,13 @@ struct EveryNoiseView: View {
             pushedArtistID = entry.artistID
             pushedGenre = genre
         }
+    }
+
+    /// Opens a live-catalogue artist and logs the visit, so a Spotify search
+    /// leaves the same breadcrumb a map tap does.
+    private func openLive(name: String, spotifyID: String, detail: String?) {
+        store.recordVisit(spotifyArtist: name, id: spotifyID, detail: detail)
+        liveArtist = ENLiveArtist(name: name, spotifyID: spotifyID)
     }
 
     private var missingData: some View {
@@ -108,46 +158,46 @@ struct EveryNoiseView: View {
 
     private var browser: some View {
         VStack(spacing: 0) {
-            ENModeBar(mode: $mode, query: $query, sort: $listSort, findMode: $findMode)
+            ENModeBar(mode: $mode, query: $query, sort: $listSort,
+                      findMode: $findMode, findModes: findModes)
             ZStack(alignment: .top) {
                 switch mode {
                 case .map, .scan:
                     genreMap
                 case .list:
-                    // Artist find works as a dropdown over any mode, so the
-                    // genre-scoped list/history filters step aside for it.
-                    ENGenreListView(genres: store.genres, query: findMode == .artist ? "" : query,
+                    // Artist and Spotify find work as a dropdown over any mode,
+                    // so the genre-scoped list/history filters step aside.
+                    ENGenreListView(genres: store.genres, query: findMode == .genre ? query : "",
                                     sort: listSort, anchorKey: $listAnchor) { genre in
                         push(genre)
                     }
                 case .history:
-                    ENHistoryView(query: findMode == .artist ? "" : query) { entry in
+                    ENHistoryView(query: findMode == .genre ? query : "") { entry in
                         open(entry)
                     }
                 }
-                if findMode == .artist, artistQuery.count >= 2 {
-                    ENFindResults(entries: artistMatches, searching: artistSearching) { entry in
-                        jumpToArtist(entry.id)
-                    }
-                } else if findMode == .genre, mode == .map || mode == .scan, !query.isEmpty {
-                    ENFindResults(entries: matches) { entry in
-                        jump(to: entry)
-                    }
-                }
+                findOverlay
             }
         }
-        .safeAreaInset(edge: .bottom) {
+        .everyNoiseBottomBar(height: $bottomBarHeight) {
             if mode == .scan {
                 ENScanBar(entries: scanEntries,
                           index: $scanIndex,
                           player: player,
-                          unit: "genres") { entry in
+                          unit: "genres",
+                          onOpenCurrent: scanOpenAction,
+                          isOpening: resolvingScanArtist) { entry in
                     centerRequest = NoiseMapCenter(id: entry.id, token: UUID())
                 }
             }
         }
         .onChange(of: mode) { newMode in
             if newMode != .scan { player.stop() }
+        }
+        // Credentials withdrawn while the Spotify target was selected: fall
+        // back rather than leaving a field that can only fail.
+        .onChange(of: spotifySettings.isConfigured) { configured in
+            if !configured, findMode == .spotify { findMode = .genre }
         }
         // The global artist search: debounced (the scan reads ~470k names),
         // re-run when the query or the Find target changes.
@@ -165,10 +215,112 @@ struct EveryNoiseView: View {
             artistHits = hits
             artistSearching = false
         }
+        // The live one, debounced harder: every keystroke past the delay is a
+        // request against Spotify's search endpoint, where the artist index is
+        // a local byte scan.
+        .task(id: "spotify|\(findMode.rawValue)|\(query)") {
+            guard findMode == .spotify, artistQuery.count >= 2,
+                  let client = spotifySettings.client else {
+                spotifyHits = []
+                spotifySearching = false
+                return
+            }
+            spotifySearching = true
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled else { return }
+            let hits = (try? await client.searchArtists(named: artistQuery)) ?? []
+            guard !Task.isCancelled else { return }
+            spotifyHits = hits
+            spotifySearching = false
+        }
     }
 
     private var artistQuery: String {
         query.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The Find dropdown, whichever target is selected.
+    ///
+    /// It hangs from the top of the map and is capped at whatever room is
+    /// left above the bottom bar — a long result set used to run straight
+    /// under the scan transport and the mini player, hiding its last rows with
+    /// no way to scroll to them.
+    @ViewBuilder
+    private var findOverlay: some View {
+        GeometryReader { geo in
+            let room = max(140, geo.size.height - max(miniPlayerHeight, bottomBarHeight) - 24)
+            // The reader is here only to measure; handing its width straight
+            // back keeps the dropdown laid out exactly as the ZStack had it.
+            Group {
+                switch findMode {
+                case .artist where artistQuery.count >= 2:
+                    ENFindResults(entries: artistMatches, searching: artistSearching,
+                                  maxHeight: room) { entry in
+                        jumpToArtist(entry.id)
+                    }
+                case .spotify where artistQuery.count >= 2:
+                    ENFindResults(entries: spotifyMatches, searching: spotifySearching,
+                                  maxHeight: room) { entry in
+                        openSpotifyHit(entry.id)
+                    }
+                case .genre where !query.isEmpty && (mode == .map || mode == .scan):
+                    ENFindResults(entries: matches, maxHeight: room) { entry in
+                        jump(to: entry)
+                    }
+                default:
+                    EmptyView()
+                }
+            }
+            .frame(width: geo.size.width)
+        }
+    }
+
+    /// Live Spotify hits as find rows, most popular first, captioned with the
+    /// artist's own labels — the nearest thing to the map position they don't
+    /// have.
+    private var spotifyMatches: [ENFindEntry] {
+        spotifyHits
+            .sorted { $0.popularity > $1.popularity }
+            .map { hit in
+                let labels = hit.genres.prefix(3).joined(separator: " · ")
+                return ENFindEntry(id: hit.id, label: hit.name,
+                                   detail: labels.isEmpty ? nil : labels,
+                                   icon: ENFindMode.spotify.icon)
+            }
+    }
+
+    private func openSpotifyHit(_ id: String) {
+        guard let hit = spotifyHits.first(where: { $0.id == id }) else { return }
+        query = ""
+        spotifyHits = []
+        openLive(name: hit.name, spotifyID: hit.id, detail: hit.genres.first)
+    }
+
+    /// A genre's preview is one artist's record, and the site names them — so
+    /// the scan's "+" at this level opens *that* artist. It needs Spotify to
+    /// turn the name into an id, so without credentials there's no button
+    /// rather than one that can only fail.
+    private var scanOpenAction: ((ENScanEntry) -> Void)? {
+        spotifySettings.isConfigured ? openScannedGenre : nil
+    }
+
+    /// The scan's "+" at the genre level: the example track's artist, resolved
+    /// through Spotify's catalogue because the site only ever named them.
+    private func openScannedGenre(_ entry: ENScanEntry) {
+        guard !resolvingScanArtist,
+              let genre = store.genres.first(where: { $0.key == entry.id }),
+              let name = genre.exampleArtist,
+              let client = spotifySettings.client else { return }
+        resolvingScanArtist = true
+        Task {
+            defer { resolvingScanArtist = false }
+            guard let hit = try? await client.searchArtists(named: name).first else {
+                appLog("Couldn't find \"\(name)\" on Spotify — no discography to open.",
+                       level: .warning, category: "Browse")
+                return
+            }
+            openLive(name: hit.name, spotifyID: hit.id, detail: hit.genres.first)
+        }
     }
 
     /// Artist hits as find rows, each carrying its home genre as the detail
@@ -203,7 +355,10 @@ struct EveryNoiseView: View {
                      },
                      highlightedID: player.currentID ?? flashID,
                      centerRequest: centerRequest,
-                     bottomInset: miniPlayerHeight) { key in
+                     // The scan bar clears the mini player itself, so its
+                     // measured height already covers both — hence the larger
+                     // of the two rather than their sum.
+                     bottomInset: max(miniPlayerHeight, bottomBarHeight)) { key in
             guard let genre = store.genres.first(where: { $0.key == key }) else { return }
             if mode == .scan {
                 // Scanning: a tap retunes the scan there instead of leaving.
@@ -277,18 +432,26 @@ enum ENListSort: String, CaseIterable, Identifiable {
 /// icons inside the field's trailing edge.
 enum ENFindMode: String, CaseIterable, Identifiable {
     case genre, artist
+    /// Straight to Spotify's own catalogue, past the frozen dataset entirely.
+    /// Offered only with credentials saved, since it's the one Find target
+    /// that leaves the device.
+    case spotify
     var id: String { rawValue }
-    /// The same glyphs the rest of the app uses for the two kinds.
+    /// The same glyphs the rest of the app uses for the two kinds — and, for
+    /// the live search, an over-the-air one: this is the only target that
+    /// isn't answered from the bundled data.
     var icon: String {
         switch self {
         case .genre: return "guitars"
         case .artist: return "music.mic"
+        case .spotify: return "antenna.radiowaves.left.and.right"
         }
     }
     var placeholder: String {
         switch self {
         case .genre: return "Find Genre"
         case .artist: return "Find Artist"
+        case .spotify: return "Search Spotify"
         }
     }
 }
@@ -304,7 +467,10 @@ struct ENModeBar: View {
     /// The root level's genre/artist Find target. Nil (a genre's own page)
     /// keeps the plain genre-scoped field with no toggle.
     var findMode: Binding<ENFindMode>? = nil
-    /// Which modes this level offers (History exists at the root only).
+    /// Which Find targets the toggle offers. Spotify's is dropped without
+    /// credentials — a target that can only fail isn't worth a button.
+    var findModes: [ENFindMode] = ENFindMode.allCases
+    /// Which modes this level offers.
     var modes: [ENBrowseMode] = ENBrowseMode.allCases
 
     var body: some View {
@@ -362,7 +528,7 @@ struct ENModeBar: View {
     /// small icons, the active one filled with the accent color.
     private func findModeToggle(_ binding: Binding<ENFindMode>) -> some View {
         HStack(spacing: 4) {
-            ForEach(ENFindMode.allCases) { target in
+            ForEach(findModes) { target in
                 Button {
                     binding.wrappedValue = target
                 } label: {
@@ -389,20 +555,39 @@ func enDistanceSquared(_ ax: Int, _ ay: Int, _ bx: Int, _ by: Int) -> Int {
     return dx * dx + dy * dy
 }
 
+/// An artist reached without going through the map — a Spotify search hit, or
+/// whoever a genre's example track is by, once their name has been resolved to
+/// an id. All a discography needs.
+struct ENLiveArtist: Identifiable, Hashable {
+    var id: String { spotifyID }
+    let name: String
+    let spotifyID: String
+}
+
 struct ENFindEntry: Identifiable {
     let id: String
     let label: String
-    let colorHex: String
-    /// A caption beneath the label — an artist hit's home genre.
+    /// The item's map color. Nil for a hit that has no place on the map — a
+    /// Spotify search result — which reads in the ordinary text color instead.
+    var colorHex: String? = nil
+    /// A caption beneath the label — an artist hit's home genre, or a Spotify
+    /// hit's own labels.
     var detail: String? = nil
+    /// Leading glyph, for a row whose kind isn't obvious from the map color.
+    var icon: String? = nil
 }
 
 /// The Find dropdown over the map: tap a match to fly there.
 struct ENFindResults: View {
     let entries: [ENFindEntry]
-    /// True while a (global artist) search is still running, so an empty list
-    /// reads as a spinner instead of a premature "No matches".
+    /// True while a (global artist or Spotify) search is still running, so an
+    /// empty list reads as a spinner instead of a premature "No matches".
     var searching: Bool = false
+    /// How tall the list may get. The caller works this out from the space it
+    /// actually has: the dropdown hangs from the top of the map, and a long
+    /// result set used to run straight under the scan bar and the mini player,
+    /// hiding its last rows with no way to reach them.
+    var maxHeight: CGFloat = 320
     let onPick: (ENFindEntry) -> Void
 
     var body: some View {
@@ -425,13 +610,21 @@ struct ENFindResults: View {
                                 onPick(entry)
                             } label: {
                                 HStack {
+                                    if let icon = entry.icon {
+                                        Image(systemName: icon)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .frame(width: 20)
+                                    }
                                     VStack(alignment: .leading, spacing: 1) {
                                         Text(entry.label)
-                                            .foregroundStyle(Color(noiseHex: entry.colorHex))
+                                            .foregroundStyle(entry.colorHex.map { Color(noiseHex: $0) }
+                                                             ?? Color.primary)
                                         if let detail = entry.detail {
                                             Text(detail)
                                                 .font(.caption)
                                                 .foregroundStyle(.secondary)
+                                                .lineLimit(1)
                                         }
                                     }
                                     Spacer()
@@ -445,12 +638,96 @@ struct ENFindResults: View {
                         }
                     }
                 }
-                .frame(maxHeight: 320)
+                .frame(maxHeight: maxHeight)
             }
         }
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
         .shadow(radius: 8, y: 4)
         .padding(.horizontal)
+    }
+}
+
+// MARK: - Clearing the browser's own bottom bar
+
+/// How tall the Every Noise browser's bottom bar is right now — the scan
+/// transport or the artist action bar — measured, published, and read by
+/// everything that has to stay clear of it.
+///
+/// The mini player already does this (`\.miniPlayerHeight`), and for the same
+/// reason: the maps ignore the bottom safe area outright, and a `List` inside a
+/// `NavigationStack` never picks up a safe-area inset applied outside the
+/// stack. Both need the number as an explicit content inset instead. These
+/// bars sit *above* the mini player and clear it themselves, so the published
+/// height already covers both — which is why the clearance below takes the
+/// larger of the two rather than the sum.
+private struct ENBottomBarHeightKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 0
+}
+
+extension EnvironmentValues {
+    var enBottomBarHeight: CGFloat {
+        get { self[ENBottomBarHeightKey.self] }
+        set { self[ENBottomBarHeightKey.self] = newValue }
+    }
+}
+
+private struct ENBottomBarHeightPreference: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+private struct ENBottomBarModifier<Bar: View>: ViewModifier {
+    /// Reported back to the owner as well as published downwards: the map's
+    /// inset and the Find dropdown's cap are both built in the *same* view
+    /// that attaches the bar, which is above the point the environment value
+    /// takes effect and so can't read it.
+    @Binding var height: CGFloat
+    /// Built by the caller's `@ViewBuilder`; plain here, so forwarding it is a
+    /// value pass rather than a second builder transform.
+    let bar: () -> Bar
+
+    func body(content: Content) -> some View {
+        content
+            .environment(\.enBottomBarHeight, height)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                bar()
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.preference(key: ENBottomBarHeightPreference.self,
+                                                   value: geo.size.height)
+                        }
+                    )
+            }
+            .onPreferenceChange(ENBottomBarHeightPreference.self) { height = $0 }
+    }
+}
+
+private struct ENBottomClearanceModifier: ViewModifier {
+    @Environment(\.miniPlayerHeight) private var miniPlayerHeight
+    @Environment(\.enBottomBarHeight) private var barHeight
+
+    func body(content: Content) -> some View {
+        content.safeAreaInset(edge: .bottom, spacing: 0) {
+            Color.clear.frame(height: max(miniPlayerHeight, barHeight))
+        }
+    }
+}
+
+extension View {
+    /// Attaches the browser's bottom bar and publishes its measured height, so
+    /// the map underneath and any list beside it can inset by exactly as much
+    /// as it takes up. An absent bar measures 0 and this is a plain no-op.
+    func everyNoiseBottomBar<Bar: View>(height: Binding<CGFloat>,
+                                        @ViewBuilder _ bar: @escaping () -> Bar) -> some View {
+        modifier(ENBottomBarModifier(height: height, bar: bar))
+    }
+
+    /// Bottom clearance for a scrollable container inside the browser: the
+    /// bottom bar's height, or the mini player's when there's no bar.
+    func everyNoiseBottomClearance() -> some View {
+        modifier(ENBottomClearanceModifier())
     }
 }
 
@@ -542,7 +819,7 @@ struct ENGenreListView: View {
                 }
             }
             .listStyle(.plain)
-            .miniPlayerClearance()
+            .everyNoiseBottomClearance()
             .onChange(of: anchorKey) { key in
                 guard sort == .similarity, let key else { return }
                 withAnimation { proxy.scrollTo(key, anchor: .top) }
@@ -560,20 +837,32 @@ struct ENHistoryView: View {
     @EnvironmentObject private var store: EveryNoiseStore
 
     let query: String
+    /// Set on a genre's own page: only the artists tapped *in this genre*,
+    /// which is the useful question there ("who have I already heard here?").
+    /// Nil at the root, where the whole log is the point.
+    var genreKey: String? = nil
     let onOpen: (ENHistoryEntry) -> Void
+
+    /// Everything this level's History covers, before the Find filter.
+    private var scoped: [ENHistoryEntry] {
+        guard let genreKey else { return store.history }
+        return store.history.filter { $0.kind == .artist && $0.genreKey == genreKey }
+    }
 
     private var shown: [ENHistoryEntry] {
         query.isEmpty
-            ? store.history
-            : store.history.filter { $0.name.localizedStandardContains(query) }
+            ? scoped
+            : scoped.filter { $0.name.localizedStandardContains(query) }
     }
 
     var body: some View {
-        if store.history.isEmpty {
+        if scoped.isEmpty {
             ContentUnavailableViewCompat(
                 title: "No history yet",
                 systemImage: "clock",
-                description: "Genres and artists you open land here."
+                description: genreKey == nil
+                    ? "Genres and artists you open land here."
+                    : "Artists you play from this genre land here."
             )
             .frame(maxHeight: .infinity)
         } else {
@@ -583,15 +872,21 @@ struct ENHistoryView: View {
                         onOpen(entry)
                     } label: {
                         HStack(spacing: 12) {
-                            Image(systemName: entry.kind == .genre ? "guitars" : "music.mic")
+                            Image(systemName: icon(for: entry.kind))
                                 .foregroundStyle(.secondary)
                                 .frame(width: 26)
                             VStack(alignment: .leading, spacing: 2) {
+                                // A Spotify hit has no place on the map and so
+                                // no map color to wear.
                                 Text(entry.name)
-                                    .foregroundStyle(Color(noiseHex: entry.color))
+                                    .foregroundStyle(entry.color.isEmpty
+                                                     ? Color.primary : Color(noiseHex: entry.color))
                                     .lineLimit(1)
                                 if let detail = entry.detail {
-                                    Text("in \(detail)")
+                                    // "in <genre>" reads wrong for a Spotify
+                                    // hit — its caption is the artist's own
+                                    // labels, not somewhere they were found.
+                                    Text(entry.kind == .spotify ? detail : "in \(detail)")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                         .lineLimit(1)
@@ -614,17 +909,29 @@ struct ENHistoryView: View {
                     }
                 }
 
-                Section {
-                    Button(role: .destructive) {
-                        store.clearHistory()
-                    } label: {
-                        Text("Clear History")
-                            .frame(maxWidth: .infinity)
+                // Clearing is a whole-log action, so it belongs where the whole
+                // log is shown — a genre's page only ever sees its own slice.
+                if genreKey == nil {
+                    Section {
+                        Button(role: .destructive) {
+                            store.clearHistory()
+                        } label: {
+                            Text("Clear History")
+                                .frame(maxWidth: .infinity)
+                        }
                     }
                 }
             }
             .listStyle(.plain)
-            .miniPlayerClearance()
+            .everyNoiseBottomClearance()
+        }
+    }
+
+    private func icon(for kind: ENVisitKind) -> String {
+        switch kind {
+        case .genre: return "guitars"
+        case .artist: return "music.mic"
+        case .spotify: return ENFindMode.spotify.icon
         }
     }
 }
@@ -652,6 +959,14 @@ struct ENScanBar: View {
     @ObservedObject var player: ENPreviewPlayer
     /// "genres" / "artists" — the count caption.
     let unit: String
+    /// Given, the bar grows a "+" that leaves the scan for whatever's playing
+    /// — the current artist's discography. Nil where there's nothing to open
+    /// (a genre scan with no Spotify credentials to resolve its example
+    /// artist), so the button is absent rather than dead.
+    var onOpenCurrent: ((ENScanEntry) -> Void)? = nil
+    /// True while that "+" is still working — a genre's example artist has to
+    /// be looked up by name before there's a discography to go to.
+    var isOpening: Bool = false
     /// Called on every move so the map can follow the scan.
     let onMove: (ENScanEntry) -> Void
 
@@ -674,7 +989,7 @@ struct ENScanBar: View {
                     }
                 }
             }
-            HStack(spacing: 40) {
+            HStack(spacing: 30) {
                 Button { move(-1) } label: {
                     Image(systemName: "backward.fill")
                 }
@@ -695,7 +1010,30 @@ struct ENScanBar: View {
                 Button { move(1) } label: {
                     Image(systemName: "forward.fill")
                 }
+                // The same "+" a tapped artist gets, so hearing something on
+                // the scan and wanting the rest of it doesn't mean stopping,
+                // leaving scan mode, and finding them again by hand. It stops
+                // the scan on the way out — the discography has its own audio.
+                if let onOpenCurrent {
+                    Button {
+                        guard let current else { return }
+                        player.stop()
+                        onOpenCurrent(current)
+                    } label: {
+                        if isOpening {
+                            ProgressView().frame(width: 30, height: 30)
+                        } else {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 30))
+                        }
+                    }
+                    .disabled(current == nil || isOpening)
+                    .accessibilityLabel(current.map { "Open \($0.label)" } ?? "Open this entry")
+                }
             }
+            // Borderless so the buttons stay independently tappable rather
+            // than the row acting as one target.
+            .buttonStyle(.borderless)
             Text("\(min(index + 1, entries.count)) of \(entries.count) \(unit)")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
@@ -782,6 +1120,13 @@ struct ENGenreView: View {
     @State private var selected: ENArtist?
     /// The artist whose live Spotify discography is being pushed.
     @State private var discographyArtist: ENArtist?
+    /// An artist History (or the scan's "+") asked to land on, applied once
+    /// the map is showing — switching modes clears the selection, so the
+    /// request has to outlive the switch.
+    @State private var pendingSelectID: String?
+    /// The measured height of whatever bottom bar is up, so the map insets by
+    /// it and the Find dropdown stops above it.
+    @State private var bottomBarHeight: CGFloat = 0
 
     /// What the screen actually draws: the shard plus everything the harvest
     /// has found under this label since the scrape froze. Computed rather than
@@ -867,29 +1212,59 @@ struct ENGenreView: View {
 
     private func content(_ artists: [ENArtist]) -> some View {
         VStack(spacing: 0) {
+            // History belongs at this level too, scoped to the genre: the
+            // useful question inside a genre is which of *its* artists you've
+            // already heard, and the answer was only ever reachable from the
+            // root, mixed in with every other genre you'd opened.
             ENModeBar(mode: $mode, query: $query, sort: $listSort,
-                      modes: [.map, .list, .scan])
+                      modes: [.map, .list, .scan, .history])
             ZStack(alignment: .top) {
                 switch mode {
-                case .map, .scan, .history:
+                case .map, .scan:
                     artistMap(artists)
                 case .list:
                     artistList(artists)
+                case .history:
+                    ENHistoryView(query: query, genreKey: genre.key) { entry in
+                        reopen(entry, in: artists)
+                    }
                 }
-                if mode != .list, !query.isEmpty {
-                    ENFindResults(entries: matches(artists)) { entry in
-                        jump(to: entry, in: artists)
+                if mode == .map || mode == .scan, !query.isEmpty {
+                    GeometryReader { geo in
+                        ENFindResults(entries: matches(artists),
+                                      maxHeight: max(140, geo.size.height
+                                                     - max(miniPlayerHeight, bottomBarHeight) - 24)) { entry in
+                            jump(to: entry, in: artists)
+                        }
+                        .frame(width: geo.size.width)
                     }
                 }
             }
         }
-        .safeAreaInset(edge: .bottom) {
+        .everyNoiseBottomBar(height: $bottomBarHeight) {
             bottomBar(artists)
         }
         .onChange(of: mode) { newMode in
             if newMode != .scan { player.stop() }
-            selected = nil
+            // A History row asked for this artist on the map; leaving the
+            // selection alone is the whole point of the trip.
+            if let pendingSelectID, newMode == .map,
+               let artist = artists.first(where: { $0.id == pendingSelectID }) {
+                self.pendingSelectID = nil
+                select(artist)
+                centerRequest = NoiseMapCenter(id: artist.id, token: UUID())
+            } else {
+                selected = nil
+            }
         }
+    }
+
+    /// A History row on a genre's own page: go to that artist on the map,
+    /// selected and playing, rather than pushing anything.
+    private func reopen(_ entry: ENHistoryEntry, in artists: [ENArtist]) {
+        guard let id = entry.artistID, artists.contains(where: { $0.id == id }) else { return }
+        pendingSelectID = id
+        mode = .map
     }
 
     @ViewBuilder
@@ -898,7 +1273,11 @@ struct ENGenreView: View {
             ENScanBar(entries: artists.map {
                 ENScanEntry(id: $0.id, label: $0.name, detail: $0.exampleTrack,
                             preview: $0.preview)
-            }, index: $scanIndex, player: player, unit: "artists") { entry in
+            }, index: $scanIndex, player: player, unit: "artists",
+               // Stops the scan on whoever is playing and opens them — their
+               // discography with Spotify configured, otherwise the map with
+               // their action bar up, which offers the same "+" choices.
+               onOpenCurrent: { entry in openScanned(entry, in: artists) }) { entry in
                 centerRequest = NoiseMapCenter(id: entry.id, token: UUID())
             }
         } else if let selected {
@@ -930,7 +1309,9 @@ struct ENGenreView: View {
                      itemsVersion: updates.harvestVersion,
                      highlightedID: player.currentID ?? flashID,
                      centerRequest: centerRequest,
-                     bottomInset: miniPlayerHeight) { id in
+                     // The bars clear the mini player themselves, so the larger
+                     // of the two is the whole inset, not their sum.
+                     bottomInset: max(miniPlayerHeight, bottomBarHeight)) { id in
             guard let artist = artists.first(where: { $0.id == id }) else { return }
             if mode == .scan {
                 if let i = artists.firstIndex(of: artist) { scanIndex = i }
@@ -1008,11 +1389,26 @@ struct ENGenreView: View {
                 }
             }
             .listStyle(.plain)
-            .miniPlayerClearance()
+            .everyNoiseBottomClearance()
             .onChange(of: listAnchor) { key in
                 guard listSort == .similarity, let key else { return }
                 withAnimation { proxy.scrollTo(key, anchor: .top) }
             }
+        }
+    }
+
+    /// The scan's "+": stop on this artist and go where their action bar's own
+    /// "+" would go. With Spotify configured that's their discography, in one
+    /// step; without it there's no live catalogue to open, so the next best
+    /// thing is to put them on the map with the bar up, whose "+" then offers
+    /// the Browse-source route instead.
+    private func openScanned(_ entry: ENScanEntry, in artists: [ENArtist]) {
+        guard let artist = artists.first(where: { $0.id == entry.id }) else { return }
+        if artist.spotify != nil, spotifySettings.isConfigured {
+            discographyArtist = artist
+        } else {
+            pendingSelectID = artist.id
+            mode = .map
         }
     }
 

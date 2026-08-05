@@ -31,6 +31,17 @@ struct ENGenre: Codable, Hashable, Identifiable {
     let example: String?
 
     var id: String { key }
+
+    /// Who the example track is by — everything ahead of the quoted song.
+    /// A genre's preview is one artist's record, so this is the artist Scan is
+    /// actually playing, and the one its "+" opens. Name only: the site never
+    /// carried a Spotify id at this level, which is why resolving it takes a
+    /// search.
+    var exampleArtist: String? {
+        guard let example, let quote = example.firstIndex(of: "\"") else { return nil }
+        let name = example[..<quote].trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? nil : name
+    }
 }
 
 /// One artist inside a genre, positioned on that genre's own map.
@@ -116,6 +127,11 @@ private struct ENShard: Codable {
 enum ENVisitKind: String, Codable {
     case genre
     case artist
+    /// An artist reached through the Find field's **Spotify** mode rather than
+    /// through the map — they may not be on it at all. Their row carries a
+    /// Spotify id where a mapped artist carries a shard id, and no genre to
+    /// lead back to, so it re-opens straight into the discography.
+    case spotify
 }
 
 /// One "you opened this" record — a tapped genre, or a tapped artist (kept
@@ -249,6 +265,14 @@ final class EveryNoiseStore: ObservableObject {
     func recordVisit(artist: ENArtist, in genre: ENGenre) {
         record(ENHistoryEntry(kind: .artist, genreKey: genre.key, artistID: artist.id,
                               name: artist.name, color: artist.color, detail: genre.name))
+    }
+
+    /// A hit from the Find field's Spotify mode. `artistID` is a **Spotify**
+    /// id here, and there's no genre behind it — the row re-opens the
+    /// discography directly rather than a place on the map.
+    func recordVisit(spotifyArtist name: String, id: String, detail: String?) {
+        record(ENHistoryEntry(kind: .spotify, genreKey: "", artistID: id,
+                              name: name, color: "", detail: detail))
     }
 
     func removeHistory(_ entry: ENHistoryEntry) {

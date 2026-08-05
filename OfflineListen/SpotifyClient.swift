@@ -596,7 +596,20 @@ struct SpotifyClient {
     func searchArtists(genre: String) async throws -> [SpotifyArtistHit] {
         // The quotes matter: `genre:deep house` filters on "deep" and searches
         // for "house", `genre:"deep house"` filters on the whole label.
-        let raw = "genre:\"\(genre)\""
+        try await artistSearch(raw: "genre:\"\(genre)\"", describing: "artists in \"\(genre)\"")
+    }
+
+    /// Artists matching free text — the Every Noise browser's **Spotify** Find
+    /// mode, which reaches past the 2024-frozen dataset into the live
+    /// catalogue, and the lookup that turns an example track's artist *name*
+    /// into the id a discography needs.
+    func searchArtists(named query: String) async throws -> [SpotifyArtistHit] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        return try await artistSearch(raw: trimmed, describing: "artists matching \"\(trimmed)\"")
+    }
+
+    private func artistSearch(raw: String, describing what: String) async throws -> [SpotifyArtistHit] {
         let encoded = raw.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? raw
         // No explicit `limit` or `offset`, for the same reason `artistAlbums`
         // sends none: under a client-credentials app Spotify answers
@@ -605,8 +618,7 @@ struct SpotifyClient {
         // The server's default page is whatever it is happy to serve, which is
         // the only size guaranteed not to 400. Fewer artists per genre than
         // the ask, and far more than the zero a rejected request returns.
-        let data = try await get(path: "/search?q=\(encoded)&type=artist",
-                                 describing: "artists in \"\(genre)\"")
+        let data = try await get(path: "/search?q=\(encoded)&type=artist", describing: what)
         guard let response = try? JSONDecoder().decode(APIArtistSearch.self, from: data) else {
             throw SpotifyError.malformedResponse
         }

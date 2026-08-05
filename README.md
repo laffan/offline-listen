@@ -654,25 +654,54 @@ a **Find** field — at both levels:
   following along and the current entry drawn inverted. It works on the genre
   map and inside any genre's artist map, naming the track under each entry,
   remembers where it left off on the genre level, and skips entries with no
-  preview.
+  preview. The transport carries the same **"+"** a tapped artist gets, so
+  hearing something worth following doesn't mean stopping the scan, leaving
+  the mode and finding them again by hand: it halts the scan and opens the
+  artist's discography in one step. On a genre scan that's the artist behind
+  the genre's example track — the site names them but carries no id for them,
+  so the "+" resolves the name through Spotify's catalogue and only appears
+  with credentials saved.
 - **Find** filters: in list mode it narrows the list; over a map it drops down
   the matches and tapping one flies the map there. At the root the field has a
-  **genre/artist toggle** inside its trailing edge (the placeholder follows —
-  "Find Genre" / "Find Artist"): artist mode searches **every artist in the
-  dataset** (~470k unique names) and drops down the most popular matches, each
-  with its home genre beneath — tapping one opens that genre with the artist
-  selected, centered and previewing. Searching that many rows per keystroke
-  is what the bundled **artist index** exists for (see the "Why it isn't
-  laggy" notes below).
-- **History** (root level, an addition of ours) is the visit log, newest
-  first: every genre you've opened (guitars icon) and every artist you've
-  tapped (mic icon, with their genre beneath), each in its map color with a
-  relative timestamp. Tapping a genre re-opens its artists; tapping an artist
-  re-opens their genre with that artist selected, centered, and previewing.
-  Like the Library's Recent it's a log, not a set — revisits re-append, only
-  consecutive repeats collapse — capped at 200, filtered by Find, rows swipe
-  to delete, with a Clear History button at the bottom
-  (`Documents/everynoise-history.json`).
+  **target toggle** inside its trailing edge, and the placeholder follows it:
+  - **Find Genre** — the genre index.
+  - **Find Artist** — **every artist in the dataset** (~470k unique names),
+    most popular matches first, each with its home genre beneath; tapping one
+    opens that genre with the artist selected, centered and previewing.
+    Searching that many rows per keystroke is what the bundled **artist
+    index** exists for (see the "Why it isn't laggy" notes below).
+  - **Search Spotify** — offered only with credentials saved, because it's the
+    one target that leaves the device. It asks Spotify's own catalogue rather
+    than the frozen dataset, so it reaches artists the 2024 scrape never had
+    and ones the map has no room for; hits are captioned with the artist's own
+    genre labels, and picking one goes **straight to their discography**. The
+    visit lands in History under an over-the-air icon, which is also how it
+    re-opens — there's no place on the map to send it back to. It's debounced
+    twice as hard as the local search, since every keystroke past the delay is
+    a real request.
+- **History** is the visit log, newest first: every genre you've opened
+  (guitars icon), every artist you've tapped (mic icon, with their genre
+  beneath) and every Spotify search you've followed, each in its map color
+  with a relative timestamp. Tapping a genre re-opens its artists; tapping an
+  artist re-opens their genre with that artist selected, centered and
+  previewing. Like the Library's Recent it's a log, not a set — revisits
+  re-append, only consecutive repeats collapse — capped at 200, filtered by
+  Find, rows swipe to delete, with a Clear History button at the bottom
+  (`Documents/everynoise-history.json`). **A genre's own page has it too**,
+  scoped to that genre: which of *its* artists you've already heard is the
+  useful question there, and the answer used to be reachable only from the
+  root, mixed in with every other genre you'd opened. A row there doesn't push
+  anything — it puts the artist back on the map, selected and playing.
+
+Every one of those modes clears the bar beneath it. The maps ignore the bottom
+safe area outright, and a `List` inside a `NavigationStack` never picks up an
+inset applied outside the stack, so both need the number handed to them as
+explicit content inset — which is what the mini player already does for
+itself. The scan transport and the artist action bar are **measured** the same
+way and published alongside it, so the map insets by exactly their height, a
+long Find dropdown stops above them instead of running underneath, and a list's
+last rows scroll clear. The bars clear the mini player themselves, so it's the
+larger of the two heights that applies, not their sum.
 
 Tapping an **artist** plays a **30-second preview of their top song** (the
 snippet URL is embedded in the scraped data — no Spotify account or API key is
@@ -1039,7 +1068,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `AISettings.swift` | `AISettingsStore` (model/key/assist, Keychain-backed), `AIModel`, `Keychain` helper. |
 | `AnthropicClient.swift` | Minimal Anthropic Messages API client (verify + single-shot completion) over URLSession. |
 | `SpotifyRef.swift` | Parses `spotify:` URIs / `open.spotify.com` links into a (kind, id) pair; resolves `spotify.link` short links by redirect. |
-| `SpotifyClient.swift` | Spotify Web API client: Client Credentials token (cached, 401-refreshing) + the track/album/playlist/artist metadata reads, paginated and **batched** (`/albums?ids=`, cross-album `/tracks?ids=`), plus `searchArtists(genre:)` — the one request the Every Noise dataset harvest makes. Also `SpotifyRateLimiter` (the persisted, per-client-id `Retry-After` window), `SpotifyMetadataCache` (the ten-minute catalogue cache), and the popularity-ranked `derivedTopTracks`. |
+| `SpotifyClient.swift` | Spotify Web API client: Client Credentials token (cached, 401-refreshing) + the track/album/playlist/artist metadata reads, paginated and **batched** (`/albums?ids=`, cross-album `/tracks?ids=`), plus `searchArtists(genre:)` — the one request the Every Noise dataset harvest makes — and `searchArtists(named:)` behind that browser's Spotify Find mode. Also `SpotifyRateLimiter` (the persisted, per-client-id `Retry-After` window), `SpotifyMetadataCache` (the ten-minute catalogue cache), and the popularity-ranked `derivedTopTracks`. |
 | `SpotifySettings.swift` | `SpotifySettingsStore` — the Keychain-backed client id/secret (mirrors `AISettingsStore`). |
 | `SpotifyResolver.swift` | Spotify metadata → `ResolvedPlaylist`: ISRC-first YouTube matching with a duration gate, bounded and concurrent. |
 | `AIOrganizer.swift` | Builds the prompt, calls the API, writes music/podcast + clean metadata back to the library. |
@@ -1055,7 +1084,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `EveryNoiseData.swift` | The bundled Every Noise dataset: models, the lazy/LRU shard-loading store, the memory-mapped global artist search (`ENArtistIndex`), and the 30-second preview player. |
 | `EveryNoiseUpdates.swift` | `ENUpdateStore` — the opt-in, heavily throttled Spotify harvest that records what the frozen dataset is missing as you browse; the exportable JSONL it writes for `tools/everynoise/merge_updates.py`; `merged(_:genre:)`, which draws the findings onto the genre's map straight away; and `ENDataFolder`, the separately bookmarked folder a copy of the records is kept in. |
 | `NoiseMapView.swift` | The virtualized `UIScrollView` scatter map (spatial grid + recycled labels) both noise maps render through — opens centered on its canvas, with the draggable scroll-pill ring on the right edge. |
-| `EveryNoiseView.swift` | The Every Noise browser: Map/List/Scan modes + Find at both levels (with the root's genre/artist toggle), the scan transport, and the artist bar whose "+" opens the live discography (or creates Artist sources when Spotify isn't set up). |
+| `EveryNoiseView.swift` | The Every Noise browser: Map/List/Scan/History modes + Find at both levels (with the root's genre/artist/Spotify toggle), the scan transport and its "+", the artist bar whose "+" opens the live discography (or creates Artist sources when Spotify isn't set up), and the measured bottom-bar clearance the maps and lists inset by. |
 | `EveryNoiseData/` | Bundled (folder reference): `genres.json` index + per-genre artist shards from the one-time `tools/everynoise/scrape.py`, plus the derived `artists.idx.z` from `build_artist_index.py`. |
 | `BrowseSourceView.swift` | One source's items with per-row Download/Preview/Discard, plus a **Select** mode for bulk download; also `BrowseTrackStatusButton`, the green play button every browse list shows once a download is in the library. |
 | `BrowsePreviewView.swift` | The preview modal: pipeline download, mini player with prev/play-pause/next over the queue it was opened with (auto-advancing at the end of each track — off its own frozen-playhead watchdog, not just the end notification — phone locked or not), the lock-screen metadata it borrows while it plays, Save/Discard. |
