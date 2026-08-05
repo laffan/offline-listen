@@ -86,7 +86,8 @@ struct EveryNoiseView: View {
         // Spotify search hits, and whoever a genre's example track is by.
         .navigationDestination(isPresented: liveArtistIsPushed) {
             if let liveArtist {
-                ENDiscographyView(artistName: liveArtist.name, spotifyID: liveArtist.spotifyID)
+                ENDiscographyView(artistName: liveArtist.name, spotifyID: liveArtist.spotifyID,
+                                  exampleTrack: liveArtist.exampleTrack)
             }
         }
         .environmentObject(store)
@@ -143,9 +144,10 @@ struct EveryNoiseView: View {
 
     /// Opens a live-catalogue artist and logs the visit, so a Spotify search
     /// leaves the same breadcrumb a map tap does.
-    private func openLive(name: String, spotifyID: String, detail: String?) {
+    private func openLive(name: String, spotifyID: String, detail: String?,
+                          exampleTrack: String? = nil) {
         store.recordVisit(spotifyArtist: name, id: spotifyID, detail: detail)
-        liveArtist = ENLiveArtist(name: name, spotifyID: spotifyID)
+        liveArtist = ENLiveArtist(name: name, spotifyID: spotifyID, exampleTrack: exampleTrack)
     }
 
     private var missingData: some View {
@@ -319,7 +321,10 @@ struct EveryNoiseView: View {
                        level: .warning, category: "Browse")
                 return
             }
-            openLive(name: hit.name, spotifyID: hit.id, detail: hit.genres.first)
+            // The snippet that was playing when the "+" was pressed is the one
+            // song we know they liked, so it travels with them.
+            openLive(name: hit.name, spotifyID: hit.id, detail: hit.genres.first,
+                     exampleTrack: genre.exampleTrack)
         }
     }
 
@@ -562,6 +567,9 @@ struct ENLiveArtist: Identifiable, Hashable {
     var id: String { spotifyID }
     let name: String
     let spotifyID: String
+    /// The song whose snippet was playing when this was opened — a genre
+    /// scan's example track. A Spotify search hit has none: nothing played.
+    var exampleTrack: String? = nil
 }
 
 struct ENFindEntry: Identifiable {
@@ -1179,7 +1187,8 @@ struct ENGenreView: View {
             set: { if !$0 { discographyArtist = nil } }
         )) {
             if let discographyArtist, let spotifyID = discographyArtist.spotify {
-                ENDiscographyView(artistName: discographyArtist.name, spotifyID: spotifyID)
+                ENDiscographyView(artistName: discographyArtist.name, spotifyID: spotifyID,
+                                  exampleTrack: discographyArtist.exampleTrack)
             }
         }
         .task(id: genre.key) {
@@ -1584,6 +1593,9 @@ struct ENArtistBar: View {
 struct ENDiscographyView: View {
     let artistName: String
     let spotifyID: String
+    /// The song the 30-second preview played, when we came from a row that
+    /// named one — it gets its own line above the catalogue.
+    var exampleTrack: String? = nil
 
     @EnvironmentObject private var spotifySettings: SpotifySettingsStore
     @EnvironmentObject private var aiSettings: AISettingsStore
@@ -1612,7 +1624,8 @@ struct ENDiscographyView: View {
                         browse.addSource(kind: .artist, name: artistName,
                                          input: artistName,
                                          artistMode: .spotifyDiscography)
-                    }))
+                    }),
+                exampleTrack: exampleTrack)
         } else {
             ContentUnavailableViewCompat(
                 title: "Couldn't load the discography",

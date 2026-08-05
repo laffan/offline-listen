@@ -37,7 +37,35 @@ struct ENGenre: Codable, Hashable, Identifiable {
     /// actually playing, and the one its "+" opens. Name only: the site never
     /// carried a Spotify id at this level, which is why resolving it takes a
     /// search.
-    var exampleArtist: String? {
+    var exampleArtist: String? { ENExample.artist(of: example) }
+
+    /// The song that preview plays.
+    var exampleTrack: String? { ENExample.song(of: example) }
+}
+
+/// Reading Every Noise's `Artist "Song"` labels, which both a genre row and an
+/// artist row carry in their `title` attribute.
+///
+/// **The quotes are the signal.** The site writes the quoted form when there's
+/// a track and the bare string `(no sample available)` when there isn't — 95%
+/// of rows are the first, and every unquoted one in the dataset is that
+/// placeholder. So a label with no quoted song names no song, and passing the
+/// raw string through would put the site's own furniture on screen as if it
+/// were a title.
+enum ENExample {
+    /// The song. Taking the *outermost* pair of quotes rather than the first
+    /// keeps a title with quotes of its own intact.
+    static func song(of example: String?) -> String? {
+        guard let example,
+              let open = example.firstIndex(of: "\""),
+              let close = example.lastIndex(of: "\""), open < close else { return nil }
+        let song = example[example.index(after: open)..<close]
+            .trimmingCharacters(in: .whitespaces)
+        return song.isEmpty ? nil : song
+    }
+
+    /// Whoever the song is by — everything ahead of the quote.
+    static func artist(of example: String?) -> String? {
         guard let example, let quote = example.firstIndex(of: "\"") else { return nil }
         let name = example[..<quote].trimmingCharacters(in: .whitespaces)
         return name.isEmpty ? nil : name
@@ -93,21 +121,8 @@ struct ENArtist: Codable, Hashable, Identifiable {
     /// artist, so repeating that reads as noise — what's wanted is the title of
     /// the thing actually playing. (A *genre* shows the whole string, because
     /// there whose track it is is the interesting half.)
-    /// **The quotes are the signal.** The site writes `Artist "Song"` when
-    /// there's a track and the bare string `(no sample available)` when there
-    /// isn't — 95% of rows are the first, and every unquoted one in the
-    /// dataset is that placeholder. So an example with no quoted song names no
-    /// song, and passing the raw label through would put the site's own
-    /// furniture on screen as if it were a title. Taking the *outermost* pair
-    /// rather than the first keeps a song with quotes of its own intact.
-    var exampleTrack: String? {
-        guard let example,
-              let open = example.firstIndex(of: "\""),
-              let close = example.lastIndex(of: "\""), open < close else { return nil }
-        let song = example[example.index(after: open)..<close]
-            .trimmingCharacters(in: .whitespaces)
-        return song.isEmpty ? nil : song
-    }
+    /// See `ENExample` for why only a *quoted* song counts.
+    var exampleTrack: String? { ENExample.song(of: example) }
 
     /// Shard rows have no ids of their own; position disambiguates the rare
     /// same-name collision within one genre.

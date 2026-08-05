@@ -75,8 +75,27 @@ protocol DiscographyProviding {
     func loadCatalogue() async throws -> DiscographyCatalogue
     /// A release's tracks (still names only), fetched if the layout carries none.
     func tracks(for release: DiscographyRelease) async throws -> [DiscographyTrackInfo]
+    /// Every release's tracks at once — what the song search indexes, keyed by
+    /// release id. Separate from `tracks(for:)` because reading a hundred
+    /// records one at a time is a hundred round trips, and a provider that can
+    /// batch should.
+    func tracks(forAll releases: [DiscographyRelease]) async throws -> [String: [DiscographyTrackInfo]]
     /// The YouTube video for one track, or nil when nothing usable matches.
     func youTubeURL(for track: DiscographyTrackInfo) async -> String?
+}
+
+extension DiscographyProviding {
+    /// One at a time — correct anywhere, and all a layout that carries its
+    /// tracks inline (the AI catalogue) ever needs. A release that fails is
+    /// skipped rather than failing the index: a song search that can't see one
+    /// album is still worth having.
+    func tracks(forAll releases: [DiscographyRelease]) async throws -> [String: [DiscographyTrackInfo]] {
+        var found: [String: [DiscographyTrackInfo]] = [:]
+        for release in releases {
+            found[release.id] = (try? await tracks(for: release)) ?? []
+        }
+        return found
+    }
 }
 
 /// The artist's *real* catalogue, live from Spotify: releases grouped
@@ -184,7 +203,33 @@ struct SpotifyDiscographyProvider: DiscographyProviding {
         let tracks = release.kind == .topTen
             ? Array(collection.tracks.prefix(10))
             : collection.tracks
-        return tracks.map {
+        return Self.infos(tracks, on: release)
+    }
+
+    /// The whole catalogue's tracks in one pass, for the song search.
+    ///
+    /// `/albums?ids=` reads twenty records per request (and is cached), so a
+    /// hundred-release discography costs five round trips rather than a
+    /// hundred. Only ordinary releases are read: the pinned **Top 10** is a
+    /// *view* of the catalogue rather than part of it, so indexing it would
+    /// list the same songs twice — and its own tracklist is a model call or a
+    /// popularity derivation, which is far too much work to spend on
+    /// duplicates.
+    func tracks(forAll releases: [DiscographyRelease]) async throws -> [String: [DiscographyTrackInfo]] {
+        let albums = releases.filter { $0.kind == .release }
+        guard !albums.isEmpty else { return [:] }
+        let collections = try await client.albums(ids: albums.map(\.id))
+        var found: [String: [DiscographyTrackInfo]] = [:]
+        for release in albums {
+            guard let collection = collections[release.id] else { continue }
+            found[release.id] = Self.infos(collection.tracks, on: release)
+        }
+        return found
+    }
+
+    private static func infos(_ tracks: [SpotifyTrack],
+                              on release: DiscographyRelease) -> [DiscographyTrackInfo] {
+        tracks.map {
             DiscographyTrackInfo(id: $0.id, name: $0.name, artist: $0.primaryArtist,
                                  albumName: $0.albumName, durationMS: $0.durationMS,
                                  isrc: $0.isrc,
@@ -316,6 +361,26 @@ struct AIDiscographyProvider: DiscographyProviding {
 
 // MARK: - The browser
 
+/// One song, wherever it sits in the catalogue — what the song search matches
+/// against and hands back.
+struct DiscographySongHit: Identifiable, Hashable {
+    let releaseID: String
+    let releaseName: String
+    let releaseYear: String
+    let track: DiscographyTrackInfo
+    /// Release *and* track, since the same recording legitimately appears on
+    /// an album, a single and a compilation.
+    var id: String { "\(releaseID)|\(track.id)" }
+}
+
+/// A "take me to this song" request: which release to open, which track to
+/// land on, and a token so asking for the same song twice still counts twice.
+struct DiscographyFocus: Equatable {
+    let releaseID: String
+    let trackID: String
+    let token: UUID
+}
+
 /// Wiring for the browser header's **Add as Source** button: how to file the
 /// browsed artist into Browse, and whether an equivalent source is already
 /// there (the button then reads as a checkmark instead of adding a copy).
@@ -346,12 +411,25 @@ struct DiscographyBrowserView: View {
     var onFetched: ((DiscographyCatalogue) -> Void)? = nil
     /// The header's Add as Source button (nil hides it — see the type).
     var addSource: DiscographyAddSource? = nil
+    /// The song this artist was auditioned with on the way here — the Every
+    /// Noise preview's track. It gets a row of its own above everything else,
+    /// because it's the one song you already know you liked. Nil for a
+    /// discography reached any other way.
+    var exampleTrack: String? = nil
 
     @EnvironmentObject private var browse: BrowseStore
 
     @State private var catalogue: DiscographyCatalogue?
     @State private var loadError: String?
     @State private var loading = false
+    /// The song search: whether its sheet is up, every track it has read
+    /// (release id → tracks, built once), and whether that read is running.
+    @State private var showingSongSearch = false
+    @State private var songIndex: [String: [DiscographyTrackInfo]] = [:]
+    @State private var indexing = false
+    @State private var indexError: String?
+    /// The song a search hit asked to be taken to.
+    @State private var focus: DiscographyFocus?
     /// The track being auditioned — the same preview modal Browse rows use —
     /// and the release's other matched tracks, so the modal's next/previous
     /// buttons walk the record rather than dead-ending on one song.
@@ -396,18 +474,41 @@ struct DiscographyBrowserView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                if loading && catalogue != nil {
-                    ProgressView().controlSize(.small)
-                } else {
+                HStack(spacing: 14) {
+                    // Finding a song you can name means twirling open records
+                    // until you spot it; this asks the whole catalogue at once.
                     Button {
-                        Task { await fetch() }
+                        showingSongSearch = true
                     } label: {
-                        Image(systemName: "arrow.clockwise")
+                        Image(systemName: "magnifyingglass")
                     }
-                    .disabled(loading)
-                    .accessibilityLabel("Refresh the catalogue")
+                    .disabled(catalogue == nil)
+                    .accessibilityLabel("Search this discography's songs")
+
+                    if loading && catalogue != nil {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Button {
+                            Task { await fetch() }
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        .disabled(loading)
+                        .accessibilityLabel("Refresh the catalogue")
+                    }
                 }
             }
+        }
+        .sheet(isPresented: $showingSongSearch) {
+            DiscographySongSearchView(hits: songHits,
+                                      indexing: indexing,
+                                      error: indexError,
+                                      artistName: catalogue?.artistName ?? title) { hit in
+                focus = DiscographyFocus(releaseID: hit.releaseID,
+                                         trackID: hit.track.id,
+                                         token: UUID())
+            }
+            .task { await buildSongIndex() }
         }
         .sheet(item: $previewItem) { item in
             BrowsePreviewView(item: item, mode: browse.downloadMode, queue: previewQueue)
@@ -439,31 +540,93 @@ struct DiscographyBrowserView: View {
         )
     }
 
-    private func releaseList(_ catalogue: DiscographyCatalogue) -> some View {
-        List {
-            Section {
-                artistHeader(catalogue)
-                    .listRowInsets(EdgeInsets())
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
+    /// Every indexed song, in catalogue order, tagged with the release it's on.
+    private var songHits: [DiscographySongHit] {
+        guard let catalogue else { return [] }
+        return catalogue.sections.flatMap { section in
+            section.releases.flatMap { release in
+                (songIndex[release.id] ?? []).map {
+                    DiscographySongHit(releaseID: release.id, releaseName: release.name,
+                                       releaseYear: release.year, track: $0)
+                }
             }
-            ForEach(catalogue.sections) { section in
-                Section(section.title) {
-                    ForEach(section.releases) { release in
-                        DiscographyReleaseRow(release: release,
-                                              provider: provider,
+        }
+    }
+
+    /// Reads every release's tracklist once, the first time the search opens.
+    /// Releases whose tracks the layout already carries inline (the AI
+    /// catalogue) cost nothing; a Spotify catalogue is read twenty records to
+    /// the request.
+    @MainActor
+    private func buildSongIndex() async {
+        guard let catalogue, songIndex.isEmpty, !indexing else { return }
+        indexing = true
+        indexError = nil
+        defer { indexing = false }
+        let releases = catalogue.sections.flatMap(\.releases)
+        do {
+            songIndex = try await provider.tracks(forAll: releases)
+        } catch {
+            indexError = error.localizedDescription
+            appLog("Couldn't read the catalogue's tracklists: \(error.localizedDescription)",
+                   level: .warning, category: "Browse")
+        }
+    }
+
+    private func releaseList(_ catalogue: DiscographyCatalogue) -> some View {
+        ScrollViewReader { proxy in
+            List {
+                Section {
+                    artistHeader(catalogue)
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                    // Above the Top 10, because it's the one song you already
+                    // know you liked — it's why you're on this page.
+                    if let exampleTrack {
+                        DiscographyExampleRow(trackName: exampleTrack,
                                               artistName: catalogue.artistName,
-                                              downloadFolderName: downloadFolderName,
-                                              onQueueGrew: refreshPreviewQueue) { item, queue in
-                            previewQueue = queue
+                                              artworkURL: catalogue.artistImageURL,
+                                              provider: provider,
+                                              downloadFolderName: downloadFolderName) { item in
+                            previewQueue = [item]
                             previewItem = item
                         }
                     }
                 }
+                ForEach(catalogue.sections) { section in
+                    Section(section.title) {
+                        ForEach(section.releases) { release in
+                            DiscographyReleaseRow(release: release,
+                                                  provider: provider,
+                                                  artistName: catalogue.artistName,
+                                                  downloadFolderName: downloadFolderName,
+                                                  focus: focus,
+                                                  onQueueGrew: refreshPreviewQueue,
+                                                  onFocusLanded: { trackID in
+                                                      scroll(proxy, to: trackID)
+                                                  }) { item, queue in
+                                previewQueue = queue
+                                previewItem = item
+                            }
+                        }
+                    }
+                }
             }
+            .insetGroupedListStyle()
+            .miniPlayerClearance()
         }
-        .insetGroupedListStyle()
-        .miniPlayerClearance()
+    }
+
+    /// Brings a focused song into view once the row it lives in has opened and
+    /// filled in. The wait is real rather than defensive: `scrollTo` can only
+    /// reach a row the `List` has actually built, and the tracklist appears an
+    /// update after the disclosure opens.
+    private func scroll(_ proxy: ScrollViewProxy, to trackID: String) {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            withAnimation { proxy.scrollTo(trackID, anchor: .center) }
+        }
     }
 
     /// Keeps an open preview's queue current as the release it came from
@@ -573,12 +736,18 @@ private struct DiscographyReleaseRow: View {
     /// bulk download files into (a release names its own).
     let artistName: String
     let downloadFolderName: String?
+    /// The song search's "take me there". Every row sees it; the one it names
+    /// opens itself, loads its tracks if it hasn't, and flags the song.
+    var focus: DiscographyFocus? = nil
     /// This release's queue, re-offered whenever another of its tracks finds a
     /// YouTube match. Matching runs a track at a time and Preview appears per
     /// row as each one lands, so the modal is routinely opened on a queue that
     /// is still filling in; the browser takes this to keep an open preview's
     /// next/previous walking the whole record.
     let onQueueGrew: ([BrowseItem]) -> Void
+    /// Called once the focused song is on screen to be scrolled to — only the
+    /// row knows when its tracklist has actually arrived.
+    var onFocusLanded: (String) -> Void = { _ in }
     /// The tapped track and the release's other matched tracks — the queue the
     /// preview modal walks with next/previous.
     let onPreview: (BrowseItem, [BrowseItem]) -> Void
@@ -613,6 +782,8 @@ private struct DiscographyReleaseRow: View {
     /// The URLs this row sent to the queue, which is what tells "downloading"
     /// apart from "some of these happen to be in the library already".
     @State private var queuedURLs: Set<String> = []
+    /// The song a search hit landed on, tinted until it's been seen.
+    @State private var highlighted: String?
 
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
@@ -657,6 +828,29 @@ private struct DiscographyReleaseRow: View {
         .onChange(of: matches.count) { _ in
             onQueueGrew(previewQueue)
         }
+        // A song search hit naming this release: open, fill in, flag, and tell
+        // the list when there's something to scroll to.
+        .onChange(of: focus?.token) { _ in
+            Task { @MainActor in await land(focus) }
+        }
+    }
+
+    /// Opens this release on the song the search picked. The tracklist may not
+    /// be loaded yet — the whole point of the search is that it can name songs
+    /// in records you've never twirled open — so this waits for the load before
+    /// handing the id back to be scrolled to.
+    @MainActor
+    private func land(_ focus: DiscographyFocus?) async {
+        guard let focus, focus.releaseID == release.id else { return }
+        expanded = true
+        if tracks == nil { await loadTracks() }
+        guard tracks?.contains(where: { $0.id == focus.trackID }) == true else { return }
+        highlighted = focus.trackID
+        onFocusLanded(focus.trackID)
+        // Long enough to catch the eye after the scroll settles, short enough
+        // not to become part of the row's ordinary appearance.
+        try? await Task.sleep(nanoseconds: 2_500_000_000)
+        if highlighted == focus.trackID { highlighted = nil }
     }
 
     @ViewBuilder
@@ -909,6 +1103,13 @@ private struct DiscographyReleaseRow: View {
                     .foregroundStyle(.tertiary)
             }
         }
+        // The tint that says "this one" once the song search has scrolled here.
+        // No explicit `.id()`: the enclosing `ForEach` already registers each
+        // row's identity, which is what `scrollTo` looks up.
+        .padding(.vertical, 3)
+        .background(highlighted == track.id ? Color.accentColor.opacity(0.22) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 6))
+        .animation(.easeOut(duration: 0.25), value: highlighted)
     }
 
     private func trackStyle(_ track: DiscographyTrackInfo) -> HierarchicalShapeStyle {
@@ -1108,6 +1309,228 @@ private struct DiscographyReleaseRow: View {
             }
             return parts.joined(separator: " · ")
         }
+    }
+}
+
+// MARK: - The song you arrived on
+
+/// The track the artist was auditioned with, above everything else on their
+/// page: named, matched against YouTube on sight, and offered to preview or
+/// download like any other song here.
+///
+/// It matches itself rather than waiting to be asked, which the release rows
+/// deliberately don't — but it's one search for one song you have already
+/// heard and chosen to follow, where a record row is a dozen searches for
+/// songs you may not want at all.
+private struct DiscographyExampleRow: View {
+    let trackName: String
+    let artistName: String
+    /// The artist's portrait, standing in as artwork — a preview track from
+    /// the map has no cover of its own.
+    let artworkURL: String?
+    let provider: any DiscographyProviding
+    let downloadFolderName: String?
+    let onPreview: (BrowseItem) -> Void
+
+    @EnvironmentObject private var downloads: DownloadManager
+    @EnvironmentObject private var browse: BrowseStore
+    @EnvironmentObject private var library: LibraryStore
+
+    @State private var url: String?
+    @State private var matching = true
+    @State private var sent = false
+
+    private var info: DiscographyTrackInfo {
+        DiscographyTrackInfo(id: "example", name: trackName, artist: artistName,
+                             albumName: "", durationMS: nil, isrc: nil,
+                             artworkURL: artworkURL)
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "waveform")
+                .font(.callout)
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(trackName)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(2)
+                Text("The track you heard")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            if matching {
+                ProgressView()
+            } else if let url {
+                if sent || library.track(forSourceURL: url) != nil {
+                    BrowseTrackStatusButton(sourceURL: url,
+                                            pendingIcon: "checkmark.circle.fill",
+                                            pendingLabel: "Sent to Downloads")
+                } else {
+                    Button {
+                        enqueue(url)
+                        sent = true
+                    } label: {
+                        Image(systemName: "arrow.down.circle")
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Download \(trackName)")
+                }
+                Button {
+                    onPreview(BrowseItem(sourceID: UUID(),
+                                         title: "\(artistName) — \(trackName)",
+                                         detail: "",
+                                         url: url,
+                                         videoID: URLComponents(string: url)?
+                                             .queryItems?.first(where: { $0.name == "v" })?.value,
+                                         artworkURL: artworkURL))
+                } label: {
+                    Image(systemName: "play.circle")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Preview \(trackName)")
+            } else {
+                Text("no match")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .task {
+            guard url == nil else { return }
+            url = await provider.youTubeURL(for: info)
+            matching = false
+        }
+    }
+
+    private func enqueue(_ url: String) {
+        if let folder = downloadFolderName, !folder.isEmpty {
+            downloads.enqueue(urlString: url, mode: browse.downloadMode,
+                              browseFolderNamed: folder, artworkURL: artworkURL,
+                              knownTitle: trackName, knownArtist: artistName)
+        } else {
+            downloads.enqueue(urlString: url, mode: browse.downloadMode,
+                              artworkURL: artworkURL,
+                              knownTitle: trackName, knownArtist: artistName)
+        }
+    }
+}
+
+// MARK: - Searching the catalogue's songs
+
+/// Every song in the discography, searchable by name. A catalogue is albums
+/// first by design — which is the wrong shape for "where is that one song?",
+/// since answering it means twirling records open until you spot it.
+private struct DiscographySongSearchView: View {
+    let hits: [DiscographySongHit]
+    let indexing: Bool
+    let error: String?
+    let artistName: String
+    let onPick: (DiscographySongHit) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
+
+    private var shown: [DiscographySongHit] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return hits }
+        return hits.filter { $0.track.name.localizedStandardContains(trimmed) }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if indexing && hits.isEmpty {
+                    VStack(spacing: 10) {
+                        ProgressView()
+                        Text("Reading the tracklists…")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let error, hits.isEmpty {
+                    ContentUnavailableViewCompat(
+                        title: "Couldn't read the tracklists",
+                        systemImage: "exclamationmark.triangle",
+                        description: error
+                    )
+                } else if hits.isEmpty {
+                    ContentUnavailableViewCompat(
+                        title: "No songs listed",
+                        systemImage: "music.note.list",
+                        description: "This catalogue's releases carry no tracklists."
+                    )
+                } else {
+                    list
+                }
+            }
+            .navigationTitle("\(artistName)'s Songs")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.large])
+    }
+
+    private var list: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Find a song", text: $query)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                if !query.isEmpty {
+                    Button {
+                        query = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+            .padding(8)
+            .background(Color.appSecondaryBackground, in: RoundedRectangle(cornerRadius: 10))
+            .padding(.horizontal)
+            .padding(.bottom, 8)
+
+            if shown.isEmpty {
+                Text("No songs match “\(query)”")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(shown) { hit in
+                    Button {
+                        // Dismiss first: the page underneath opens the record
+                        // and scrolls, and doing that behind a sheet means
+                        // landing on it already over.
+                        dismiss()
+                        onPick(hit)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(hit.track.name)
+                                .lineLimit(2)
+                            Text(hit.releaseYear.isEmpty
+                                 ? hit.releaseName
+                                 : "\(hit.releaseName) · \(hit.releaseYear)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                .listStyle(.plain)
+            }
+        }
+        .padding(.top, 8)
     }
 }
 
