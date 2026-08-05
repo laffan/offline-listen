@@ -489,13 +489,27 @@ private struct PlayerScrubber: View {
 
                     chapterDots(usable: usable)
 
+                    // The offset sits *outside* the animation on purpose, and
+                    // the order of these three lines is the whole reason the
+                    // thumb tracks the bar's tip.
+                    //
+                    // `.animation(_:value:)` governs every animatable change
+                    // inside the view it wraps that lands in a transaction
+                    // where `isScrubbing` changed — and picking the thumb up
+                    // *is* such a transaction, since the same event that moves
+                    // the playhead is the one that sets `isScrubbing`. With the
+                    // offset inside, the fill below snapped to the finger while
+                    // the circle eased after it over 0.12s: the two came apart
+                    // at the start of every drag, and again on release. Only
+                    // the grow-and-lift belongs in the animation; where the
+                    // thumb *is* has to be as immediate as the bar it caps.
                     Circle()
                         .fill(Color.white)
                         .frame(width: thumbSize, height: thumbSize)
                         .shadow(radius: isScrubbing ? 4 : 2, y: 1)
-                        .offset(x: usable * fraction)
                         .scaleEffect(isScrubbing ? 1.15 : 1)
                         .animation(.easeOut(duration: 0.12), value: isScrubbing)
+                        .offset(x: usable * fraction)
                 }
                 // Full width so the whole bar takes touches, not just as far as
                 // the widest child reaches.
