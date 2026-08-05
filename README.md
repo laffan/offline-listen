@@ -708,7 +708,11 @@ snippet URL is embedded in the scraped data — no Spotify account or API key is
 involved) and opens an action bar naming **the artist and the track playing**,
 with a **"+"**. The track name comes from the same place the snippet does: the
 site labels each row `Artist "Song"`, so the bar shows the song and Scan shows
-it under the artist's name. Spotify's API can supply neither — it stopped
+it under the artist's name. The quotes are what's read, not the whole label —
+a row with no snippet carries the bare string `(no sample available)` there,
+which would otherwise go up as if it were a title. The two go together
+exactly: across a 41k-row sample **every artist with a preview names its
+track, and only those do**. Spotify's API can supply neither — it stopped
 serving `preview_url` to apps registered after November 2024 — which is why
 the site's own markup is the only source for both, and why a **dataset scraped
 before August 2026 leaves the line blank**: the scraper read the field from the

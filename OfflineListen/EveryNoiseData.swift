@@ -93,23 +93,20 @@ struct ENArtist: Codable, Hashable, Identifiable {
     /// artist, so repeating that reads as noise — what's wanted is the title of
     /// the thing actually playing. (A *genre* shows the whole string, because
     /// there whose track it is is the interesting half.)
+    /// **The quotes are the signal.** The site writes `Artist "Song"` when
+    /// there's a track and the bare string `(no sample available)` when there
+    /// isn't — 95% of rows are the first, and every unquoted one in the
+    /// dataset is that placeholder. So an example with no quoted song names no
+    /// song, and passing the raw label through would put the site's own
+    /// furniture on screen as if it were a title. Taking the *outermost* pair
+    /// rather than the first keeps a song with quotes of its own intact.
     var exampleTrack: String? {
-        guard let example else { return nil }
-        // The site writes `Artist "Song"`. Taking the outermost pair of quotes
-        // rather than the first keeps a song with quotes of its own intact.
-        if let open = example.firstIndex(of: "\""),
-           let close = example.lastIndex(of: "\""), open < close {
-            let song = example[example.index(after: open)..<close]
-                .trimmingCharacters(in: .whitespaces)
-            // A quoted row has said its piece either way — empty quotes mean
-            // there is no title, not that the label should go up raw.
-            return song.isEmpty ? nil : song
-        }
-        // Unquoted, so there's no song to separate out. Anything that isn't
-        // just the artist's name over again is still worth showing.
-        let whole = example.trimmingCharacters(in: .whitespaces)
-        guard !whole.isEmpty, whole.caseInsensitiveCompare(name) != .orderedSame else { return nil }
-        return whole
+        guard let example,
+              let open = example.firstIndex(of: "\""),
+              let close = example.lastIndex(of: "\""), open < close else { return nil }
+        let song = example[example.index(after: open)..<close]
+            .trimmingCharacters(in: .whitespaces)
+        return song.isEmpty ? nil : song
     }
 
     /// Shard rows have no ids of their own; position disambiguates the rare
