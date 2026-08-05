@@ -722,15 +722,16 @@ saved (Settings ▸ Spotify), the "+" goes **straight to Browse Discography** �
 no chooser popup — the artist's *real* catalogue read live from Spotify (the
 scraped data carries every artist's Spotify id, but no discographies).
 
-Above everything else on that page sits **the track you heard** — the very
-song the 30-second snippet played, named, matched against YouTube on sight and
-offered to preview or download like any other. It's the one song you already
-know you liked, and it's why you're on the page; leaving it to be rediscovered
-somewhere in a hundred-track catalogue was a small absurdity. It matches itself
-rather than waiting to be asked, which the release rows deliberately don't —
-one search for one chosen song is a different proposition from a dozen searches
-for songs you may not want. (It travels with the scan's "+" too, so following
-something mid-scan lands on the page with that song at the top.)
+Sitting directly on top of the Top 10 — in the same card, not floating above
+it — is the **Artist Sample Track**: the very song the 30-second snippet
+played, named, matched against YouTube on sight and offered to preview or
+download like any other. It's the one song you already know you liked, and it's
+why you're on the page; leaving it to be rediscovered somewhere in a
+hundred-track catalogue was a small absurdity. It matches itself rather than
+waiting to be asked, which the release rows deliberately don't — one search for
+one chosen song is a different proposition from a dozen searches for songs you
+may not want. (It travels with the scan's "+" too, so following something
+mid-scan lands on the page with that song at the top.)
 
 A pinned **Top 10** row with a **Search Top 10** button sits beneath it —
 the artist's most popular tracks, matched against YouTube on tap, which is
@@ -766,17 +767,25 @@ folder of its own, cover art and all.
 **Finding one song you can name** is the question an album-first catalogue is
 the wrong shape for — answering it means twirling records open until you spot
 it — so the toolbar's **magnifier**, beside the refresh, searches every song in
-the discography at once. The tracklists are read on the first search and kept:
-a Spotify catalogue goes through `/albums?ids=`, twenty records to the request,
-so a hundred-release discography costs five round trips rather than a hundred
-(and a layout that carries its tracks inline, the AI one, costs none). Only
-ordinary releases are indexed — the pinned Top 10 is a *view* of the catalogue
-rather than part of it, and would list the same songs twice. Each hit names its
-release and year; tapping one closes the sheet, **opens that release, scrolls
-to the song and tints it** for a couple of seconds so it's obvious which of
-twelve near-identical rows was meant. The record's tracklist may never have
-been loaded — that's rather the point — so the row opens, fetches, and only
-then reports back that there's something to scroll to.
+the discography at once. Each hit names its release and year; tapping one
+closes the sheet, **opens that release, scrolls to the song and tints it** for a
+couple of seconds so it's obvious which of twelve near-identical rows was
+meant. The record's tracklist may never have been loaded — that's rather the
+point — so the row opens, fetches, and only then reports back that there's
+something to scroll to.
+
+The tracklists behind it are read **one record at a time, with the same call
+expanding a release makes**. The batch endpoint (`/albums?ids=`) is faster on
+paper and answers **403 Forbidden** under a client-credentials app, exactly as
+`/tracks?ids=` and the top-tracks endpoint do — a search that can't run is
+worth nothing next to one that takes a few seconds. Nothing is re-read: the AI
+layout carries its tracks inline and costs no requests at all, a release opened
+earlier this session is already in the metadata cache, and re-opening the sheet
+resumes where it left off. Results are searchable **as they land** rather than
+after the last one, with the count showing above the list; a release that won't
+load is noted at the bottom rather than sinking the whole search. Only ordinary
+releases are indexed — the pinned Top 10 is a *view* of the catalogue rather
+than part of it, and would list the same songs twice.
 
 This is the same screen a discography-mode **Artist source** opens in Browse —
 one album-first browser, wherever a catalogue shows.
@@ -1110,7 +1119,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `AIDiscovery.swift` | AI song discovery for Artist/Genre/Country sources (suggestions via the Messages API, links via the search resolver). |
 | `BlogAgent.swift` | The Blog Agent source: homepage fetch → AI link triage → article reads → per-article summary + artist extraction + YouTube-link harvest, with bot-protection ("agent blocked") detection. |
 | `DiscographyAgent.swift` | The AI catalogue layout behind Search Discography mode: albums + track names + a Highlights list, one model call, no YouTube work (matching moved into the browser, on demand). |
-| `DiscographyBrowserView.swift` | The shared album-first discography browser — artist header (portrait, name, Learn More bio), the heard-it-on-the-map track row, cover thumbnails/full art, names first, per-release YouTube search, **Download Album**, pinned Top 10, and the whole-catalogue song search that scrolls to and highlights its hit — plus its two catalogue providers (Spotify live — which batches every tracklist for that search — and the AI layout, which carries its own), the Wikipedia lookup + AI bio sheet, and the Browse-source wrapper that caches the first pass. |
+| `DiscographyBrowserView.swift` | The shared album-first discography browser — artist header (portrait, name, Learn More bio), the Artist Sample Track row atop the Top 10, cover thumbnails/full art, names first, per-release YouTube search, **Download Album**, pinned Top 10, and the whole-catalogue song search that scrolls to and highlights its hit — plus its two catalogue providers (Spotify live / AI layout), the Wikipedia lookup + AI bio sheet, and the Browse-source wrapper that caches the first pass. |
 | `BrowseView.swift` | The Browse tab: sources grouped by type, add-source sheet, refresh, and the world button into the Every Noise browser. |
 | `EveryNoiseData.swift` | The bundled Every Noise dataset: models, the lazy/LRU shard-loading store, the memory-mapped global artist search (`ENArtistIndex`), and the 30-second preview player. |
 | `EveryNoiseUpdates.swift` | `ENUpdateStore` — the opt-in, heavily throttled Spotify harvest that records what the frozen dataset is missing as you browse; the exportable JSONL it writes for `tools/everynoise/merge_updates.py`; `merged(_:genre:)`, which draws the findings onto the genre's map straight away; and `ENDataFolder`, the separately bookmarked folder a copy of the records is kept in. |

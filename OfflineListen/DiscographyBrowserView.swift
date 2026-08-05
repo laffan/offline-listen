@@ -75,27 +75,8 @@ protocol DiscographyProviding {
     func loadCatalogue() async throws -> DiscographyCatalogue
     /// A release's tracks (still names only), fetched if the layout carries none.
     func tracks(for release: DiscographyRelease) async throws -> [DiscographyTrackInfo]
-    /// Every release's tracks at once — what the song search indexes, keyed by
-    /// release id. Separate from `tracks(for:)` because reading a hundred
-    /// records one at a time is a hundred round trips, and a provider that can
-    /// batch should.
-    func tracks(forAll releases: [DiscographyRelease]) async throws -> [String: [DiscographyTrackInfo]]
     /// The YouTube video for one track, or nil when nothing usable matches.
     func youTubeURL(for track: DiscographyTrackInfo) async -> String?
-}
-
-extension DiscographyProviding {
-    /// One at a time — correct anywhere, and all a layout that carries its
-    /// tracks inline (the AI catalogue) ever needs. A release that fails is
-    /// skipped rather than failing the index: a song search that can't see one
-    /// album is still worth having.
-    func tracks(forAll releases: [DiscographyRelease]) async throws -> [String: [DiscographyTrackInfo]] {
-        var found: [String: [DiscographyTrackInfo]] = [:]
-        for release in releases {
-            found[release.id] = (try? await tracks(for: release)) ?? []
-        }
-        return found
-    }
 }
 
 /// The artist's *real* catalogue, live from Spotify: releases grouped
@@ -204,27 +185,6 @@ struct SpotifyDiscographyProvider: DiscographyProviding {
             ? Array(collection.tracks.prefix(10))
             : collection.tracks
         return Self.infos(tracks, on: release)
-    }
-
-    /// The whole catalogue's tracks in one pass, for the song search.
-    ///
-    /// `/albums?ids=` reads twenty records per request (and is cached), so a
-    /// hundred-release discography costs five round trips rather than a
-    /// hundred. Only ordinary releases are read: the pinned **Top 10** is a
-    /// *view* of the catalogue rather than part of it, so indexing it would
-    /// list the same songs twice — and its own tracklist is a model call or a
-    /// popularity derivation, which is far too much work to spend on
-    /// duplicates.
-    func tracks(forAll releases: [DiscographyRelease]) async throws -> [String: [DiscographyTrackInfo]] {
-        let albums = releases.filter { $0.kind == .release }
-        guard !albums.isEmpty else { return [:] }
-        let collections = try await client.albums(ids: albums.map(\.id))
-        var found: [String: [DiscographyTrackInfo]] = [:]
-        for release in albums {
-            guard let collection = collections[release.id] else { continue }
-            found[release.id] = Self.infos(collection.tracks, on: release)
-        }
-        return found
     }
 
     private static func infos(_ tracks: [SpotifyTrack],
@@ -427,7 +387,8 @@ struct DiscographyBrowserView: View {
     @State private var showingSongSearch = false
     @State private var songIndex: [String: [DiscographyTrackInfo]] = [:]
     @State private var indexing = false
-    @State private var indexError: String?
+    @State private var indexProgress = (done: 0, total: 0)
+    @State private var indexFailures = 0
     /// The song a search hit asked to be taken to.
     @State private var focus: DiscographyFocus?
     /// The track being auditioned — the same preview modal Browse rows use —
@@ -502,7 +463,8 @@ struct DiscographyBrowserView: View {
         .sheet(isPresented: $showingSongSearch) {
             DiscographySongSearchView(hits: songHits,
                                       indexing: indexing,
-                                      error: indexError,
+                                      progress: indexProgress,
+                                      failures: indexFailures,
                                       artistName: catalogue?.artistName ?? title) { hit in
                 focus = DiscographyFocus(releaseID: hit.releaseID,
                                          trackID: hit.track.id,
@@ -553,22 +515,50 @@ struct DiscographyBrowserView: View {
         }
     }
 
-    /// Reads every release's tracklist once, the first time the search opens.
-    /// Releases whose tracks the layout already carries inline (the AI
-    /// catalogue) cost nothing; a Spotify catalogue is read twenty records to
-    /// the request.
+    /// Fills in the tracklists the search reads, one release at a time.
+    ///
+    /// Deliberately **the same call expanding a release makes** — `/albums/{id}`,
+    /// which works — rather than the batch `/albums?ids=`, which is faster on
+    /// paper and answers 403 (Forbidden) under a client-credentials app, the
+    /// same way `/tracks?ids=` and the top-tracks endpoint do. A song search
+    /// that can't run is worth nothing next to one that takes a few seconds.
+    ///
+    /// Nothing is re-read: a layout that carries its tracks inline (the AI
+    /// catalogue) costs no requests at all, a release opened earlier this
+    /// session is already in `SpotifyMetadataCache`, and a second visit to the
+    /// sheet resumes where the first left off. Results land as they arrive, so
+    /// the list is usable while the tail is still coming in — and only ordinary
+    /// releases are read, since the pinned Top 10 is a *view* of the catalogue
+    /// rather than part of it and would list the same songs twice.
     @MainActor
     private func buildSongIndex() async {
-        guard let catalogue, songIndex.isEmpty, !indexing else { return }
+        guard let catalogue, !indexing else { return }
+        let pending = catalogue.sections
+            .flatMap(\.releases)
+            .filter { $0.kind == .release && songIndex[$0.id] == nil }
+        guard !pending.isEmpty else { return }
+
         indexing = true
-        indexError = nil
+        indexProgress = (0, pending.count)
+        indexFailures = 0
         defer { indexing = false }
-        let releases = catalogue.sections.flatMap(\.releases)
-        do {
-            songIndex = try await provider.tracks(forAll: releases)
-        } catch {
-            indexError = error.localizedDescription
-            appLog("Couldn't read the catalogue's tracklists: \(error.localizedDescription)",
+
+        for release in pending {
+            if let inline = release.tracks, !inline.isEmpty {
+                songIndex[release.id] = inline
+            } else if let loaded = try? await provider.tracks(for: release) {
+                songIndex[release.id] = loaded
+            } else {
+                // One unreadable record shouldn't cost the whole search; note
+                // it, index the rest, and say so at the bottom of the sheet.
+                songIndex[release.id] = []
+                indexFailures += 1
+            }
+            indexProgress.done += 1
+            if Task.isCancelled { return }
+        }
+        if indexFailures > 0 {
+            appLog("Song search: \(indexFailures) of \(pending.count) release(s) wouldn't load their tracklist.",
                    level: .warning, category: "Browse")
         }
     }
@@ -581,21 +571,22 @@ struct DiscographyBrowserView: View {
                         .listRowInsets(EdgeInsets())
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
-                    // Above the Top 10, because it's the one song you already
-                    // know you liked — it's why you're on this page.
-                    if let exampleTrack {
-                        DiscographyExampleRow(trackName: exampleTrack,
-                                              artistName: catalogue.artistName,
-                                              artworkURL: catalogue.artistImageURL,
-                                              provider: provider,
-                                              downloadFolderName: downloadFolderName) { item in
-                            previewQueue = [item]
-                            previewItem = item
-                        }
-                    }
                 }
-                ForEach(catalogue.sections) { section in
+                ForEach(Array(catalogue.sections.enumerated()), id: \.element.id) { index, section in
                     Section(section.title) {
+                        // Inside the first section rather than in one of its
+                        // own, so it reads as attached to the Top 10 beneath
+                        // it — the same card, not a floating strip above.
+                        if index == 0, let exampleTrack {
+                            DiscographyExampleRow(trackName: exampleTrack,
+                                                  artistName: catalogue.artistName,
+                                                  artworkURL: catalogue.artistImageURL,
+                                                  provider: provider,
+                                                  downloadFolderName: downloadFolderName) { item in
+                                previewQueue = [item]
+                                previewItem = item
+                            }
+                        }
                         ForEach(section.releases) { release in
                             DiscographyReleaseRow(release: release,
                                                   provider: provider,
@@ -1356,7 +1347,7 @@ private struct DiscographyExampleRow: View {
                 Text(trackName)
                     .font(.callout.weight(.medium))
                     .lineLimit(2)
-                Text("The track you heard")
+                Text("Artist Sample Track")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -1425,7 +1416,11 @@ private struct DiscographyExampleRow: View {
 private struct DiscographySongSearchView: View {
     let hits: [DiscographySongHit]
     let indexing: Bool
-    let error: String?
+    /// Releases read so far, out of the ones this pass has to read. Shown
+    /// because a big catalogue is read one record at a time, and a bare
+    /// spinner over a list that keeps growing reads as a glitch.
+    let progress: (done: Int, total: Int)
+    let failures: Int
     let artistName: String
     let onPick: (DiscographySongHit) -> Void
 
@@ -1441,27 +1436,27 @@ private struct DiscographySongSearchView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if indexing && hits.isEmpty {
-                    VStack(spacing: 10) {
-                        ProgressView()
-                        Text("Reading the tracklists…")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
+                if hits.isEmpty {
+                    if indexing {
+                        VStack(spacing: 10) {
+                            ProgressView()
+                            Text(readingLine)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        ContentUnavailableViewCompat(
+                            title: "No songs listed",
+                            systemImage: "music.note.list",
+                            description: failures > 0
+                                ? "This catalogue's releases wouldn't give up their tracklists."
+                                : "This catalogue's releases carry no tracklists."
+                        )
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let error, hits.isEmpty {
-                    ContentUnavailableViewCompat(
-                        title: "Couldn't read the tracklists",
-                        systemImage: "exclamationmark.triangle",
-                        description: error
-                    )
-                } else if hits.isEmpty {
-                    ContentUnavailableViewCompat(
-                        title: "No songs listed",
-                        systemImage: "music.note.list",
-                        description: "This catalogue's releases carry no tracklists."
-                    )
                 } else {
+                    // Whatever has arrived is searchable already — the rest
+                    // keeps landing underneath.
                     list
                 }
             }
@@ -1474,6 +1469,12 @@ private struct DiscographySongSearchView: View {
             }
         }
         .presentationDetents([.large])
+    }
+
+    private var readingLine: String {
+        progress.total > 0
+            ? "Reading the tracklists… \(progress.done) of \(progress.total)"
+            : "Reading the tracklists…"
     }
 
     private var list: some View {
@@ -1498,6 +1499,25 @@ private struct DiscographySongSearchView: View {
             .background(Color.appSecondaryBackground, in: RoundedRectangle(cornerRadius: 10))
             .padding(.horizontal)
             .padding(.bottom, 8)
+
+            if indexing {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(readingLine)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal)
+                .padding(.bottom, 6)
+            } else if failures > 0 {
+                Text("\(failures) release\(failures == 1 ? "" : "s") wouldn't load — those songs aren't listed.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal)
+                    .padding(.bottom, 6)
+            }
 
             if shown.isEmpty {
                 Text("No songs match “\(query)”")

@@ -997,7 +997,10 @@ struct ENScanBar: View {
                     }
                 }
             }
-            HStack(spacing: 30) {
+            // Small, large, large, small: the "+" sits next to the play/pause
+            // and matches its size, so the row stays symmetrical instead of
+            // hanging a fourth control off one end.
+            HStack(spacing: 28) {
                 Button { move(-1) } label: {
                     Image(systemName: "backward.fill")
                 }
@@ -1009,14 +1012,11 @@ struct ENScanBar: View {
                     }
                 } label: {
                     if player.isLoading {
-                        ProgressView()
+                        ProgressView().frame(width: 40, height: 40)
                     } else {
                         Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
                             .font(.system(size: 40))
                     }
-                }
-                Button { move(1) } label: {
-                    Image(systemName: "forward.fill")
                 }
                 // The same "+" a tapped artist gets, so hearing something on
                 // the scan and wanting the rest of it doesn't mean stopping,
@@ -1029,14 +1029,17 @@ struct ENScanBar: View {
                         onOpenCurrent(current)
                     } label: {
                         if isOpening {
-                            ProgressView().frame(width: 30, height: 30)
+                            ProgressView().frame(width: 40, height: 40)
                         } else {
                             Image(systemName: "plus.circle.fill")
-                                .font(.system(size: 30))
+                                .font(.system(size: 40))
                         }
                     }
                     .disabled(current == nil || isOpening)
                     .accessibilityLabel(current.map { "Open \($0.label)" } ?? "Open this entry")
+                }
+                Button { move(1) } label: {
+                    Image(systemName: "forward.fill")
                 }
             }
             // Borderless so the buttons stay independently tappable rather
