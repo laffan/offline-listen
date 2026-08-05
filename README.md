@@ -652,8 +652,9 @@ a **Find** field — at both levels:
 - **Scan** auto-plays through the example tracks in map order — the site's
   scan mode as a bottom transport bar (prev / play-pause / next), with the map
   following along and the current entry drawn inverted. It works on the genre
-  map and inside any genre's artist map, remembers where it left off on the
-  genre level, and skips entries with no preview.
+  map and inside any genre's artist map, naming the track under each entry,
+  remembers where it left off on the genre level, and skips entries with no
+  preview.
 - **Find** filters: in list mode it narrows the list; over a map it drops down
   the matches and tapping one flies the map there. At the root the field has a
   **genre/artist toggle** inside its trailing edge (the placeholder follows —
@@ -675,7 +676,15 @@ a **Find** field — at both levels:
 
 Tapping an **artist** plays a **30-second preview of their top song** (the
 snippet URL is embedded in the scraped data — no Spotify account or API key is
-involved) and opens an action bar with a **"+"**. With **Spotify credentials**
+involved) and opens an action bar naming **the artist and the track playing**,
+with a **"+"**. The track name comes from the same place the snippet does: the
+site labels each row `Artist "Song"`, so the bar shows the song and Scan shows
+it under the artist's name. Spotify's API can supply neither — it stopped
+serving `preview_url` to apps registered after November 2024 — which is why
+the site's own markup is the only source for both, and why a **dataset scraped
+before August 2026 leaves the line blank**: the scraper read the field from the
+start and dropped it on the way into the shard, so only genres ever had one.
+Re-running `tools/everynoise/scrape.py` fills it in. With **Spotify credentials**
 saved (Settings ▸ Spotify), the "+" goes **straight to Browse Discography** —
 no chooser popup — the artist's *real* catalogue read live from Spotify (the
 scraped data carries every artist's Spotify id, but no discographies). A

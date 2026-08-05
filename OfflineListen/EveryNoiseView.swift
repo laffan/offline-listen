@@ -896,7 +896,8 @@ struct ENGenreView: View {
     private func bottomBar(_ artists: [ENArtist]) -> some View {
         if mode == .scan {
             ENScanBar(entries: artists.map {
-                ENScanEntry(id: $0.id, label: $0.name, detail: nil, preview: $0.preview)
+                ENScanEntry(id: $0.id, label: $0.name, detail: $0.exampleTrack,
+                            preview: $0.preview)
             }, index: $scanIndex, player: player, unit: "artists") { entry in
                 centerRequest = NoiseMapCenter(id: entry.id, token: UUID())
             }
@@ -1097,6 +1098,13 @@ struct ENArtistBar: View {
                     Text("No preview available")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                } else if let track = artist.exampleTrack {
+                    // What the snippet actually is, the way Scan names it.
+                    // Blank on a dataset scraped before the field was kept.
+                    Text(track)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
 

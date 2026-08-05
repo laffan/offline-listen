@@ -43,6 +43,15 @@ struct ENArtist: Codable, Hashable, Identifiable {
     /// 30-second top-track preview MP3 (Spotify's CDN), straight from the
     /// scraped page — no API key involved.
     let preview: String?
+    /// What the site calls the track behind `preview`: `Artist "Song"`, out of
+    /// the row's `title` attribute — the same field a genre carries.
+    ///
+    /// Nil on rows from a scrape predating it being kept (the tool parsed it
+    /// and dropped it on the way to the shard), and on **harvested** rows,
+    /// which have no snippet to name: Spotify serves neither a preview URL nor
+    /// its title to apps registered after November 2024, which is why the site
+    /// is the only source for either.
+    let example: String?
     /// Spotify artist id, when the page carried one.
     let spotify: String?
     /// True for a row the app **harvested** from Spotify rather than one the
@@ -56,15 +65,40 @@ struct ENArtist: Codable, Hashable, Identifiable {
     var isHarvested: Bool { harvested == true }
 
     init(name: String, x: Int, y: Int, color: String, size: Int,
-         preview: String? = nil, spotify: String? = nil, harvested: Bool? = nil) {
+         preview: String? = nil, example: String? = nil,
+         spotify: String? = nil, harvested: Bool? = nil) {
         self.name = name
         self.x = x
         self.y = y
         self.color = color
         self.size = size
         self.preview = preview
+        self.example = example
         self.spotify = spotify
         self.harvested = harvested
+    }
+
+    /// Just the song out of `example`. The row it sits under already names the
+    /// artist, so repeating that reads as noise — what's wanted is the title of
+    /// the thing actually playing. (A *genre* shows the whole string, because
+    /// there whose track it is is the interesting half.)
+    var exampleTrack: String? {
+        guard let example else { return nil }
+        // The site writes `Artist "Song"`. Taking the outermost pair of quotes
+        // rather than the first keeps a song with quotes of its own intact.
+        if let open = example.firstIndex(of: "\""),
+           let close = example.lastIndex(of: "\""), open < close {
+            let song = example[example.index(after: open)..<close]
+                .trimmingCharacters(in: .whitespaces)
+            // A quoted row has said its piece either way — empty quotes mean
+            // there is no title, not that the label should go up raw.
+            return song.isEmpty ? nil : song
+        }
+        // Unquoted, so there's no song to separate out. Anything that isn't
+        // just the artist's name over again is still worth showing.
+        let whole = example.trimmingCharacters(in: .whitespaces)
+        guard !whole.isEmpty, whole.caseInsensitiveCompare(name) != .orderedSame else { return nil }
+        return whole
     }
 
     /// Shard rows have no ids of their own; position disambiguates the rare

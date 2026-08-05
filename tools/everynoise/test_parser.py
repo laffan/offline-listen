@@ -11,7 +11,7 @@ import json
 import zlib
 from pathlib import Path
 
-from scrape import parse_items, split_genres_artists, deflate
+from scrape import ARTIST_KEYS, parse_items, split_genres_artists, deflate, write_shard
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -58,6 +58,29 @@ def test_genre_page():
     assert artists[2]["name"] == "Ado & Friends", "entities in labels should unescape"
 
 
+def test_shard_keeps_the_example(tmp=Path(__file__).parent / ".shard-test.z"):
+    """Parsing a field is not the same as shipping it.
+
+    The artists' `example` was read correctly from the very first version and
+    then dropped on the way into the shard, so the app could only ever name the
+    track for a *genre*. That's a hole a fixture test can't see from the parser
+    alone — it needs the written shard.
+    """
+    _, artists = split_genres_artists(
+        parse_items((FIXTURES / "engenremap-jpop.html").read_text()))
+    try:
+        write_shard(tmp, {"name": "j-pop"}, artists)
+        shard = json.loads(zlib.decompress(tmp.read_bytes(), -15))
+    finally:
+        tmp.unlink(missing_ok=True)
+
+    rows = shard["artists"]
+    assert [set(r) for r in rows] == [set(ARTIST_KEYS)] * len(rows), \
+        "every artist row carries exactly the shard's keys"
+    assert rows[0]["example"] == 'YOASOBI "アイドル"', "the example track reaches the shard"
+    assert rows[1]["example"] is None, "an artist with no preview has no track to name"
+
+
 def test_deflate_roundtrip():
     payload = json.dumps({"name": "jpop", "artists": []}).encode()
     packed = deflate(payload)
@@ -67,5 +90,6 @@ def test_deflate_roundtrip():
 if __name__ == "__main__":
     test_index()
     test_genre_page()
+    test_shard_keeps_the_example()
     test_deflate_roundtrip()
     print("parser fixtures OK")

@@ -5,9 +5,11 @@ A modernized descendant of https://github.com/laffan/everynoise-scrape (2016,
 Python 2, artist names only). This version captures what the in-app browser
 actually needs: every genre's *position on the map* (the site's top/left
 pixels), its color, font size (the site's popularity cue), its example-track
-preview URL, and — from each genre's own page — the constituent artists with
-the same positional/preview data. No Spotify API key is involved anywhere:
-the 30-second preview URLs are embedded in the site's HTML.
+preview URL and the track's name, and — from each genre's own page — the
+constituent artists with the same positional/preview/example data. No Spotify
+API key is involved anywhere: the 30-second preview URLs are embedded in the
+site's HTML, as are the track names beside them (Spotify's own API serves
+neither to apps registered after November 2024).
 
 Output (default: OfflineListen/EveryNoiseData/ so the app bundles it):
   meta.json         scrape date, counts, canvas extents
@@ -194,11 +196,19 @@ def deflate(data: bytes) -> bytes:
     return co.compress(data) + co.flush()
 
 
+#: What a shard keeps per artist. `example` is the site's own label for the
+#: snippet in `preview` — `Artist "Song"`, the same `title` attribute a genre
+#: row carries, which `parse_items` has always read and this used to throw
+#: away. It's what lets the app name the track it's playing instead of just
+#: the artist. The per-item `id` is deliberately absent: rows are written in
+#: the site's item order, so the array itself carries it.
+ARTIST_KEYS = ("name", "x", "y", "color", "size", "preview", "spotify", "example")
+
+
 def write_shard(path: Path, genre: dict, artists: list):
     payload = {
         "name": genre["name"],
-        "artists": [{k: a[k] for k in ("name", "x", "y", "color", "size", "preview", "spotify")}
-                    for a in artists],
+        "artists": [{k: a[k] for k in ARTIST_KEYS} for a in artists],
     }
     path.write_bytes(deflate(compact_json(payload)))
 

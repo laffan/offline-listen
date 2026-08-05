@@ -239,8 +239,10 @@ def main() -> int:
                 "color": genre_color,
                 "size": size_for(record.get("popularity", 0), span),
                 # Spotify serves no preview_url to apps created after
-                # November 2024, so there is genuinely no snippet to record.
+                # November 2024, so there is genuinely no snippet to record —
+                # and with no snippet there is no track to name either.
                 "preview": None,
+                "example": None,
                 "spotify": record.get("spotifyID"),
             })
         if not fresh:
@@ -292,6 +294,7 @@ def main() -> int:
                 "color": by_key[hosts[0][0]].get("color", ""),
                 "size": size_for(artist.get("popularity", 0), DEFAULT_SIZE_RANGE),
                 "preview": None,
+                "example": None,
                 "spotify": artist.get("spotifyID"),
             })
         new_genres.append({

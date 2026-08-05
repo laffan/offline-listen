@@ -6,12 +6,20 @@ This is a modernized descendant of
 original is a set of Python 2 notebooks from 2016 that captured only artist
 *names* per genre. This rewrite (plain Python 3, no dependencies) captures what
 the in-app map needs — every genre's **map position**, **color**, **font size**
-(the site's popularity cue), and **example-track preview URL**, plus the same
-fields for the **constituent artists** on each genre's own page, with each
-artist's Spotify id.
+(the site's popularity cue), **example-track preview URL** and the **name of
+the track** that URL plays, plus the same fields for the **constituent
+artists** on each genre's own page, with each artist's Spotify id.
 
 **No Spotify API key is needed at any point** — the 30-second preview URLs are
-embedded in the site's HTML, and the app plays them directly.
+embedded in the site's HTML, and the app plays them directly. So are the track
+names beside them, in each row's `title` attribute (`Artist "Song"`); Spotify's
+API serves neither to apps registered after November 2024, which makes the
+site's own markup the only source for either.
+
+> **If your `EveryNoiseData/` predates August 2026**, its artist rows carry no
+> track name — the parser read the field from the first version but the shard
+> writer dropped it, so only *genres* had one. The app simply leaves the line
+> blank where it doesn't have one; re-run the scrape to fill it in.
 
 Every Noise froze in late 2024 when Spotify revoked the API access that fed it,
 so the data is static: this scrape is genuinely one-time. The *genre space*
@@ -32,7 +40,9 @@ into `OfflineListen/EveryNoiseData/` — the folder the app bundles:
 - `genres.json` — the genre index (name, x/y, color, size, preview, example),
   in the site's map order. Read once when the browser opens.
 - `genres/<key>.z` — one shard per genre: its artist list as JSON compressed
-  with raw DEFLATE. The app inflates shards lazily, one genre at a time.
+  with raw DEFLATE (name, x/y, color, size, preview, example, spotify — the
+  per-item `id` is left out, since rows are written in the site's own order).
+  The app inflates shards lazily, one genre at a time.
 - `meta.json` — scrape date, counts, canvas extents, and a `partial` flag.
 
 Useful flags: `--limit 5` (smoke test), `--force` (refetch existing shards),
@@ -97,7 +107,9 @@ Two honest limits, both recorded in `meta.json` under `merged`:
   within them.
 - **No preview snippets.** Spotify stopped serving `preview_url` to apps
   created after November 2024, so harvested artists arrive with
-  `preview: null` and no 30-second sample. Their discography still works.
+  `preview: null` and no 30-second sample — and with no snippet there is no
+  track to name either, so `example: null` goes with it. Their discography
+  still works.
 
 `--dry-run` reports without writing, and re-merging the same export is a
 no-op, so it's safe to run twice. Commit `OfflineListen/EveryNoiseData/`
