@@ -362,6 +362,12 @@ struct LibraryView: View {
         !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// Nothing downloaded and nothing filed: the one state that replaces the
+    /// tabs with a welcome rather than showing five empty sections.
+    private var isEmptyLibrary: Bool {
+        library.tracks.isEmpty && library.folders.isEmpty
+    }
+
     /// Search results honour the media-type filter, so a search inside
     /// "Podcasts" stays inside podcasts.
     private var trackResults: [Track] {
@@ -392,7 +398,7 @@ struct LibraryView: View {
     var body: some View {
         NavigationStack(path: dedupedPath) {
             VStack(spacing: 0) {
-                if library.tracks.isEmpty && library.folders.isEmpty {
+                if isEmptyLibrary {
                     ContentUnavailableViewCompat(
                         title: "Your library is empty",
                         systemImage: "music.note.list",
@@ -887,8 +893,13 @@ struct LibraryView: View {
         // results, which are tracks too. (Inbox and Recent carry their own —
         // Mark All Played and Clear — from the views themselves.)
         ToolbarItemGroup(placement: .navigationBarTrailing) {
-            if tab == .folders && !isSearching && !editMode.isEditing {
-                folderSortMenu
+            // New Folder also has to survive the empty-library welcome, which
+            // stands in for the tabs — otherwise a fresh install has no way to
+            // make its first folder at all.
+            if (tab == .folders || isEmptyLibrary) && !isSearching && !editMode.isEditing {
+                if !isEmptyLibrary {
+                    folderSortMenu
+                }
                 Button {
                     newFolderName = ""
                     showNewFolder = true
@@ -896,7 +907,11 @@ struct LibraryView: View {
                     Label("New Folder", systemImage: "folder.badge.plus")
                 }
             }
-            if tab == .all || isSearching {
+            // `editMode.isEditing` is in the condition rather than implied by
+            // the other two: leaving All (or clearing a search) drops Done for
+            // the render before `onChange` closes edit mode, and a Done button
+            // that blinks out is worse than one that lingers a frame.
+            if tab == .all || isSearching || editMode.isEditing {
                 Button(editMode.isEditing ? "Done" : "Select") {
                     withAnimation {
                         if editMode.isEditing {

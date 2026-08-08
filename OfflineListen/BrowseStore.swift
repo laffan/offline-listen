@@ -63,6 +63,13 @@ final class BrowseStore: ObservableObject {
         items.filter { $0.sourceID == sourceID && $0.status == .new }.count
     }
 
+    /// The same count across every source — the badge on the Browse tab's
+    /// sources button, which is the only thing left saying a refresh turned
+    /// something up now that the map, not the source list, is the tab.
+    var totalNewCount: Int {
+        items.filter { $0.status == .new }.count
+    }
+
     /// A Blog Agent source's articles, newest first.
     func posts(for sourceID: UUID) -> [BrowsePost] {
         posts

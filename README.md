@@ -19,7 +19,8 @@ vertical space goes to the content instead.
    Spotify discography, or files them into Browse as an Artist source (see
    [The Every Noise browser](#the-every-noise-browser)). The **sources** you
    keep tabs on live one tap away, behind the **stack button** in the
-   top-right corner (see
+   top-right corner — which wears a **dot** when a refresh has turned up
+   items you haven't acted on (see
    [Browse: keeping tabs on audio sources](#browse-keeping-tabs-on-audio-sources)):
    YouTube channels/playlists, RSS feeds, a **Blog Agent** for blogs
    without a feed, an **Artist** source (following their **Top 10**, an

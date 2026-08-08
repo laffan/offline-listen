@@ -19,12 +19,37 @@ struct BrowseView: View {
                         NavigationLink {
                             BrowseSourcesView()
                         } label: {
-                            Image(systemName: "rectangle.stack")
+                            SourcesButtonLabel()
                         }
-                        .accessibilityLabel("Your sources")
                     }
                 }
         }
+    }
+}
+
+/// The sources button, wearing a dot when the sources have turned up items
+/// nobody has acted on yet. With the map as the tab, this is the only thing
+/// left that says a refresh found something — the per-source counts are a
+/// screen away now.
+///
+/// It observes the store on its own so that a refresh redraws *this* and not
+/// the genre map behind it.
+private struct SourcesButtonLabel: View {
+    @EnvironmentObject private var browse: BrowseStore
+
+    var body: some View {
+        let new = browse.totalNewCount
+        return Image(systemName: "rectangle.stack")
+            .overlay(alignment: .topTrailing) {
+                if new > 0 {
+                    // The same tint the per-source count badges wear.
+                    Circle()
+                        .fill(Color.accentColor)
+                        .frame(width: 8, height: 8)
+                        .offset(x: 5, y: -3)
+                }
+            }
+            .accessibilityLabel(new > 0 ? "Your sources — \(new) new" : "Your sources")
     }
 }
 
