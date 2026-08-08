@@ -283,15 +283,39 @@ extension View {
 
 /// Navigation targets reachable from the library list.
 enum LibraryRoute: Hashable {
-    case inbox
-    case watch
-    /// The **Recent** virtual folder: what you've played, most recent first.
-    case recent
     case folder(UUID)
     /// The optional "Synced" grouping row (Settings ▸ Local Sync): every
     /// folder mirroring a sync folder, collected in one place.
     case synced
     case archived
+}
+
+/// The Library's top-level sections, in the order their tabs sit across the
+/// top of the screen. Each one used to be a row you pushed into (or, for
+/// **All**, the flat list that sat under the folders) — as tabs they're all
+/// one tap from each other instead of one tap and a back button.
+enum LibraryTab: String, CaseIterable, Identifiable {
+    /// What you've played, newest first.
+    case recent
+    case folders
+    /// What you haven't listened to yet.
+    case inbox
+    /// What's been pushed to the Apple Watch.
+    case watch
+    /// Every active track, filed or not — the full flat view of the library.
+    case all
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .recent: return "Recent"
+        case .folders: return "Folders"
+        case .inbox: return "Inbox"
+        case .watch: return "Watch"
+        case .all: return "All"
+        }
+    }
 }
 
 struct LibraryView: View {
@@ -307,6 +331,9 @@ struct LibraryView: View {
     @State private var share: SharePayload?
     @State private var filter: LibraryFilter = .all
     @State private var path: [LibraryRoute] = []
+    /// Which section is showing. Recent leads: what you were just listening to
+    /// is the likeliest reason to open the library at all.
+    @State private var tab: LibraryTab = .recent
 
     @State private var showNewFolder = false
     @State private var newFolderName = ""
@@ -325,8 +352,8 @@ struct LibraryView: View {
     /// once per keystroke.
     @State private var query = ""
 
-    /// The Tracks section shows **every** active track, filed or not — the
-    /// folders above are one way in, this list is the full flat view.
+    /// The **All** tab shows every active track, filed or not — the Folders
+    /// tab is one way in, this list is the full flat view.
     private var filteredTracks: [Track] {
         library.activeTracks.filter { filter.matches($0) }
     }
@@ -373,12 +400,20 @@ struct LibraryView: View {
                     )
                     .frame(maxHeight: .infinity)
                 } else if isSearching {
+                    // Search answers across the whole library, so the tabs step
+                    // aside rather than claim the results belong to one of them.
                     searchList
                 } else {
-                    libraryList
+                    tabBar
+                    // Greedy so an empty section's placeholder centers in the
+                    // room below the tabs rather than clinging to them.
+                    tabContent
+                        .frame(maxHeight: .infinity)
                 }
             }
-            .navigationTitle("Library")
+            // No title — the tabs say where you are, and the height they'd
+            // otherwise share goes to the list.
+            .navigationBarTitleDisplayMode(.inline)
             #if os(macOS)
             .searchable(text: $searchText, prompt: "Search titles and artists")
             #else
@@ -398,6 +433,15 @@ struct LibraryView: View {
             }
             .toolbar { toolbarContent }
             .editModeEnvironment($editMode)
+            // Selection belongs to the tracks in All (and in a search's
+            // results); carrying it anywhere else would leave a Done button
+            // over a list it can't act on — or no Done button at all.
+            .onChange(of: tab) { _ in
+                if editMode.isEditing { endEditing() }
+            }
+            .onChange(of: isSearching) { _ in
+                if editMode.isEditing { endEditing() }
+            }
             .sheet(item: $share) { payload in
                 ActivityView(items: payload.urls)
             }
@@ -406,12 +450,6 @@ struct LibraryView: View {
             }
             .navigationDestination(for: LibraryRoute.self) { route in
                 switch route {
-                case .inbox:
-                    InboxView(onPlay: onPlay, share: $share)
-                case .watch:
-                    WatchFolderView(onPlay: onPlay)
-                case .recent:
-                    RecentTracksView(onPlay: onPlay, share: $share)
                 case .folder(let id):
                     FolderDetailView(folderID: id, onPlay: onPlay, share: $share)
                 case .synced:
@@ -481,104 +519,143 @@ struct LibraryView: View {
         .miniPlayerClearance()
     }
 
-    private var libraryList: some View {
-        // Same reason as `searchList`: one evaluation, shared by every row.
-        let listed = filteredTracks
-        return List(selection: $selection) {
-            // Folders are hidden while selecting tracks for bulk actions.
-            if !editMode.isEditing {
+    /// The section tabs across the top. Hidden while selecting tracks for bulk
+    /// actions — that's a mode you leave by finishing it, not by wandering off
+    /// into another section.
+    @ViewBuilder
+    private var tabBar: some View {
+        if !editMode.isEditing {
+            Picker("Section", selection: $tab) {
+                ForEach(LibraryTab.allCases) { section in
+                    Text(section.displayName).tag(section)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal)
+            .padding(.top, 4)
+            .padding(.bottom, 6)
+        }
+    }
+
+    @ViewBuilder
+    private var tabContent: some View {
+        switch tab {
+        case .recent:
+            RecentTracksView(onPlay: onPlay, share: $share)
+        case .folders:
+            folderList
+        case .inbox:
+            InboxView(onPlay: onPlay, share: $share)
+        case .watch:
+            WatchFolderView(onPlay: onPlay)
+        case .all:
+            trackList
+        }
+    }
+
+    /// The **Folders** tab: user folders, then the optional "Synced" grouping
+    /// and the Archive pinned beneath them.
+    @ViewBuilder
+    private var folderList: some View {
+        let showsSynced = library.groupSyncedFolders && !library.syncedRootFolders.isEmpty
+        let showsArchive = !library.archivedTracks.isEmpty || !library.archivedFolders.isEmpty
+        if library.displayedFolders.isEmpty && !showsSynced && !showsArchive {
+            ContentUnavailableViewCompat(
+                title: "No folders yet",
+                systemImage: "folder",
+                description: "Make one with the folder button above, then touch and hold a track and choose Move to Folder."
+            )
+            .frame(maxHeight: .infinity)
+        } else {
+            List {
+                // Drag-to-reorder (touch and hold a row) only makes sense in
+                // User Order; by-name order is computed and can't be permuted.
+                if library.folderSort == .userOrder {
+                    ForEach(library.displayedFolders) { folder in
+                        folderRow(folder)
+                    }
+                    .onMove { source, destination in
+                        library.moveFolders(fromOffsets: source, toOffset: destination)
+                    }
+                } else {
+                    ForEach(library.displayedFolders) { folder in
+                        folderRow(folder)
+                    }
+                }
+                // With the grouping on, the synced folders come out of the
+                // list above and live behind this one row instead.
+                if showsSynced {
+                    syncedRow
+                }
+                if showsArchive {
+                    archiveRow
+                }
+            }
+            .listStyle(.plain)
+            .miniPlayerClearance()
+        }
+    }
+
+    /// The **All** tab: every active track, filed or not — the full flat view
+    /// of the library, with the media-type filter pinned above it.
+    @ViewBuilder
+    private var trackList: some View {
+        if library.activeTracks.isEmpty {
+            ContentUnavailableViewCompat(
+                title: "No tracks yet",
+                systemImage: "music.note",
+                description: "Everything you download lands here, whether or not it's filed in a folder."
+            )
+            .frame(maxHeight: .infinity)
+        } else {
+            // Same reason as `searchList`: one evaluation, shared by every row.
+            let listed = filteredTracks
+            List(selection: $selection) {
                 Section {
-                    inboxRow
-                    // Recent sits between the two other virtual folders: what
-                    // you've played, as against what you haven't (Inbox).
-                    recentRow
-                    // The Watch folder sits directly below the Inbox, always
-                    // present like the Inbox. It's a virtual folder (its tracks
-                    // live elsewhere) for managing what's pushed to the Apple Watch.
-                    watchRow
-                    // Drag-to-reorder (touch and hold a row) only makes sense in
-                    // User Order; by-name order is computed and can't be permuted.
-                    if library.folderSort == .userOrder {
-                        ForEach(library.displayedFolders) { folder in
-                            folderRow(folder)
-                        }
-                        .onMove { source, destination in
-                            library.moveFolders(fromOffsets: source, toOffset: destination)
-                        }
-                    } else {
-                        ForEach(library.displayedFolders) { folder in
-                            folderRow(folder)
-                        }
+                    ForEach(listed) { track in
+                        row(for: track, in: listed)
                     }
-                    // With the grouping on, the synced folders come out of the
-                    // list above and live behind this one row instead.
-                    if library.groupSyncedFolders && !library.syncedRootFolders.isEmpty {
-                        syncedRow
-                    }
-                    if !library.archivedTracks.isEmpty || !library.archivedFolders.isEmpty {
-                        archiveRow
+                    if listed.isEmpty {
+                        Text("Nothing in \(filter.displayName)")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
                     }
                 } header: {
-                    foldersHeader
-                }
-            }
-
-            Section {
-                ForEach(listed) { track in
-                    row(for: track, in: listed)
-                }
-                if listed.isEmpty && !library.activeTracks.isEmpty {
-                    Text("Nothing in \(filter.displayName)")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-            } header: {
-                if !editMode.isEditing {
-                    tracksHeader
-                }
-            }
-        }
-        .listStyle(.plain)
-        .miniPlayerClearance()
-    }
-
-    /// "Folders" label with a trailing toggle to sort by name or User Order.
-    private var foldersHeader: some View {
-        HStack {
-            Text("Folders")
-            Spacer()
-            Menu {
-                Picker("Sort Folders", selection: $library.folderSort) {
-                    ForEach(FolderSort.allCases) { sort in
-                        Text(sort.displayName).tag(sort)
+                    if !editMode.isEditing {
+                        filterHeader
                     }
                 }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.up.arrow.down")
-                    Text(library.folderSort.displayName)
-                }
-                .font(.caption)
-                .textCase(nil)
             }
+            .listStyle(.plain)
+            .miniPlayerClearance()
         }
     }
 
-    /// "Tracks" label with the media-type filter directly beneath it.
-    private var tracksHeader: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Tracks")
-            if !library.activeTracks.isEmpty {
-                Picker("Filter", selection: $filter) {
-                    ForEach(LibraryFilter.allCases) { f in
-                        Text(f.displayName).tag(f)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .textCase(nil)
-                .padding(.bottom, 4)
+    /// The media-type filter, sitting where the "Tracks" header used to.
+    private var filterHeader: some View {
+        Picker("Filter", selection: $filter) {
+            ForEach(LibraryFilter.allCases) { f in
+                Text(f.displayName).tag(f)
             }
         }
+        .pickerStyle(.segmented)
+        .textCase(nil)
+        .padding(.vertical, 4)
+    }
+
+    /// Sort the folder list by name or by User Order — the control the
+    /// "Folders" header used to carry, now in the toolbar beside New Folder.
+    private var folderSortMenu: some View {
+        Menu {
+            Picker("Sort Folders", selection: $library.folderSort) {
+                ForEach(FolderSort.allCases) { sort in
+                    Text(sort.displayName).tag(sort)
+                }
+            }
+        } label: {
+            Image(systemName: "arrow.up.arrow.down")
+        }
+        .accessibilityLabel("Sort folders — \(library.folderSort.displayName)")
     }
 
     /// The optional "Synced" grouping row: a tidier home for the folders that
@@ -624,69 +701,6 @@ struct LibraryView: View {
     }
 
     // MARK: - Folder rows
-
-    /// The Inbox is a virtual folder pinned above user folders: every active
-    /// track that hasn't been listened to yet, regardless of folder.
-    private var inboxRow: some View {
-        NavigationLink(value: LibraryRoute.inbox) {
-            HStack(spacing: 12) {
-                // Red is reserved for the currently-playing location, so the
-                // Inbox uses the same neutral icon tint as user folders.
-                Image(systemName: "tray.fill")
-                    .foregroundStyle(.secondary)
-                    .frame(width: 24)
-                Text("Inbox")
-                    .font(.body)
-                Spacer()
-                Text("\(library.inboxTracks.count)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
-            .padding(.vertical, 4)
-        }
-    }
-
-    /// The Recent folder: a virtual folder listing what you've played, newest
-    /// first. Like the Inbox and Watch rows its tracks live wherever they
-    /// normally do — this is a log, not a location.
-    private var recentRow: some View {
-        NavigationLink(value: LibraryRoute.recent) {
-            HStack(spacing: 12) {
-                Image(systemName: "clock.arrow.circlepath")
-                    .foregroundStyle(.secondary)
-                    .frame(width: 24)
-                Text("Recent")
-                    .font(.body)
-                Spacer()
-                Text("\(library.recentListenEntries.count)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
-            .padding(.vertical, 4)
-        }
-    }
-
-    /// The Watch folder: a virtual folder pinned just under the Inbox, listing
-    /// every track pushed to the Apple Watch (wherever it otherwise lives).
-    private var watchRow: some View {
-        NavigationLink(value: LibraryRoute.watch) {
-            HStack(spacing: 12) {
-                Image(systemName: "applewatch")
-                    .foregroundStyle(.secondary)
-                    .frame(width: 24)
-                Text("Watch")
-                    .font(.body)
-                Spacer()
-                Text("\(library.watchTracks.count)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
-            .padding(.vertical, 4)
-        }
-    }
 
     /// True when the currently-playing track lives in this folder, so its row
     /// can light up red like the playing track itself.
@@ -868,8 +882,13 @@ struct LibraryView: View {
             }
         }
 
+        // Each tab brings its own actions: the folder controls where the folders
+        // are, Select where the tracks are — in the All tab, and in a search's
+        // results, which are tracks too. (Inbox and Recent carry their own —
+        // Mark All Played and Clear — from the views themselves.)
         ToolbarItemGroup(placement: .navigationBarTrailing) {
-            if !editMode.isEditing {
+            if tab == .folders && !isSearching && !editMode.isEditing {
+                folderSortMenu
                 Button {
                     newFolderName = ""
                     showNewFolder = true
@@ -877,17 +896,19 @@ struct LibraryView: View {
                     Label("New Folder", systemImage: "folder.badge.plus")
                 }
             }
-            Button(editMode.isEditing ? "Done" : "Select") {
-                withAnimation {
-                    if editMode.isEditing {
-                        editMode = .inactive
-                        selection.removeAll()
-                    } else {
-                        editMode = .active
+            if tab == .all || isSearching {
+                Button(editMode.isEditing ? "Done" : "Select") {
+                    withAnimation {
+                        if editMode.isEditing {
+                            editMode = .inactive
+                            selection.removeAll()
+                        } else {
+                            editMode = .active
+                        }
                     }
                 }
+                .disabled(library.activeTracks.isEmpty && !editMode.isEditing)
             }
-            .disabled(library.activeTracks.isEmpty && !editMode.isEditing)
         }
     }
 

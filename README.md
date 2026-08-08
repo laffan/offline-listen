@@ -10,9 +10,184 @@ locked.
 
 ## What's here
 
-Five screens (tabs):
+Five screens (tabs), left to right. None of them carries a header title — the
+vertical space goes to the content instead.
 
-1. **Download** — paste one or more URLs (whitespace/line-break separated; any
+1. **Browse** — opens straight into the **Every Noise browser**: the whole
+   [Every Noise at Once](https://everynoise.com) genre map, bundled into the
+   app and browsable offline; tapping an artist there leads to their live
+   Spotify discography, or files them into Browse as an Artist source (see
+   [The Every Noise browser](#the-every-noise-browser)). The **sources** you
+   keep tabs on live one tap away, behind the **stack button** in the
+   top-right corner (see
+   [Browse: keeping tabs on audio sources](#browse-keeping-tabs-on-audio-sources)):
+   YouTube channels/playlists, RSS feeds, a **Blog Agent** for blogs
+   without a feed, an **Artist** source (following their **Top 10**, an
+   AI-laid-out **Search Discography**, or their real **Spotify Discography**),
+   or AI-curated Genre / Country
+   lists; each refresh surfaces YouTube links, shown as compact
+   name-over-artist rows, and
+   every item offers **Download** (sends it to the download queue) and
+   **Preview** (a listen-first modal with **Save** / **Discard**). A **Select**
+   button in a source's list flips it into multi-select, so you can tick a
+   batch of items and download them all in one tap. An
+   **Audio/Video toggle** atop the Sources screen — the same one the Download
+   tab has — sets which mode both buttons (and the bulk download) act in.
+2. **Library** — downloaded tracks; tap to play. Five **tabs** across the top
+   divide it — **Recent**, **Folders**, **Inbox**, **Watch**, **All** — so each
+   section is one tap from the others rather than a screen you push into and
+   come back out of. **All** lists
+   **every** track — filed into a folder or not — so it's the full flat view
+   of the library (folders are one way in, not the only one). A **search**
+   field sits above
+   the tabs: type anything and the list becomes results — matching **folders**
+   first, then every track whose **title or artist** matches (the tabs step
+   aside while it does, since a search answers across all of them). Matching
+   ignores
+   case and accents, so "beyonce" finds "Beyoncé", and the media-type filter
+   still applies. Results come back **as you type** — see
+   [Why the library is fast](#why-the-library-is-fast) for what that costs.
+   A **filter** (All / Music /
+   Podcasts / Video) sits at the top of the **All** tab. Swipe **left**
+   for Delete/Share/Archive (and bulk versions via **Select**); swipe **right**
+   on an audio track to classify it **Song** or **Podcast**. Songs start from the
+   beginning; podcasts (mic icon) and videos (film icon) resume where you left
+   off and show a progress bar. A track you haven't listened to yet shows a
+   **green** icon. Video tracks play with picture on the Player screen. Archived
+   tracks (and archived folders) live in the **Archive**, pinned to the bottom of
+   the folder list.
+
+   **Autoplay.** When a track finishes, playback advances to the next track in
+   the same list and keeps going to the end — it doesn't loop. (What makes
+   that dependable, including with the phone locked, is described in
+   [Why autoplay keeps going](#why-autoplay-keeps-going).) In the
+   **auto-aggregated** lists (the **All** tab and the Inbox), where media types
+   are mixed together, autoplay **stays within the media type** you started: pick
+   a song and only songs play on (podcasts and videos are skipped until the next
+   song or the list ends), and likewise for podcasts and videos. A **folder is a
+   curated playlist**, though, so it **plays straight through in list order**
+   regardless of type — tap any track and the whole folder plays in sequence.
+
+   **Recent.** A tab of its own — the mirror image of the Inbox — listing what
+   you've **played**, most recent first, with each row showing when. A track
+   joins it the moment playback *starts*; it doesn't have to finish. It's a
+   **log, not a set**: the same track appears once per listen, so a track you
+   keep coming back to shows up repeatedly — only *consecutive* repeats are
+   collapsed, since restarting the track you're already on isn't a new listen.
+   Nothing lives there (the tracks stay wherever they are), so removing a row —
+   or **Clear** — only forgets the listen. The log keeps the last 200 plays in
+   `Documents/recents.json`.
+
+   **Chapters.** Tracks that carry YouTube chapter markers show an **arrow**
+   after the title, set off by a left border so it reads as a button distinct
+   from the row: tapping the **title** plays the track normally, tapping the
+   **arrow** opens a list of chapters to jump to. Touch-and-hold such a track
+   for **Break Chapters into Playlist**, which exports one file per chapter into
+   a new folder named after the track and then asks whether to delete the
+   original — turning a chaptered recording into a proper playlist. The
+   chapter list also highlights the chapter currently playing.
+
+   **Folders** organize the library, and have a tab of their own. A folder with
+   a **cover** — an album pulled down whole from a
+   discography — draws it as a thumbnail on the left of its row in place of
+   the folder icon. The three virtual folders that used to sit pinned above them
+   — **Inbox** (every track you haven't listened to yet; starting playback — or
+   a **Mark Played** swipe — clears it from the Inbox), **Recent** and
+   **Watch** — are tabs now; the **Archive** is still pinned to
+   the bottom. Create folders with the Folders tab's folder button; move tracks in
+   via touch-and-hold → **Move to Folder** (or the bulk Select menu). The Inbox
+   is itself a move target — moving a track there returns it to unlistened.
+   Touch-and-hold also offers **Edit Metadata**, a modal for hand-editing the
+   track **title and artist** (handy when AI Organize doesn't get it quite
+   right), with **Reset to Original Title** to restore the download title —
+   and, with Spotify credentials saved, **Get Album Art**, which finds the
+   track's cover on Spotify and attaches it (see [Album art](#album-art)).
+   A downloaded track also offers **Convert to Video** / **Convert to
+   Audio**: the file is re-downloaded from its source in the other format,
+   into the same folder, and the original is replaced only once the fresh
+   download has fully landed — a failed conversion costs nothing (the
+   attempt shows in the Download tab like any job). Tracks with no source
+   link (local-sync imports) don't offer it. Swipe
+   a folder row for its slide menu: **Delete**, **Rename**, and **Archive**
+   (move the whole folder, tracks and all, into the Archive).
+
+   **Delete asks what you mean.** A folder is a grouping, so deleting one used
+   to leave its tracks in the library — right for a folder you're just
+   unfiling, wrong for one that *is* an album, and there's no telling which
+   from the swipe. It now offers both, naming the count: **Delete Folder & 12
+   Tracks** (red — the files go for good, artwork and synced copies with them,
+   including anything in subfolders) or **Delete Folder Only** (the old
+   behaviour: the tracks return to the library list and subfolders move up a
+   level). An empty folder just asks once. **Archive** is untouched and stays
+   the reversible option.
+
+   To **reorder** the tracks inside a folder, use the **Reorder** button in
+   the folder's own screen — which also shows the folder's **cover** above the
+   list when it has one (see [Album art](#album-art)).
+
+   **The "Synced" grouping.** With several sync folders mirrored in, the
+   folders that mirror them can crowd out your own. Settings ▸ Local Sync ▸
+   **Group under a "Synced" folder** collects them all behind a single
+   **Synced** row (just above the Archive) instead. It's *purely* a display
+   grouping — nothing moves on disk, no folder changes its place in the data,
+   the rows keep the same swipe actions and touch-and-hold menu — so it can be
+   turned on and off at any point with no effect on the sync setup.
+
+   The folder list itself sorts two ways, chosen from the **sort** button in the
+   Folders tab's toolbar: **Name** (alphabetical) or **User Order**. In User
+   Order you set the sequence by hand — **touch and hold a folder and drag** it
+   into place; the order persists to `folders.json`. Folders persist to
+   `Documents/folders.json`.
+
+   **Folders nest.** A folder's own screen has the same folder-plus button to
+   create a subfolder, and any subfolders list in a **Folders** section above
+   the tracks. (Nesting is what lets the local sync folder's directory tree
+   mirror into the library — see
+   [Local sync](#local-sync-a-folder-that-mirrors-part-of-the-library).)
+
+   **Mixtapes.** Touch-and-hold a folder for **Convert to Mixtape**: the
+   folder's title now draws over a cover-image banner — in the folder list and
+   atop its own screen — with an **Edit Cover** button at the bottom of its
+   track list for picking the image, positioning the crop, and choosing a
+   title font. **Convert to Folder** turns it back. See
+   [Mixtape folders](#mixtape-folders).
+3. **Player** — artwork, scrubber, play/pause, skip, next/previous — the same
+   control suite for audio and video, and it drives the lock screen and
+   Control Center. A track downloaded with **album art** (anything
+   Spotify-sourced — see [Album art](#album-art)) shows its real cover in
+   place of the gradient placeholder — on the lock screen and in the mini
+   player too. **Tap anywhere on the scrub bar to jump there**; dragging
+   works as before, so you never have to drag the playhead across a track
+   just to skip ahead. Beneath the transport, the **previous track** is named
+   on the left and the **next track** on the right (labelled as such, with
+   artist under title) — tap either to go straight to it. Video is
+   edge-to-edge in portrait, and **tapping the picture hands it the whole
+   screen**: title, transport, nav and tab bars all step aside, and a tap
+   brings back the floating controls with a button to shrink it again. It
+   also goes fullscreen on its own when the phone rotates to landscape. For a
+   chaptered track, small **dots** sit along the scrubber at each chapter's
+   start and the **current chapter title** shows on its own line beneath the
+   title/artist, updating as playback crosses a marker.
+
+   **The mini player.** Whenever a track is loaded — playing, paused, or the
+   one restored at launch — a bar rides just above the tab bar on
+   *every other screen*: a hairline progress line, the cover, what's playing,
+   play/pause and next — so you can keep browsing or searching without going
+   back to the
+   Player. Tapping the title opens the Player. It's about 20 points taller
+   than it started out, which is what makes the cover legible and the
+   transport buttons hittable without aiming. It's attached as a safe-area
+   inset outside each tab's `NavigationStack`, and with nothing loaded it
+   takes up no room at all. That inset draws the bar but does **not** reach
+   the UIKit-backed containers *inside* the stack (the navigation controller
+   hosts each screen in its own hosting controller, which sees only UIKit's
+   safe area) — left alone, every List/Form's last row hides behind the bar.
+   So the bar publishes its measured height as `\.miniPlayerHeight`, and each
+   scrollable screen re-declares it locally via `.miniPlayerClearance()` —
+   that's what actually makes content scroll clear. The Every Noise maps take
+   the same height as extra scroll inset, and their scan/artist-preview bars
+   pad themselves by it, since the maps run edge to edge under the tab bar.
+4. **Download** — paste one or more URLs (whitespace/line-break separated; any
    http(s) link is queued and the rest of a pasted blob is skipped), choose
    **Audio** or **Video** (default Audio), watch the queue. Links from **any site
    yt-dlp supports** work — YouTube, Vimeo, SoundCloud and ~hundreds more — not
@@ -89,171 +264,6 @@ Five screens (tabs):
    episodes are skipped (each noted in the Log). Unlike the YouTube playlist
    path, none of this touches the on-device yt-dlp module, so Spotify links work
    on a fresh install — only the downloads they spawn need the extractor.
-2. **Browse** — keeps tabs on and curates different audio **sources** (see
-   [Browse: keeping tabs on audio sources](#browse-keeping-tabs-on-audio-sources)).
-   Add YouTube channels/playlists, RSS feeds, a **Blog Agent** for blogs
-   without a feed, an **Artist** source (following their **Top 10**, an
-   AI-laid-out **Search Discography**, or their real **Spotify Discography**),
-   or AI-curated Genre / Country
-   lists; each refresh surfaces YouTube links, shown as compact
-   name-over-artist rows, and
-   every item offers **Download** (sends it to the download queue) and
-   **Preview** (a listen-first modal with **Save** / **Discard**). A **world
-   button** beside the "+" opens the **Every Noise browser** — the whole
-   [Every Noise at Once](https://everynoise.com) genre map, bundled into the
-   app and browsable offline; tapping an artist there leads to their live
-   Spotify discography, or files them into Browse as an Artist source (see
-   [The Every Noise browser](#the-every-noise-browser)). A **Select**
-   button in a source's list flips it into multi-select, so you can tick a
-   batch of items and download them all in one tap. An
-   **Audio/Video toggle** beneath the Browse title — the same one the Download
-   tab has — sets which mode both buttons (and the bulk download) act in.
-3. **Library** — downloaded tracks; tap to play. The **Tracks** section lists
-   **every** track — filed into a folder or not — so it's the full flat view
-   of the library (folders are one way in, not the only one). A **search**
-   field sits under
-   the title: type anything and the list becomes results — matching **folders**
-   first, then every track whose **title or artist** matches. Matching ignores
-   case and accents, so "beyonce" finds "Beyoncé", and the media-type filter
-   still applies. Results come back **as you type** — see
-   [Why the library is fast](#why-the-library-is-fast) for what that costs.
-   A **filter** (All / Music /
-   Podcasts / Video) sits directly beneath the **Tracks** header. Swipe **left**
-   for Delete/Share/Archive (and bulk versions via **Select**); swipe **right**
-   on an audio track to classify it **Song** or **Podcast**. Songs start from the
-   beginning; podcasts (mic icon) and videos (film icon) resume where you left
-   off and show a progress bar. A track you haven't listened to yet shows a
-   **green** icon. Video tracks play with picture on the Player screen. Archived
-   tracks (and archived folders) live in the **Archive**, pinned to the bottom of
-   the folder list.
-
-   **Autoplay.** When a track finishes, playback advances to the next track in
-   the same list and keeps going to the end — it doesn't loop. (What makes
-   that dependable, including with the phone locked, is described in
-   [Why autoplay keeps going](#why-autoplay-keeps-going).) In the
-   **auto-aggregated** lists (the Tracks root and the Inbox), where media types
-   are mixed together, autoplay **stays within the media type** you started: pick
-   a song and only songs play on (podcasts and videos are skipped until the next
-   song or the list ends), and likewise for podcasts and videos. A **folder is a
-   curated playlist**, though, so it **plays straight through in list order**
-   regardless of type — tap any track and the whole folder plays in sequence.
-
-   **Recent.** A virtual folder — the mirror image of the Inbox — listing what
-   you've **played**, most recent first, with each row showing when. A track
-   joins it the moment playback *starts*; it doesn't have to finish. It's a
-   **log, not a set**: the same track appears once per listen, so a track you
-   keep coming back to shows up repeatedly — only *consecutive* repeats are
-   collapsed, since restarting the track you're already on isn't a new listen.
-   Nothing lives there (the tracks stay wherever they are), so removing a row —
-   or **Clear** — only forgets the listen. The log keeps the last 200 plays in
-   `Documents/recents.json`.
-
-   **Chapters.** Tracks that carry YouTube chapter markers show an **arrow**
-   after the title, set off by a left border so it reads as a button distinct
-   from the row: tapping the **title** plays the track normally, tapping the
-   **arrow** opens a list of chapters to jump to. Touch-and-hold such a track
-   for **Break Chapters into Playlist**, which exports one file per chapter into
-   a new folder named after the track and then asks whether to delete the
-   original — turning a chaptered recording into a proper playlist. The
-   chapter list also highlights the chapter currently playing.
-
-   **Folders** organize the library, under a **Folders** header (mirroring the
-   Tracks one). A folder with a **cover** — an album pulled down whole from a
-   discography — draws it as a thumbnail on the left of its row in place of
-   the folder icon. An **Inbox** pinned to the top collects every track you haven't
-   listened to yet (starting playback — or a **Mark Played** swipe — clears it
-   from the Inbox), **Recent** and **Watch** sit beneath it, user folders below
-   those, and the **Archive** is pinned to
-   the bottom. Create folders with the toolbar's folder button; move tracks in
-   via touch-and-hold → **Move to Folder** (or the bulk Select menu). The Inbox
-   is itself a move target — moving a track there returns it to unlistened.
-   Touch-and-hold also offers **Edit Metadata**, a modal for hand-editing the
-   track **title and artist** (handy when AI Organize doesn't get it quite
-   right), with **Reset to Original Title** to restore the download title —
-   and, with Spotify credentials saved, **Get Album Art**, which finds the
-   track's cover on Spotify and attaches it (see [Album art](#album-art)).
-   A downloaded track also offers **Convert to Video** / **Convert to
-   Audio**: the file is re-downloaded from its source in the other format,
-   into the same folder, and the original is replaced only once the fresh
-   download has fully landed — a failed conversion costs nothing (the
-   attempt shows in the Download tab like any job). Tracks with no source
-   link (local-sync imports) don't offer it. Swipe
-   a folder row for its slide menu: **Delete**, **Rename**, and **Archive**
-   (move the whole folder, tracks and all, into the Archive).
-
-   **Delete asks what you mean.** A folder is a grouping, so deleting one used
-   to leave its tracks in the library — right for a folder you're just
-   unfiling, wrong for one that *is* an album, and there's no telling which
-   from the swipe. It now offers both, naming the count: **Delete Folder & 12
-   Tracks** (red — the files go for good, artwork and synced copies with them,
-   including anything in subfolders) or **Delete Folder Only** (the old
-   behaviour: the tracks return to the library list and subfolders move up a
-   level). An empty folder just asks once. **Archive** is untouched and stays
-   the reversible option.
-
-   To **reorder** the tracks inside a folder, use the **Reorder** button in
-   the folder's own screen — which also shows the folder's **cover** above the
-   list when it has one (see [Album art](#album-art)).
-
-   **The "Synced" grouping.** With several sync folders mirrored in, the
-   folders that mirror them can crowd out your own. Settings ▸ Local Sync ▸
-   **Group under a "Synced" folder** collects them all behind a single
-   **Synced** row (just above the Archive) instead. It's *purely* a display
-   grouping — nothing moves on disk, no folder changes its place in the data,
-   the rows keep the same swipe actions and touch-and-hold menu — so it can be
-   turned on and off at any point with no effect on the sync setup.
-
-   The folder list itself sorts two ways, chosen with the toggle on the right of
-   the **Folders** header: **Name** (alphabetical) or **User Order**. In User
-   Order you set the sequence by hand — **touch and hold a folder and drag** it
-   into place; the order persists to `folders.json`. Folders persist to
-   `Documents/folders.json`.
-
-   **Folders nest.** A folder's own screen has the same folder-plus button to
-   create a subfolder, and any subfolders list in a **Folders** section above
-   the tracks. (Nesting is what lets the local sync folder's directory tree
-   mirror into the library — see
-   [Local sync](#local-sync-a-folder-that-mirrors-part-of-the-library).)
-
-   **Mixtapes.** Touch-and-hold a folder for **Convert to Mixtape**: the
-   folder's title now draws over a cover-image banner — in the folder list and
-   atop its own screen — with an **Edit Cover** button at the bottom of its
-   track list for picking the image, positioning the crop, and choosing a
-   title font. **Convert to Folder** turns it back. See
-   [Mixtape folders](#mixtape-folders).
-4. **Player** — artwork, scrubber, play/pause, skip, next/previous — the same
-   control suite for audio and video, and it drives the lock screen and
-   Control Center. A track downloaded with **album art** (anything
-   Spotify-sourced — see [Album art](#album-art)) shows its real cover in
-   place of the gradient placeholder — on the lock screen and in the mini
-   player too. **Tap anywhere on the scrub bar to jump there**; dragging
-   works as before, so you never have to drag the playhead across a track
-   just to skip ahead. Beneath the transport, the **previous track** is named
-   on the left and the **next track** on the right (labelled as such, with
-   artist under title) — tap either to go straight to it. Video is
-   edge-to-edge in portrait, and **tapping the picture hands it the whole
-   screen**: title, transport, nav and tab bars all step aside, and a tap
-   brings back the floating controls with a button to shrink it again. It
-   also goes fullscreen on its own when the phone rotates to landscape. For a
-   chaptered track, small **dots** sit along the scrubber at each chapter's
-   start and the **current chapter title** shows on its own line beneath the
-   title/artist, updating as playback crosses a marker.
-
-   **The mini player.** Whenever a track is loaded — playing, paused, or the
-   one restored at launch — a low-profile bar rides just above the tab bar on
-   *every other screen*: a hairline progress line, what's playing, play/pause
-   and next — so you can keep browsing or searching without going back to the
-   Player. Tapping the title opens the Player. It's attached as a safe-area
-   inset outside each tab's `NavigationStack`, and with nothing loaded it
-   takes up no room at all. That inset draws the bar but does **not** reach
-   the UIKit-backed containers *inside* the stack (the navigation controller
-   hosts each screen in its own hosting controller, which sees only UIKit's
-   safe area) — left alone, every List/Form's last row hides behind the bar.
-   So the bar publishes its measured height as `\.miniPlayerHeight`, and each
-   scrollable screen re-declares it locally via `.miniPlayerClearance()` —
-   that's what actually makes content scroll clear. The Every Noise maps take
-   the same height as extra scroll inset, and their scan/artist-preview bars
-   pad themselves by it, since the maps run edge to edge under the tab bar.
 5. **Settings** — AI configuration on top, then **Spotify** credentials, an
    **Every Noise Data** section, a
    **Local Sync** section, a
@@ -393,12 +403,14 @@ redraws never re-read disk.
 
 ## Browse: keeping tabs on audio sources
 
-The **Browse** tab watches a set of user-configured **sources** and turns what
+The Browse tab's **Sources** screen — behind the stack button in the top-right
+corner of the genre map — watches a set of user-configured **sources** and turns
+what
 they surface into a curated to-listen list. Every source, whatever its type,
 produces the same thing: **YouTube links with metadata** — each shown as a
 compact row of just the artist/song title (no description clutter) and two
 actions per item, both acting in the mode set by the **Audio/Video toggle**
-beneath the Browse title:
+atop the Sources screen:
 
 - **Download** — sends the link straight to the download queue in the
   toggle's mode. Browse downloads are filed into a **library folder named
@@ -616,11 +628,12 @@ for everything); refresh errors show on the source row and in the **Log**
 
 ### The Every Noise browser
 
-The **world button** beside Browse's "+" opens an in-app rendition of
+The **Browse** tab *is* an in-app rendition of
 [Every Noise at Once](https://everynoise.com) — Glenn McDonald's
-readability-adjusted scatter-plot of the musical genre space. It **pushes
-within Browse's own navigation** (the tab bar stays put, like every other
-Browse screen), with the scan transport and the artist bar sitting just
+readability-adjusted scatter-plot of the musical genre space. It's the tab's
+own screen (it used to sit behind a world button beside Browse's "+", and the
+sources it hid behind now sit behind a button of their own), with the scan
+transport and the artist bar sitting just
 above the tabs. The site froze in
 late 2024 when Spotify revoked its API access, so its data is static — which is
 what makes bundling it reasonable: a **one-time scrape**
@@ -760,7 +773,7 @@ in the row; when the search settles, the **matched tracks light up with
 Download and Preview beside them** (Preview is the standard Browse
 listen-first modal, walking the rest of the release) and misses dim to "no
 match" — no picker popup. A single-track pick goes in **unfiled**: it shows
-in the Library's Tracks list (and the Inbox) rather than an album folder.
+in the Library's **All** tab (and the Inbox) rather than an album folder.
 **Download Album** is the opposite case and files the whole record into a
 folder of its own, cover art and all.
 
@@ -1120,7 +1133,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `BlogAgent.swift` | The Blog Agent source: homepage fetch → AI link triage → article reads → per-article summary + artist extraction + YouTube-link harvest, with bot-protection ("agent blocked") detection. |
 | `DiscographyAgent.swift` | The AI catalogue layout behind Search Discography mode: albums + track names + a Highlights list, one model call, no YouTube work (matching moved into the browser, on demand). |
 | `DiscographyBrowserView.swift` | The shared album-first discography browser — artist header (portrait, name, Learn More bio), the Artist Sample Track row atop the Top 10, cover thumbnails/full art, names first, per-release YouTube search, **Download Album**, pinned Top 10, and the whole-catalogue song search that scrolls to and highlights its hit — plus its two catalogue providers (Spotify live / AI layout), the Wikipedia lookup + AI bio sheet, and the Browse-source wrapper that caches the first pass. |
-| `BrowseView.swift` | The Browse tab: sources grouped by type, add-source sheet, refresh, and the world button into the Every Noise browser. |
+| `BrowseView.swift` | The Browse tab: the Every Noise browser as the tab's own screen, plus the **Sources** screen behind the corner button — sources grouped by type, add-source sheet, refresh. |
 | `EveryNoiseData.swift` | The bundled Every Noise dataset: models, the lazy/LRU shard-loading store, the memory-mapped global artist search (`ENArtistIndex`), and the 30-second preview player. |
 | `EveryNoiseUpdates.swift` | `ENUpdateStore` — the opt-in, heavily throttled Spotify harvest that records what the frozen dataset is missing as you browse; the exportable JSONL it writes for `tools/everynoise/merge_updates.py`; `merged(_:genre:)`, which draws the findings onto the genre's map straight away; and `ENDataFolder`, the separately bookmarked folder a copy of the records is kept in. |
 | `NoiseMapView.swift` | The virtualized `UIScrollView` scatter map (spatial grid + recycled labels) both noise maps render through — opens centered on its canvas, with the draggable scroll-pill ring on the right edge. |
@@ -1128,10 +1141,10 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `EveryNoiseData/` | Bundled (folder reference): `genres.json` index + per-genre artist shards from the one-time `tools/everynoise/scrape.py`, plus the derived `artists.idx.z` from `build_artist_index.py`. |
 | `BrowseSourceView.swift` | One source's items with per-row Download/Preview/Discard, plus a **Select** mode for bulk download; also `BrowseTrackStatusButton`, the green play button every browse list shows once a download is in the library. |
 | `BrowsePreviewView.swift` | The preview modal: pipeline download, mini player with prev/play-pause/next over the queue it was opened with (auto-advancing at the end of each track — off its own frozen-playhead watchdog, not just the end notification — phone locked or not), the lock-screen metadata it borrows while it plays, Save/Discard. |
-| `*View.swift` | The five SwiftUI screens (Download, Browse, Library, Player, Settings — which embeds the Log). `PlayerView.swift` also holds the tap-to-seek scrubber and the `MiniPlayerBar` the other tabs inset above the tab bar. |
-| `FolderView.swift` | Folder detail (tap-to-play, reorder, subfolders, mixtape header/Edit Cover) and Inbox screens. |
+| `*View.swift` | The five SwiftUI screens, in tab order (Browse, Library, Player, Download, Settings — which embeds the Log); none of them sets a navigation title. `LibraryView.swift` also holds `LibraryTab`, the Recent/Folders/Inbox/Watch/All strip. `PlayerView.swift` also holds the tap-to-seek scrubber and the `MiniPlayerBar` the other tabs inset above the tab bar. |
+| `FolderView.swift` | Folder detail (tap-to-play, reorder, subfolders, mixtape header/Edit Cover), plus the Library's Inbox and Recent tabs. |
 | `MixtapeViews.swift` | Mixtape banner rendering (non-destructive crop), the shared folder-row label, and the Edit Cover sheet (PhotosPicker + drag/pinch + font picker). |
-| `WatchFolderView.swift` | The phone's **Watch** virtual-folder screen (manage what's been sent to the watch). |
+| `WatchFolderView.swift` | The phone's Library **Watch** tab (manage what's been sent to the watch). |
 | `WatchManifest.swift` | Wire format shared by the iPhone and watch targets (the sync manifest, the remote-control `RemoteNowPlaying`/`RemoteCommand` types, + WC keys). |
 | `WatchSync.swift` | Phone-side WatchConnectivity bridge: pushes the manifest + audio files, handles the watch's "Clear all". |
 
@@ -1180,16 +1193,16 @@ It's **audio only** (video isn't sent to the watch).
 
 Touch-and-hold a **track** (or a **playlist/folder**) in the library and choose
 **Send to Watch**. Sending **never changes the item's place** in your phone
-library — it only flags it for the watch. A **Watch** folder appears directly
-below the **Inbox**: a *virtual* folder (its tracks really live wherever they
+library — it only flags it for the watch. The Library's **Watch** tab is where
+it lands: a *virtual* folder (its tracks really live wherever they
 normally do) for managing what's on the watch. There it's deliberately spare —
 tap to play, and a single swipe-left action, **Remove from Watch** (no
 song/podcast swipe). Touch-and-hold a track already on the watch and the menu
 shows **Remove from Watch** instead.
 
 The phone is the **source of truth**, and the link runs both ways: tapping
-**Clear all Tracks** on the watch empties the phone's **Watch** folder to match,
-and removing a track from the Watch folder deletes it from the watch on the next
+**Clear all Tracks** on the watch empties the phone's **Watch** tab to match,
+and removing a track from the Watch tab deletes it from the watch on the next
 sync.
 
 ### How the sync works

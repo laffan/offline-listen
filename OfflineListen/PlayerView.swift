@@ -160,8 +160,13 @@ struct PlayerView: View {
                     )
                 }
             }
-            .navigationTitle("Now Playing")
+            // No title, and nothing else needs the bar here — so it goes, and
+            // the artwork gets the height. (Fullscreen video hides it too;
+            // hiding it twice is harmless.)
             .navigationBarTitleDisplayMode(.inline)
+            #if !os(macOS)
+            .toolbar(.hidden, for: .navigationBar)
+            #endif
         }
         .statusBarHidden(isFullscreenVideo)
         // A fresh track starts framed normally — the old one's fullscreen
@@ -605,6 +610,16 @@ struct MiniPlayerBar: View {
     /// replacement.
     let onOpen: () -> Void
 
+    /// The bar's proportions, gathered so its height is one decision rather
+    /// than three. Together they make it about 20 points taller than it was:
+    /// a cover you can make out, and transport buttons you can hit without
+    /// aiming.
+    private enum Metrics {
+        static let artwork: CGFloat = 40
+        static let button: CGFloat = 36
+        static let verticalPadding: CGFloat = 11
+    }
+
     var body: some View {
         if let track = playback.currentTrack {
             VStack(spacing: 0) {
@@ -612,7 +627,7 @@ struct MiniPlayerBar: View {
 
                 HStack(spacing: 10) {
                     Button(action: onOpen) {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
                             // A tiny cover when the track has art (checked
                             // against the library's live copy — art can land
                             // after playback started); the kind icon otherwise.
@@ -620,22 +635,22 @@ struct MiniPlayerBar: View {
                                 Image(platformImage: image)
                                     .resizable()
                                     .scaledToFill()
-                                    .frame(width: 28, height: 28)
-                                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                                    .frame(width: Metrics.artwork, height: Metrics.artwork)
+                                    .clipShape(RoundedRectangle(cornerRadius: 6))
                             } else {
                                 Image(systemName: icon(for: track))
-                                    .font(.footnote)
+                                    .font(.subheadline)
                                     .foregroundStyle(Color.accentColor)
-                                    .frame(width: 16)
+                                    .frame(width: 20)
                             }
-                            VStack(alignment: .leading, spacing: 1) {
+                            VStack(alignment: .leading, spacing: 2) {
                                 Text(track.title)
-                                    .font(.footnote.weight(.medium))
+                                    .font(.subheadline.weight(.medium))
                                     .foregroundStyle(.primary)
                                     .lineLimit(1)
                                 if hasArtist(track) {
                                     Text(track.artist)
-                                        .font(.caption2)
+                                        .font(.caption)
                                         .foregroundStyle(.secondary)
                                         .lineLimit(1)
                                 }
@@ -651,7 +666,7 @@ struct MiniPlayerBar: View {
                         playback.togglePlayPause()
                     } label: {
                         Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
-                            .frame(width: 30, height: 30)
+                            .frame(width: Metrics.button, height: Metrics.button)
                             .contentShape(Rectangle())
                     }
                     .accessibilityLabel(playback.isPlaying ? "Pause" : "Play")
@@ -660,16 +675,16 @@ struct MiniPlayerBar: View {
                         playback.next()
                     } label: {
                         Image(systemName: "forward.fill")
-                            .frame(width: 30, height: 30)
+                            .frame(width: Metrics.button, height: Metrics.button)
                             .contentShape(Rectangle())
                     }
                     .disabled(playback.nextTrack == nil)
                     .accessibilityLabel("Next track")
                 }
-                .font(.subheadline)
+                .font(.body)
                 .buttonStyle(.borderless)
                 .padding(.horizontal, 14)
-                .padding(.vertical, 6)
+                .padding(.vertical, Metrics.verticalPadding)
             }
             .background(.bar)
             .overlay(alignment: .top) {

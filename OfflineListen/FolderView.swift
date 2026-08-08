@@ -314,8 +314,8 @@ struct FolderDetailView: View {
     }
 }
 
-/// The pinned Inbox: every active track that hasn't been listened to yet.
-/// Tracks leave automatically once playback starts, or via Mark Played.
+/// The Library's **Inbox** tab: every active track that hasn't been listened to
+/// yet. Tracks leave automatically once playback starts, or via Mark Played.
 struct InboxView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var playback: PlaybackManager
@@ -422,8 +422,8 @@ struct InboxView: View {
                 .miniPlayerClearance()
             }
         }
-        .navigationTitle("Inbox")
-        .navigationBarTitleDisplayMode(.inline)
+        // No title of its own — it's a tab of the Library, not a screen you
+        // pushed into, and the tab bar above already names it.
         .editMetadataSheet(for: $editingTrack)
         .breakChaptersConfirm(for: $splittingTrack)
         .sheet(item: $chapterContext) { context in
@@ -441,7 +441,7 @@ struct InboxView: View {
     }
 }
 
-/// The **Recent** virtual folder: what you've played, most recent first.
+/// The Library's **Recent** tab: what you've played, most recent first.
 ///
 /// A log rather than a place — the tracks live wherever they normally do, and
 /// nothing here moves or deletes them. A track appears once per listen (with
@@ -519,8 +519,7 @@ struct RecentTracksView: View {
                 .miniPlayerClearance()
             }
         }
-        .navigationTitle("Recent")
-        .navigationBarTitleDisplayMode(.inline)
+        // See InboxView: a tab of the Library, so no title of its own.
         .editMetadataSheet(for: $editingTrack)
         .sheet(item: $chapterContext) { context in
             ChapterListView(track: context.track, queue: context.queue, onPlay: onPlay)

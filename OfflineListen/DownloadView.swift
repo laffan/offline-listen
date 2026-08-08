@@ -55,7 +55,9 @@ struct DownloadView: View {
                 }
             }
             .padding(.top)
-            .navigationTitle("Download")
+            // No title — the input field says what this screen is, and the
+            // height a header would take goes to the queue.
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Menu {

@@ -1,10 +1,11 @@
 import SwiftUI
 
+/// The tabs, in the order they sit in the tab bar.
 enum Tab: Hashable {
-    case download
     case browse
     case library
     case player
+    case download
     case settings
 }
 
@@ -24,13 +25,9 @@ struct RootView: View {
         // (outside each screen's own NavigationStack) rather than to the
         // TabView, which is what lets a screen's own bottom bar — the Every
         // Noise scan/artist bars — stack neatly above it.
+        // Left to right: the two screens you browse with, the player they feed,
+        // then the queue and the settings behind them.
         TabView(selection: $selection) {
-            DownloadView(onPlay: { selection = .player })
-                .miniPlayerBar { selection = .player }
-                .tabItem { Label("Download", systemImage: "arrow.down.circle") }
-                .badge(pendingDownloads == 0 ? nil : Text("\(pendingDownloads)"))
-                .tag(Tab.download)
-
             BrowseView()
                 .miniPlayerBar { selection = .player }
                 .tabItem { Label("Browse", systemImage: "safari") }
@@ -44,6 +41,12 @@ struct RootView: View {
             PlayerView()
                 .tabItem { Label("Player", systemImage: "play.circle") }
                 .tag(Tab.player)
+
+            DownloadView(onPlay: { selection = .player })
+                .miniPlayerBar { selection = .player }
+                .tabItem { Label("Download", systemImage: "arrow.down.circle") }
+                .badge(pendingDownloads == 0 ? nil : Text("\(pendingDownloads)"))
+                .tag(Tab.download)
 
             SettingsView()
                 .miniPlayerBar { selection = .player }

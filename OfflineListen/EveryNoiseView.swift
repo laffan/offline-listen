@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The in-app Every Noise at Once browser (the globe button in Browse): the
+/// The in-app Every Noise at Once browser — the Browse tab's own screen: the
 /// site's genre map, faithfully — **Map**, **List** and **Scan** modes plus a
 /// **Find** field, at both levels. Tapping a genre reveals its constituent
 /// artists positioned in rough relation to one another; tapping an artist
@@ -68,7 +68,8 @@ struct EveryNoiseView: View {
                 browser
             }
         }
-        .navigationTitle("Every Noise")
+        // No title: this is the Browse tab's own screen, and the map wants every
+        // point of height it can get. The mode bar underneath says where you are.
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(isPresented: genreIsPushed) {
             if let pushedGenre {

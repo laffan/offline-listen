@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The "Watch" virtual folder: every track that's been pushed to the Apple
+/// The Library's **Watch** tab: every track that's been pushed to the Apple
 /// Watch, regardless of where it otherwise lives in the library. Sending a track
 /// here never moves it elsewhere — this is purely for managing what's on the
 /// watch (the reverse is also true: the watch's "Clear all Tracks" empties this).
@@ -65,8 +65,7 @@ struct WatchFolderView: View {
                 .miniPlayerClearance()
             }
         }
-        .navigationTitle("Watch")
-        .navigationBarTitleDisplayMode(.inline)
+        // See InboxView: a tab of the Library, so no title of its own.
     }
 
     private func row(for track: Track, queue: [Track]) -> some View {

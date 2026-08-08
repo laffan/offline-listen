@@ -1,72 +1,86 @@
 import SwiftUI
 
-/// The Browse tab: keeps tabs on audio sources (YouTube channels/playlists,
-/// RSS feeds, and AI-curated artist/genre/country lists) and presents what
-/// they surface for curation — download, preview, save or discard.
+/// The Browse tab. The **Every Noise at Once** browser *is* the tab — the whole
+/// genre map, open the moment you get here — and the sources you keep tabs on
+/// (YouTube channels/playlists, RSS feeds, AI-curated artist/genre/country
+/// lists) sit one tap away behind the button in the top-right corner. That's
+/// the reverse of how it started: the map used to be the thing behind a button.
 struct BrowseView: View {
+    var body: some View {
+        NavigationStack {
+            EveryNoiseView()
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        // A push, not a cover: the sources list lives inside
+                        // the main nav — tab bar in place — like every other
+                        // Browse screen. A link rather than a presented
+                        // destination, since the map already carries two of
+                        // those for genres and artists.
+                        NavigationLink {
+                            BrowseSourcesView()
+                        } label: {
+                            Image(systemName: "rectangle.stack")
+                        }
+                        .accessibilityLabel("Your sources")
+                    }
+                }
+        }
+    }
+}
+
+/// The sources screen: what each source has surfaced, ready to curate —
+/// download, preview, save or discard. Reached from the button in the Browse
+/// tab's top-right corner.
+struct BrowseSourcesView: View {
     @EnvironmentObject private var browse: BrowseStore
 
     /// The kind picked from the "+" menu, driving the add sheet.
     @State private var addingKind: BrowseSourceKind?
-    /// The world button beside "+": the Every Noise at Once browser.
-    @State private var showingEveryNoise = false
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                // The Audio/Video toggle beneath the title (kept out of the
-                // toolbar so it doesn't crowd the add button): every item's
-                // Download and Preview act in this mode, mirroring the
-                // Download tab's own toggle.
-                HStack {
-                    Picker("Mode", selection: $browse.downloadMode) {
-                        ForEach(DownloadMode.allCases) { m in
-                            Text(m.displayName).tag(m)
-                        }
+        VStack(spacing: 0) {
+            // The Audio/Video toggle beneath the title (kept out of the
+            // toolbar so it doesn't crowd the add button): every item's
+            // Download and Preview act in this mode, mirroring the
+            // Download tab's own toggle.
+            HStack {
+                Picker("Mode", selection: $browse.downloadMode) {
+                    ForEach(DownloadMode.allCases) { m in
+                        Text(m.displayName).tag(m)
                     }
-                    .pickerStyle(.segmented)
-                    .frame(maxWidth: 200)
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 200)
 
-                    Spacer()
-                }
-                .padding(.horizontal)
-                .padding(.bottom, 4)
+                Spacer()
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 4)
 
-                if browse.sources.isEmpty {
-                    emptyState
-                } else {
-                    sourceList
+            if browse.sources.isEmpty {
+                emptyState
+            } else {
+                sourceList
+            }
+        }
+        .navigationTitle("Sources")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            // Both on the trailing edge: the leading one belongs to the back
+            // button now that this is a screen you arrive at rather than land on.
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
+                Button {
+                    Task { await browse.refreshAll() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
                 }
+                .disabled(browse.sources.isEmpty || !browse.refreshing.isEmpty)
+                .accessibilityLabel("Refresh all sources")
+                addMenu
             }
-            .navigationTitle("Browse")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button {
-                        Task { await browse.refreshAll() }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .disabled(browse.sources.isEmpty || !browse.refreshing.isEmpty)
-                    .accessibilityLabel("Refresh all sources")
-                }
-                ToolbarItemGroup(placement: .navigationBarTrailing) {
-                    Button {
-                        showingEveryNoise = true
-                    } label: {
-                        Image(systemName: "globe.americas")
-                    }
-                    .accessibilityLabel("Browse the Every Noise genre map")
-                    addMenu
-                }
-            }
-            .sheet(item: $addingKind) { kind in
-                AddBrowseSourceView(kind: kind)
-            }
-            // A push, not a cover: the browser lives inside the main nav —
-            // tab bar in place — like every other Browse screen.
-            .navigationDestination(isPresented: $showingEveryNoise) {
-                EveryNoiseView()
-            }
+        }
+        .sheet(item: $addingKind) { kind in
+            AddBrowseSourceView(kind: kind)
         }
     }
 

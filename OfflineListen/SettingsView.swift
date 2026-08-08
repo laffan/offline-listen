@@ -125,7 +125,13 @@ struct SettingsView: View {
             }
             .settingsFormChrome()
             .miniPlayerClearance()
-            .navigationTitle("Settings")
+            // No title, and — with nothing in the toolbar to keep it around
+            // for — no navigation bar either: the form starts at the top of
+            // the screen. Pushed screens (the Log) bring their own bar back.
+            .navigationBarTitleDisplayMode(.inline)
+            #if !os(macOS)
+            .toolbar(.hidden, for: .navigationBar)
+            #endif
             .fileImporter(isPresented: $showFolderPicker, allowedContentTypes: [.folder]) { result in
                 if case .success(let url) = result {
                     localSync.addRoot(url)
