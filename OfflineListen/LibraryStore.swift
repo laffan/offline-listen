@@ -330,9 +330,15 @@ final class LibraryStore: ObservableObject {
 
     func load() {
         loadRecents()
+        defer {
+            loadFolders()
+            // Not in `loadRecents`: the log is only ids, and resolving them
+            // into the titles the widget shows needs the tracks, which are
+            // decoded below it.
+            WidgetBridge.publishSongs(from: self)
+        }
         guard let data = try? Data(contentsOf: AppPaths.libraryIndex) else {
             tracks = []
-            loadFolders()
             return
         }
         do {
@@ -341,7 +347,6 @@ final class LibraryStore: ObservableObject {
             print("[LibraryStore] failed to decode index: \(error)")
             tracks = []
         }
-        loadFolders()
     }
 
     // MARK: - Recent listens
@@ -367,6 +372,9 @@ final class LibraryStore: ObservableObject {
         } catch {
             print("[LibraryStore] failed to save recents: \(error)")
         }
+        // Every change to the log funnels through here, so this is the one
+        // place the home-screen widget's song rows need to be republished from.
+        WidgetBridge.publishSongs(from: self)
     }
 
     /// Logs a play for the Recent folder. Called the moment playback *starts*

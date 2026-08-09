@@ -11,6 +11,9 @@ enum Tab: Hashable {
 
 struct RootView: View {
     @EnvironmentObject private var downloads: DownloadManager
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var playback: PlaybackManager
+    @EnvironmentObject private var router: AppRouter
     @State private var selection: Tab = .library
 
     /// Downloads still working or waiting — the number shown on the Download
@@ -53,5 +56,33 @@ struct RootView: View {
                 .tabItem { Label("Settings", systemImage: "gearshape") }
                 .tag(Tab.settings)
         }
+        // A widget tap can land before this view exists (a cold launch from the
+        // home screen), in which case the link is already parked and no change
+        // fires — so both routes are checked on appear as well.
+        .onAppear { routeGenre(); routeTrack() }
+        .onChange(of: router.pendingGenreKey) { _ in routeGenre() }
+        .onChange(of: router.pendingTrackID) { _ in routeTrack() }
+    }
+
+    /// The tab is all this level does for a genre — finding it in the index and
+    /// pushing it belongs to the browser, which owns the navigation stack and
+    /// knows when the index has finished loading.
+    private func routeGenre() {
+        guard router.pendingGenreKey != nil else { return }
+        selection = .browse
+    }
+
+    /// Starts a track tapped in the widget, with the Recent list as its queue —
+    /// the same queue tapping that row inside the app would have given it.
+    private func routeTrack() {
+        guard let id = router.pendingTrackID else { return }
+        router.pendingTrackID = nil
+        guard let track = library.track(withID: id) else {
+            appLog("Widget asked for a track that's no longer in the library.",
+                   level: .warning, category: "Widget")
+            return
+        }
+        playback.play(track, in: library.recentTracks)
+        selection = .player
     }
 }

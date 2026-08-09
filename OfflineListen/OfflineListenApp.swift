@@ -17,6 +17,9 @@ struct OfflineListenApp: App {
     /// (which exports it) see the same store — a browser-local one would be
     /// invisible to Settings.
     @StateObject private var everyNoiseUpdates: ENUpdateStore
+    /// Where a tapped home-screen widget row is parked until the screen that
+    /// can act on it is up.
+    @StateObject private var router = AppRouter()
 
     @Environment(\.scenePhase) private var scenePhase
 
@@ -79,6 +82,7 @@ struct OfflineListenApp: App {
                 .environmentObject(browse)
                 .environmentObject(localSync)
                 .environmentObject(everyNoiseUpdates)
+                .environmentObject(router)
                 .environmentObject(LogStore.shared)
                 #if os(macOS)
                 // Dark, whatever the system is set to. `preferredColorScheme`
@@ -97,6 +101,10 @@ struct OfflineListenApp: App {
                 // another device, or the folder may have been offline last
                 // time). Skipped outright when no folder is configured.
                 .task { everyNoiseUpdates.writeToDataFolder() }
+                // The widget's genre rows come from a log the browser only
+                // reads when the Browse tab is opened, so they're refreshed
+                // from disk at launch instead of waiting on a visit.
+                .task { WidgetBridge.publishGenresFromHistory() }
                 #if os(macOS)
                 // Whether the Mac has a yt-dlp binary behind the native
                 // extractors is the single biggest thing separating one install
@@ -104,7 +112,13 @@ struct OfflineListenApp: App {
                 .task { await MacYtDlp.logStartupState() }
                 #endif
                 .onAppear { importShared() }
-                .onOpenURL { _ in importShared() }
+                // A widget row's link is handled by the router; anything else
+                // on the scheme is the Share Extension bringing us forward with
+                // a URL waiting in the App Group. (Foregrounding drains the
+                // inbox too, so a widget tap loses nothing by not doing it.)
+                .onOpenURL { url in
+                    if !router.handle(url) { importShared() }
+                }
                 .onChange(of: scenePhase) { phase in
                     if phase == .active {
                         importShared()

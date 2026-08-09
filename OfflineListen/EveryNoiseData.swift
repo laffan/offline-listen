@@ -324,6 +324,9 @@ final class EveryNoiseStore: ObservableObject {
     private func saveHistory() {
         guard let data = try? JSONEncoder().encode(history) else { return }
         try? data.write(to: AppPaths.everyNoiseHistory, options: .atomic)
+        // Every visit, deletion and clear goes through here, so it's where the
+        // home-screen widget's genre rows are republished from.
+        WidgetBridge.publishGenres(from: history)
     }
 }
 

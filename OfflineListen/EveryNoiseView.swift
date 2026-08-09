@@ -12,6 +12,9 @@ struct EveryNoiseView: View {
     /// Gates the Find field's Spotify target and the scan's "+", both of which
     /// need the live catalogue to say anything.
     @EnvironmentObject private var spotifySettings: SpotifySettingsStore
+    /// Carries a genre tapped in the home-screen widget, parked until the index
+    /// below has loaded and can resolve its key.
+    @EnvironmentObject private var router: AppRouter
     /// The maps ignore the bottom safe area, so the mini player's height is
     /// handed to them as extra content inset (UIKit can't see the SwiftUI bar).
     @Environment(\.miniPlayerHeight) private var miniPlayerHeight
@@ -93,8 +96,45 @@ struct EveryNoiseView: View {
         }
         .environmentObject(store)
         .environmentObject(player)
-        .onAppear { store.loadIfNeeded() }
+        .onAppear {
+            store.loadIfNeeded()
+            openPendingGenre()
+        }
+        // Three ways a widget's genre can arrive: the tab was already up (the
+        // key changes), the tab was just switched to (appear), or the tap cold-
+        // launched the app and the index is still being read off disk (the
+        // genres land).
+        .onChange(of: router.pendingGenreKey) { _ in openPendingGenre() }
+        .onChange(of: store.genres.count) { _ in openPendingGenre() }
         .onDisappear { player.stop() }
+    }
+
+    /// Opens the genre a widget row asked for, once the index can name it.
+    /// Nothing is cleared until it resolves, so a tap during the load isn't
+    /// dropped — and an unknown key (a dataset rebuilt without that genre) is,
+    /// rather than being retried forever.
+    private func openPendingGenre() {
+        guard let key = router.pendingGenreKey else { return }
+        switch store.state {
+        case .idle, .loading: return  // the index is still being read; try again when it lands
+        case .ready, .missing: break
+        }
+        router.pendingGenreKey = nil
+        guard let genre = store.genres.first(where: { $0.key == key }) else {
+            appLog("Widget asked for genre '\(key)', which isn't in the map.",
+                   level: .warning, category: "Widget")
+            return
+        }
+        if pushedGenre == nil {
+            push(genre)
+        } else {
+            // Already inside a genre: `navigationDestination(isPresented:)` is
+            // showing one, and swapping the value under it leaves the old
+            // screen up. Pop first, then push on the next turn of the run loop.
+            pushedGenre = nil
+            pushedArtistID = nil
+            DispatchQueue.main.async { self.push(genre) }
+        }
     }
 
     /// The Find targets this level can actually answer. Spotify's needs

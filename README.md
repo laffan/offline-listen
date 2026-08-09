@@ -1148,6 +1148,8 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `WatchFolderView.swift` | The phone's Library **Watch** tab (manage what's been sent to the watch). |
 | `WatchManifest.swift` | Wire format shared by the iPhone and watch targets (the sync manifest, the remote-control `RemoteNowPlaying`/`RemoteCommand` types, + WC keys). |
 | `WatchSync.swift` | Phone-side WatchConnectivity bridge: pushes the manifest + audio files, handles the watch's "Clear all". |
+| `WidgetShared.swift` | Wire format shared by the app and the widget targets (the snapshot the widget draws, its App Group storage, and the `offlinelisten://` deep links) — the same trick `WatchManifest.swift` uses for the watch. |
+| `WidgetBridge.swift` | The app's half: republishes the snapshot from the Recent log and the Every Noise visit log, reloads the widget's timeline when it actually changed, and `AppRouter`, which parks a tapped row until the screen that can act on it is up. |
 
 The companion watch app lives under `OfflineListenWatch/` (see
 [Companion Apple Watch app](#companion-apple-watch-app)).
@@ -1255,6 +1257,73 @@ can't drift — the same trick the Share Extension uses with `SharedInbox.swift`
 | `WatchRootView.swift` | The three swipeable panes. |
 | `WatchListView.swift` / `WatchListenView.swift` / `WatchSettingsView.swift` | The List / Listen / Settings panes. The Listen pane doubles as the phone **remote** when the phone is playing. |
 
+## Home screen widget
+
+A **medium widget** puts the two threads you were in the middle of on the home
+screen: the last **two genres** you opened in the Every Noise browser on the
+left, the last **two songs** you played on the right. Every row is a link to
+the thing itself — tapping a genre opens **that genre's artist map**, tapping a
+song **starts playing it** — rather than to the app's front door.
+
+The rows are the same lists the app already keeps, deduplicated: Browse's
+History and the Library's Recent are both *logs*, so the last two entries can
+be the same genre twice or the same song twice, and the widget wants two
+different things. Genres wear their **map colour**; songs show title over
+artist.
+
+**Medium only, deliberately.** WidgetKit gives a `systemSmall` widget a single
+tap target and ignores `Link` views inside it, so a small version could only
+ever open the app — which is the one thing this widget exists not to do.
+
+### How it gets its data
+
+A widget extension is its own process with its own container. It can't read
+`Documents/`, so `everynoise-history.json` and `recents.json` are out of
+reach — and decoding a 200-entry log plus the whole library to draw four rows
+is not work a widget has the budget for anyway. So the app leaves a small
+**pre-resolved snapshot** (`widget-snapshot.json`) in the **App Group**
+container, and the widget only ever reads that.
+
+The two halves are written independently, because they come from separate
+stores: songs from `LibraryStore`'s `saveRecents()`, genres from
+`EveryNoiseStore`'s `saveHistory()` — the single funnel each log's mutations
+already pass through. Each writer re-reads the snapshot, replaces its own half
+and writes it back, so neither can clobber the other's rows. The genre half is
+also refreshed **from disk at launch**, since the browser's visit log isn't
+loaded at all until the Browse tab is opened.
+
+A write that changes nothing is dropped rather than published, because those
+save paths fire far more often than the top two rows change and WidgetKit
+meters reloads. When something *does* change, the app reloads this widget's
+timeline explicitly — so the widget's own timeline policy is `.never`, and it
+spends no wake-ups re-reading a file that can't have changed on its own.
+
+Taps come back as `offlinelisten://genre?key=…` and `offlinelisten://track?id=…`
+on the URL scheme the Share Extension already uses (`WidgetDeepLink` builds and
+parses them, compiled into both targets so the two sides can't drift; anything
+it doesn't recognise — `offlinelisten://import` — still falls through to the
+shared-inbox drain). Neither destination is reachable synchronously from
+`onOpenURL`, so `AppRouter` parks the link: `RootView` picks the tab and starts
+the track, and the Every Noise browser picks up the genre once its index has
+finished loading off disk — which on a cold launch from a widget tap is
+*after* the link arrives. A track that has since been deleted, or a genre key
+a rebuilt dataset no longer carries, logs a warning under `Widget` and does
+nothing.
+
+### Required Xcode setup for the widget
+
+The project wires up the **OfflineListenWidget** target, embeds it in the app
+and declares the entitlement, but — exactly as with the Share Extension —
+**signing and the App Group must be set in Xcode**:
+
+1. Select the **OfflineListenWidget** target → *Signing & Capabilities* → set
+   your **Team**.
+2. Confirm it has the **App Groups** capability with the same
+   `group.com.offlinelisten.app` the app and the Share Extension use. Without
+   it the widget draws its empty state — it has nothing to read.
+3. The bundle id defaults to `com.offlinelisten.app.OfflineListenWidget` (a
+   child of the app id); change it to match if you changed the app's.
+
 ## Share from other apps
 
 A **Share Extension** lets you send a link straight from Safari, the YouTube
@@ -1282,8 +1351,10 @@ from source alone):
    *Signing & Capabilities* → set your **Team**.
 2. Confirm both targets have the **App Groups** capability with the same group,
    `group.com.offlinelisten.app` (the `.entitlements` files declare it; let
-   Xcode register/provision it). If you change the group id, update it in both
-   entitlements files and in `SharedInbox.appGroup`.
+   Xcode register/provision it). The **widget** target uses the same group —
+   see [Required Xcode setup for the widget](#required-xcode-setup-for-the-widget).
+   If you change the group id, update it in all three entitlements files and in
+   `SharedInbox.appGroup`.
 3. Bundle IDs default to `com.offlinelisten.app` and
    `com.offlinelisten.app.ShareExtension` — change both (keep the extension a
    child of the app id) if those are taken.
@@ -1879,3 +1950,7 @@ likewise written against the documented **WatchConnectivity** / AVFoundation
 APIs; its target is wired into `project.pbxproj` by hand (set the watch **Team**
 in Xcode before building — see
 [Required Xcode setup for the watch app](#required-xcode-setup-for-the-watch-app)).
+The **home screen widget** is hand-wired the same way, against the documented
+**WidgetKit** API; it needs the **Team** and the shared **App Group** set in
+Xcode before it can read anything — see
+[Required Xcode setup for the widget](#required-xcode-setup-for-the-widget).
