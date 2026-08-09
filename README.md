@@ -1261,9 +1261,10 @@ can't drift — the same trick the Share Extension uses with `SharedInbox.swift`
 
 A widget puts the two threads you were in the middle of on the home screen:
 what you last opened in the **Every Noise browser** beside what you last
-**played**. Every row is a link to the thing itself — a genre opens **that
-genre's artist map**, an artist opens **their page**, a song **starts
-playing** — rather than to the app's front door.
+**played**. Rows link to the thing itself — a genre opens **that genre's artist
+map**, an artist opens **their page**, a song **starts playing** — rather than
+to the app's front door. (At the sizes iOS allows more than one tap target;
+see [Every size](#every-size-and-where-the-small-ones-tap-goes) below.)
 
 Touch and hold it → **Edit Widget** for its one option, **Browse**:
 
@@ -1281,22 +1282,31 @@ Browse's History and the Library's Recent are *logs*: they collapse only
 consecutive repeats, so the top entries can otherwise be the same genre — or
 the same song — twice over.
 
-### Every size, and why two of them show one thing
+### Every size, and where the small one's tap goes
 
-| Size | Layout |
-|------|--------|
-| **Small** | one item |
-| **Medium** | two columns, two rows each |
-| **Large** | two stacked sections, three rows each |
-| **Extra Large** (iPad) | two columns, four rows each |
-| **Rectangular** (lock screen) | one item, compact |
+Every size shows **both** lists — a browse row and a song row at the least.
+What changes is how deep they go, and how many tap targets WidgetKit will give
+them:
 
-The single-item sizes aren't a compromise, they're the rule WidgetKit sets: a
-**small** widget — and any lock-screen one — has exactly one tap target, and
-`Link` views inside it are **ignored**. Four rows that all went to the same
-place would be a lie, so those sizes show **the single most recent thing across
-both lists** (respecting the Browse option) and go there. It's also the honest
-answer to what a small square is for: *what was I just doing*.
+| Size | Layout | Taps |
+|------|--------|------|
+| **Small** | stacked, one row each | one |
+| **Medium** | two columns, two rows each | per row |
+| **Large** | two stacked sections, three rows each | per row |
+| **Extra Large** (iPad) | two columns, four rows each | per row |
+| **Rectangular** (lock screen) | stacked, one row each | one |
+
+A **small** widget — and any lock-screen one — has exactly **one** tap target:
+`Link` views inside it are **ignored** and only `widgetURL` is read. That's
+WidgetKit's rule, not a choice, and it doesn't stop those sizes showing both
+rows, since seeing what you were doing is most of what a small square is for.
+
+The tap goes to the **song**. Picking by recency instead would mean the same
+button doing different things on different days, which is the last thing a
+home-screen button should do; playing is also the action this app exists for,
+while the browse row is there to be read. Rather than leave that to be
+discovered, the row that *is* the destination wears a **play glyph** — and with
+nothing played yet, the browse row takes the tap and the glyph moves off it.
 
 ### How it gets its data
 

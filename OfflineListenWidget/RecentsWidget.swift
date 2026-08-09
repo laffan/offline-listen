@@ -7,22 +7,23 @@ import WidgetKit
 /// browser beside what you last played, each row a link straight to the thing
 /// itself rather than to the app's front door.
 ///
-/// It runs at every home-screen size plus the lock screen's rectangular slot,
-/// and the shape changes with the room available rather than being scaled:
+/// It runs at every home-screen size plus the lock screen's rectangular slot.
+/// Every size shows **both** lists; what changes is how deep they go and how
+/// many tap targets WidgetKit will give them:
 ///
-/// | Family | Layout |
-/// |---|---|
-/// | `systemSmall` | one item — see below |
-/// | `systemMedium` | two columns, two rows each |
-/// | `systemLarge` | two stacked sections, three rows each |
-/// | `systemExtraLarge` | two columns, four rows each |
-/// | `accessoryRectangular` | one item, compact |
+/// | Family | Layout | Taps |
+/// |---|---|---|
+/// | `systemSmall` | stacked, one row each | one |
+/// | `systemMedium` | two columns, two rows each | per row |
+/// | `systemLarge` | two stacked sections, three rows each | per row |
+/// | `systemExtraLarge` | two columns, four rows each | per row |
+/// | `accessoryRectangular` | stacked, one row each | one |
 ///
-/// **The single-item sizes aren't a compromise, they're the rule WidgetKit
-/// sets**: a `systemSmall` (and any accessory) widget has exactly one tap
-/// target and `Link` views inside it are ignored. A list of four rows that all
-/// went to the same place would be a lie, so those sizes show the one most
-/// recent thing across both lists and go there.
+/// A `systemSmall` widget — and any accessory one — has exactly **one** tap
+/// target: `Link` views inside it are ignored, and only `widgetURL` is read.
+/// So those sizes still draw both rows (seeing what you were doing is most of
+/// the point) and send the tap to the song, marking that row with a play glyph
+/// so which one is live is visible rather than guessed at.
 struct RecentsWidget: Widget {
     var body: some WidgetConfiguration {
         AppIntentConfiguration(kind: WidgetSnapshotStore.kind,
@@ -133,9 +134,9 @@ struct RecentsWidgetView: View {
     private var layout: some View {
         switch family {
         case .systemSmall:
-            singleItem
+            compactPair
         case .accessoryRectangular:
-            accessoryItem
+            accessoryPair
         case .systemLarge:
             stackedSections
         default:
@@ -147,11 +148,13 @@ struct RecentsWidgetView: View {
     // MARK: Rows to draw
 
     /// How many rows a section gets. Stacked sections share the height, so
-    /// large takes fewer than the (taller, side-by-side) extra-large.
+    /// large takes fewer than the (taller, side-by-side) extra-large; the
+    /// single-tap sizes show one of each.
     private var rowsPerSection: Int {
         switch family {
         case .systemLarge: return 3
         case .systemExtraLarge: return 4
+        case .systemSmall, .accessoryRectangular: return 1
         default: return 2
         }
     }
@@ -176,13 +179,17 @@ struct RecentsWidgetView: View {
         entry.snapshot.songs.prefix(rowsPerSection).map(\.row)
     }
 
-    /// The most recent thing across both lists — everything a single-tap-target
-    /// size can honestly offer. Only the head of each list can win, so only
-    /// those two are compared.
-    private var topRow: WidgetRow? {
-        [browseEntries.first?.row, entry.snapshot.songs.first?.row]
-            .compactMap { $0 }
-            .max { $0.date < $1.date }
+    /// Where the whole widget goes at the sizes that get one tap target.
+    ///
+    /// The **song**, when there is one. Both rows are drawn either way, but only
+    /// one of them can be the destination, and picking by recency would mean a
+    /// tap doing different things on different days — the last thing a
+    /// home-screen button should do. Playing is also the action this app is
+    /// for; the browse row is there to be *read*. Which one is live is said out
+    /// loud rather than left to be discovered: the destination row wears a play
+    /// glyph. With nothing played yet, the browse row takes the tap.
+    private var singleTapTarget: URL? {
+        songRows.first?.url ?? browseRows.first?.url
     }
 
     private var browseTitle: String {
@@ -260,61 +267,101 @@ struct RecentsWidgetView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Small: one item, filling the square, with the whole widget as its link.
+    /// Small: one browse row over one song row — the same two sections the
+    /// bigger sizes show, one deep. Only the tap target is different, because
+    /// a `systemSmall` widget has exactly one.
     @ViewBuilder
-    private var singleItem: some View {
-        if let row = topRow {
-            VStack(alignment: .leading, spacing: 0) {
-                Image(systemName: row.systemImage)
-                    .font(.title3)
-                    .foregroundStyle(row.tint ?? Color.accentColor)
-                Spacer(minLength: 8)
-                Text(row.caption)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
-                Text(row.title)
-                    .font(.headline)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.7)
-                if let subtitle = row.subtitle {
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+    private var compactPair: some View {
+        if browseRows.isEmpty && songRows.isEmpty {
+            emptyState
+        } else {
+            VStack(alignment: .leading, spacing: 7) {
+                compactEntry(caption: browseRows.first?.caption ?? browseTitle,
+                             row: browseRows.first,
+                             emptyText: browseEmptyText)
+                Divider()
+                compactEntry(caption: "Played",
+                             row: songRows.first,
+                             emptyText: "Nothing played yet",
+                             // Marked only when it really is where the tap
+                             // goes — with no song, the browse row is.
+                             isTapTarget: songRows.first != nil)
+                Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .widgetURL(row.url)
-        } else {
-            emptyState
+            .widgetURL(singleTapTarget)
         }
     }
 
-    /// The lock screen's rectangular slot: the same one item, no colour (the
-    /// system flattens it there anyway) and no room for a glyph of its own.
-    @ViewBuilder
-    private var accessoryItem: some View {
-        if let row = topRow {
-            VStack(alignment: .leading, spacing: 1) {
-                Label(row.caption, systemImage: row.systemImage)
-                    .font(.caption2)
-                    .widgetAccentable()
-                Text(row.title)
-                    .font(.headline)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+    /// One labelled line of the small layout.
+    private func compactEntry(caption: String, row: WidgetRow?,
+                              emptyText: String, isTapTarget: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(caption)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+            if let row {
+                HStack(spacing: 5) {
+                    Image(systemName: row.systemImage)
+                        .font(.caption)
+                        .foregroundStyle(row.tint ?? Color.secondary)
+                    Text(row.title)
+                        .font(.subheadline.weight(.medium))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                    if isTapTarget {
+                        Spacer(minLength: 2)
+                        Image(systemName: "play.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 if let subtitle = row.subtitle {
                     Text(subtitle)
                         .font(.caption2)
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
+                }
+            } else {
+                Text(emptyText)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        // Full width, so the play glyph sits at the widget's trailing edge
+        // rather than hard against the title it follows.
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The lock screen's rectangular slot: the same pair, three lines deep and
+    /// without colour — the system flattens it there anyway.
+    @ViewBuilder
+    private var accessoryPair: some View {
+        if browseRows.isEmpty && songRows.isEmpty {
+            Text("Nothing yet").font(.caption)
+        } else {
+            VStack(alignment: .leading, spacing: 1) {
+                if let row = browseRows.first {
+                    Label(row.title, systemImage: row.systemImage)
+                        .font(.caption)
+                        .lineLimit(1)
+                        .widgetAccentable()
+                }
+                if let row = songRows.first {
+                    Text(row.title)
+                        .font(.headline)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                    if let subtitle = row.subtitle {
+                        Text(subtitle)
+                            .font(.caption2)
+                            .lineLimit(1)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .widgetURL(row.url)
-        } else {
-            Text("Nothing yet")
-                .font(.caption)
+            .widgetURL(singleTapTarget)
         }
     }
 
