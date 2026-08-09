@@ -92,6 +92,7 @@
 		7B0000000000000000000004 /* SharedInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A00000000000000000000A5 /* SharedInbox.swift */; };
 		7B0000000000000000000005 /* WidgetShared.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A0000000000000000000006 /* WidgetShared.swift */; };
 		7B0000000000000000000006 /* WidgetBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A0000000000000000000007 /* WidgetBridge.swift */; };
+		7B0000000000000000000007 /* RecentsConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A0000000000000000000008 /* RecentsConfiguration.swift */; };
 		7B0000000000000000000010 /* OfflineListenWidget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 7A0000000000000000000005 /* OfflineListenWidget.appex */; platformFilters = (ios, ); settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
@@ -236,6 +237,7 @@
 		7A0000000000000000000005 /* OfflineListenWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = OfflineListenWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		7A0000000000000000000006 /* WidgetShared.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetShared.swift; sourceTree = "<group>"; };
 		7A0000000000000000000007 /* WidgetBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetBridge.swift; sourceTree = "<group>"; };
+		7A0000000000000000000008 /* RecentsConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentsConfiguration.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -383,6 +385,7 @@
 			children = (
 				7A0000000000000000000001 /* OfflineListenWidgetBundle.swift */,
 				7A0000000000000000000002 /* RecentsWidget.swift */,
+				7A0000000000000000000008 /* RecentsConfiguration.swift */,
 				7A0000000000000000000003 /* Info.plist */,
 				7A0000000000000000000004 /* OfflineListenWidget.entitlements */,
 			);
@@ -676,6 +679,7 @@
 			files = (
 				7B0000000000000000000001 /* OfflineListenWidgetBundle.swift in Sources */,
 				7B0000000000000000000002 /* RecentsWidget.swift in Sources */,
+				7B0000000000000000000007 /* RecentsConfiguration.swift in Sources */,
 				7B0000000000000000000003 /* WidgetShared.swift in Sources */,
 				7B0000000000000000000004 /* SharedInbox.swift in Sources */,
 			);
@@ -917,7 +921,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = OfflineListenWidget/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -948,7 +952,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = OfflineListenWidget/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

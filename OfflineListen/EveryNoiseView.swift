@@ -12,8 +12,8 @@ struct EveryNoiseView: View {
     /// Gates the Find field's Spotify target and the scan's "+", both of which
     /// need the live catalogue to say anything.
     @EnvironmentObject private var spotifySettings: SpotifySettingsStore
-    /// Carries a genre tapped in the home-screen widget, parked until the index
-    /// below has loaded and can resolve its key.
+    /// Carries a row tapped in the home-screen widget, parked until the index
+    /// below has loaded and can resolve it.
     @EnvironmentObject private var router: AppRouter
     /// The maps ignore the bottom safe area, so the mini player's height is
     /// handed to them as extra content inset (UIKit can't see the SwiftUI bar).
@@ -98,43 +98,71 @@ struct EveryNoiseView: View {
         .environmentObject(player)
         .onAppear {
             store.loadIfNeeded()
-            openPendingGenre()
+            openPendingBrowse()
         }
-        // Three ways a widget's genre can arrive: the tab was already up (the
-        // key changes), the tab was just switched to (appear), or the tap cold-
-        // launched the app and the index is still being read off disk (the
-        // genres land).
-        .onChange(of: router.pendingGenreKey) { _ in openPendingGenre() }
-        .onChange(of: store.genres.count) { _ in openPendingGenre() }
+        // Three ways a widget's row can arrive: the tab was already up (the
+        // target changes), the tab was just switched to (appear), or the tap
+        // cold-launched the app and the index is still being read off disk
+        // (the genres land).
+        .onChange(of: router.pendingBrowse) { _ in openPendingBrowse() }
+        .onChange(of: store.genres.count) { _ in openPendingBrowse() }
         .onDisappear { player.stop() }
     }
 
-    /// Opens the genre a widget row asked for, once the index can name it.
-    /// Nothing is cleared until it resolves, so a tap during the load isn't
-    /// dropped — and an unknown key (a dataset rebuilt without that genre) is,
-    /// rather than being retried forever.
-    private func openPendingGenre() {
-        guard let key = router.pendingGenreKey else { return }
+    /// Opens whatever a widget row asked for — the same three destinations a
+    /// History row leads to. Nothing is cleared until it resolves, so a tap
+    /// that lands mid-load isn't dropped; an unresolvable one (a dataset
+    /// rebuilt without that genre) is, rather than being retried forever.
+    private func openPendingBrowse() {
+        guard let target = router.pendingBrowse else { return }
+        switch target {
+        case .spotifyArtist(let id, let name):
+            // No place on the map, so nothing to wait for the index over.
+            router.pendingBrowse = nil
+            present { self.liveArtist = ENLiveArtist(name: name, spotifyID: id) }
+        case .genre(let key):
+            openMapped(genreKey: key, artistID: nil)
+        case .artist(let genreKey, let artistID):
+            openMapped(genreKey: genreKey, artistID: artistID)
+        }
+    }
+
+    /// A genre, or an artist selected on their genre's map. Returns without
+    /// consuming the link while the index is still loading.
+    private func openMapped(genreKey: String, artistID: String?) {
         switch store.state {
         case .idle, .loading: return  // the index is still being read; try again when it lands
         case .ready, .missing: break
         }
-        router.pendingGenreKey = nil
-        guard let genre = store.genres.first(where: { $0.key == key }) else {
-            appLog("Widget asked for genre '\(key)', which isn't in the map.",
+        router.pendingBrowse = nil
+        guard let genre = store.genres.first(where: { $0.key == genreKey }) else {
+            appLog("Widget asked for genre '\(genreKey)', which isn't in the map.",
                    level: .warning, category: "Widget")
             return
         }
-        if pushedGenre == nil {
-            push(genre)
-        } else {
-            // Already inside a genre: `navigationDestination(isPresented:)` is
-            // showing one, and swapping the value under it leaves the old
-            // screen up. Pop first, then push on the next turn of the run loop.
-            pushedGenre = nil
-            pushedArtistID = nil
-            DispatchQueue.main.async { self.push(genre) }
+        present {
+            if let artistID {
+                // Selecting an artist doesn't re-log the visit — their own tap
+                // inside the genre does, exactly as a History row behaves.
+                self.pushedArtistID = artistID
+                self.pushedGenre = genre
+            } else {
+                self.push(genre)
+            }
         }
+    }
+
+    /// Runs a push, first clearing any destination already showing.
+    /// `navigationDestination(isPresented:)` updates a presented screen in
+    /// place rather than rebuilding it, so swapping the value underneath one
+    /// leaves the old screen up — tapping a second widget row while the first
+    /// one's screen is open would go nowhere.
+    private func present(_ open: @escaping () -> Void) {
+        guard pushedGenre != nil || liveArtist != nil else { return open() }
+        pushedGenre = nil
+        pushedArtistID = nil
+        liveArtist = nil
+        DispatchQueue.main.async(execute: open)
     }
 
     /// The Find targets this level can actually answer. Spotify's needs

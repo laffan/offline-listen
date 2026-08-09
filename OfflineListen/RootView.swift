@@ -59,16 +59,16 @@ struct RootView: View {
         // A widget tap can land before this view exists (a cold launch from the
         // home screen), in which case the link is already parked and no change
         // fires — so both routes are checked on appear as well.
-        .onAppear { routeGenre(); routeTrack() }
-        .onChange(of: router.pendingGenreKey) { _ in routeGenre() }
+        .onAppear { routeBrowse(); routeTrack() }
+        .onChange(of: router.pendingBrowse) { _ in routeBrowse() }
         .onChange(of: router.pendingTrackID) { _ in routeTrack() }
     }
 
-    /// The tab is all this level does for a genre — finding it in the index and
-    /// pushing it belongs to the browser, which owns the navigation stack and
-    /// knows when the index has finished loading.
-    private func routeGenre() {
-        guard router.pendingGenreKey != nil else { return }
+    /// The tab is all this level does for a browse row — resolving it against
+    /// the genre index and pushing it belongs to the browser, which owns the
+    /// navigation stack and knows when that index has finished loading.
+    private func routeBrowse() {
+        guard router.pendingBrowse != nil else { return }
         selection = .browse
     }
 

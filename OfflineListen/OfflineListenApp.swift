@@ -101,10 +101,10 @@ struct OfflineListenApp: App {
                 // another device, or the folder may have been offline last
                 // time). Skipped outright when no folder is configured.
                 .task { everyNoiseUpdates.writeToDataFolder() }
-                // The widget's genre rows come from a log the browser only
+                // The widget's browse rows come from a log the browser only
                 // reads when the Browse tab is opened, so they're refreshed
                 // from disk at launch instead of waiting on a visit.
-                .task { WidgetBridge.publishGenresFromHistory() }
+                .task { WidgetBridge.publishBrowseFromHistory() }
                 #if os(macOS)
                 // Whether the Mac has a yt-dlp binary behind the native
                 // extractors is the single biggest thing separating one install

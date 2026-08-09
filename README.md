@@ -1148,8 +1148,8 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `WatchFolderView.swift` | The phone's Library **Watch** tab (manage what's been sent to the watch). |
 | `WatchManifest.swift` | Wire format shared by the iPhone and watch targets (the sync manifest, the remote-control `RemoteNowPlaying`/`RemoteCommand` types, + WC keys). |
 | `WatchSync.swift` | Phone-side WatchConnectivity bridge: pushes the manifest + audio files, handles the watch's "Clear all". |
-| `WidgetShared.swift` | Wire format shared by the app and the widget targets (the snapshot the widget draws, its App Group storage, and the `offlinelisten://` deep links) — the same trick `WatchManifest.swift` uses for the watch. |
-| `WidgetBridge.swift` | The app's half: republishes the snapshot from the Recent log and the Every Noise visit log, reloads the widget's timeline when it actually changed, and `AppRouter`, which parks a tapped row until the screen that can act on it is up. |
+| `WidgetShared.swift` | Wire format shared by the app and the widget targets (the genre/artist/song rows the widget draws, their App Group storage, and the `offlinelisten://` deep links each row opens) — the same trick `WatchManifest.swift` uses for the watch. |
+| `WidgetBridge.swift` | The app's half: republishes the snapshot from the Recent log and the Every Noise visit log (genres and artists as separate deduplicated lists), reloads the widget's timeline when it actually changed, and `AppRouter`, which parks a tapped row until the screen that can act on it is up. |
 
 The companion watch app lives under `OfflineListenWatch/` (see
 [Companion Apple Watch app](#companion-apple-watch-app)).
@@ -1259,56 +1259,85 @@ can't drift — the same trick the Share Extension uses with `SharedInbox.swift`
 
 ## Home screen widget
 
-A **medium widget** puts the two threads you were in the middle of on the home
-screen: the last **two genres** you opened in the Every Noise browser on the
-left, the last **two songs** you played on the right. Every row is a link to
-the thing itself — tapping a genre opens **that genre's artist map**, tapping a
-song **starts playing it** — rather than to the app's front door.
+A widget puts the two threads you were in the middle of on the home screen:
+what you last opened in the **Every Noise browser** beside what you last
+**played**. Every row is a link to the thing itself — a genre opens **that
+genre's artist map**, an artist opens **their page**, a song **starts
+playing** — rather than to the app's front door.
 
-The rows are the same lists the app already keeps, deduplicated: Browse's
-History and the Library's Recent are both *logs*, so the last two entries can
-be the same genre twice or the same song twice, and the widget wants two
-different things. Genres wear their **map colour**; songs show title over
-artist.
+Touch and hold it → **Edit Widget** for its one option, **Browse**:
 
-**Medium only, deliberately.** WidgetKit gives a `systemSmall` widget a single
-tap target and ignores `Link` views inside it, so a small version could only
-ever open the app — which is the one thing this widget exists not to do.
+- **Genres** (the default) — the genres you last opened.
+- **Artists** — the artists you last tapped, on the map or through the Find
+  field's Spotify search. Each row names the genre you found them in.
+- **Genres & Artists** — both, **interleaved by recency**: the browse history
+  as it happened, with each row's glyph saying which kind it is (the same
+  `guitars` / `music.mic` / over-the-air glyphs the browser's own History uses).
+
+The two kinds are kept as **separate lists** in the snapshot rather than being
+filtered out of one merged list, which is what stops **Artists** coming up
+empty after a run of genre visits. Both lists are deduplicated, because
+Browse's History and the Library's Recent are *logs*: they collapse only
+consecutive repeats, so the top entries can otherwise be the same genre — or
+the same song — twice over.
+
+### Every size, and why two of them show one thing
+
+| Size | Layout |
+|------|--------|
+| **Small** | one item |
+| **Medium** | two columns, two rows each |
+| **Large** | two stacked sections, three rows each |
+| **Extra Large** (iPad) | two columns, four rows each |
+| **Rectangular** (lock screen) | one item, compact |
+
+The single-item sizes aren't a compromise, they're the rule WidgetKit sets: a
+**small** widget — and any lock-screen one — has exactly one tap target, and
+`Link` views inside it are **ignored**. Four rows that all went to the same
+place would be a lie, so those sizes show **the single most recent thing across
+both lists** (respecting the Browse option) and go there. It's also the honest
+answer to what a small square is for: *what was I just doing*.
 
 ### How it gets its data
 
 A widget extension is its own process with its own container. It can't read
 `Documents/`, so `everynoise-history.json` and `recents.json` are out of
-reach — and decoding a 200-entry log plus the whole library to draw four rows
-is not work a widget has the budget for anyway. So the app leaves a small
-**pre-resolved snapshot** (`widget-snapshot.json`) in the **App Group**
-container, and the widget only ever reads that.
+reach — and decoding a 200-entry log plus the whole library to draw a handful
+of rows is not work a widget has the budget for anyway. So the app leaves a
+small **pre-resolved snapshot** (`widget-snapshot.json`) in the **App Group**
+container, and the widget only ever reads that. Four of each list are stored:
+enough for the largest size, and enough for **Genres & Artists** to merge two
+lists down to four.
 
-The two halves are written independently, because they come from separate
-stores: songs from `LibraryStore`'s `saveRecents()`, genres from
+The halves are written independently, because they come from separate stores:
+songs from `LibraryStore`'s `saveRecents()`, genres and artists from
 `EveryNoiseStore`'s `saveHistory()` — the single funnel each log's mutations
 already pass through. Each writer re-reads the snapshot, replaces its own half
-and writes it back, so neither can clobber the other's rows. The genre half is
+and writes it back, so neither can clobber the other's rows. The browse half is
 also refreshed **from disk at launch**, since the browser's visit log isn't
 loaded at all until the Browse tab is opened.
 
-A write that changes nothing is dropped rather than published, because those
-save paths fire far more often than the top two rows change and WidgetKit
-meters reloads. When something *does* change, the app reloads this widget's
-timeline explicitly — so the widget's own timeline policy is `.never`, and it
-spends no wake-ups re-reading a file that can't have changed on its own.
+Each row carries the **date** it happened, used only for ordering — that's what
+lets the single-item sizes pick a winner across two lists and **Genres &
+Artists** interleave. Nothing shows a timestamp, so no clock has to be kept
+current: a write that changes nothing is dropped (those save paths fire far
+more often than the top rows change, and WidgetKit meters reloads), and when
+something *does* change the app reloads this widget's timeline explicitly. The
+widget's own timeline policy is therefore `.never` — it spends no wake-ups
+re-reading a file that can't have changed on its own.
 
-Taps come back as `offlinelisten://genre?key=…` and `offlinelisten://track?id=…`
-on the URL scheme the Share Extension already uses (`WidgetDeepLink` builds and
-parses them, compiled into both targets so the two sides can't drift; anything
-it doesn't recognise — `offlinelisten://import` — still falls through to the
-shared-inbox drain). Neither destination is reachable synchronously from
-`onOpenURL`, so `AppRouter` parks the link: `RootView` picks the tab and starts
-the track, and the Every Noise browser picks up the genre once its index has
-finished loading off disk — which on a cold launch from a widget tap is
-*after* the link arrives. A track that has since been deleted, or a genre key
-a rebuilt dataset no longer carries, logs a warning under `Widget` and does
-nothing.
+Taps come back on the URL scheme the Share Extension already uses —
+`offlinelisten://genre?key=…`, `offlinelisten://artist?genre=…&id=…` (or
+`?spotify=…&name=…` for one off the map), `offlinelisten://track?id=…`.
+`WidgetDeepLink` builds and parses them, compiled into both targets so the two
+sides can't drift; anything it doesn't recognise — `offlinelisten://import` —
+still falls through to the shared-inbox drain. Neither destination is reachable
+synchronously from `onOpenURL`, so `AppRouter` parks the link: `RootView` picks
+the tab and starts the track, and the Every Noise browser opens the browse
+target once its index has finished loading off disk — which on a cold launch
+from a widget tap is *after* the link arrives. A track that has since been
+deleted, or a genre key a rebuilt dataset no longer carries, logs a warning
+under `Widget` and does nothing.
 
 ### Required Xcode setup for the widget
 
@@ -1323,6 +1352,14 @@ and declares the entitlement, but — exactly as with the Share Extension —
    it the widget draws its empty state — it has nothing to read.
 3. The bundle id defaults to `com.offlinelisten.app.OfflineListenWidget` (a
    child of the app id); change it to match if you changed the app's.
+
+The widget target deploys to **iOS 17**, while the app stays on 16. That's what
+the options pane costs: a configurable widget needs a configuration intent, and
+the App Intents one (`AppIntentConfiguration`) is iOS 17+. The alternative for
+iOS 16 is a SiriKit `.intentdefinition` file, which only exists as Xcode
+codegen — not something this project, authored without an Xcode toolchain, can
+carry honestly. An iOS 16 phone runs the app exactly as before and simply isn't
+offered the widget.
 
 ## Share from other apps
 
@@ -1951,6 +1988,7 @@ APIs; its target is wired into `project.pbxproj` by hand (set the watch **Team**
 in Xcode before building — see
 [Required Xcode setup for the watch app](#required-xcode-setup-for-the-watch-app)).
 The **home screen widget** is hand-wired the same way, against the documented
-**WidgetKit** API; it needs the **Team** and the shared **App Group** set in
-Xcode before it can read anything — see
+**WidgetKit** / **App Intents** APIs; it needs the **Team** and the shared
+**App Group** set in Xcode before it can read anything, and it deploys to iOS
+17 while the app stays on 16 — see
 [Required Xcode setup for the widget](#required-xcode-setup-for-the-widget).
