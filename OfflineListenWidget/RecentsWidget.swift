@@ -275,18 +275,24 @@ struct RecentsWidgetView: View {
         if browseRows.isEmpty && songRows.isEmpty {
             emptyState
         } else {
-            VStack(alignment: .leading, spacing: 7) {
+            // The slack goes *between* the two sections rather than under
+            // them: a spacer either side of the divider splits it evenly, so
+            // one section sits at the top and the other at the bottom instead
+            // of both crowding the top with a gap left over. They collapse to
+            // their minimum when the text is large enough to need the room.
+            VStack(alignment: .leading, spacing: 0) {
                 compactEntry(caption: browseRows.first?.caption ?? browseTitle,
                              row: browseRows.first,
                              emptyText: browseEmptyText)
+                Spacer(minLength: 7)
                 Divider()
+                Spacer(minLength: 7)
                 compactEntry(caption: "Played",
                              row: songRows.first,
                              emptyText: "Nothing played yet",
                              // Marked only when it really is where the tap
                              // goes — with no song, the browse row is.
                              isTapTarget: songRows.first != nil)
-                Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .widgetURL(singleTapTarget)
