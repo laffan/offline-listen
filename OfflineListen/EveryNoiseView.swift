@@ -1690,16 +1690,19 @@ struct ENArtistBar: View {
             // leaving the mode clears it — so the slot goes to the one action
             // that keeps them: onto the Saved for Later list, without leaving
             // the map or interrupting the snippet.
+            //
+            // A switch, not a one-way door: it fills in when they're on the
+            // list and empties when tapped again. Drawn at the "+"'s size and
+            // in the same accent, since the two sit side by side and are the
+            // same kind of thing.
             let saved = savedForLater.contains(bookmark)
             Button {
-                savedForLater.save(bookmark)
+                savedForLater.toggle(bookmark)
             } label: {
-                Image(systemName: saved ? "bookmark.fill" : "bookmark")
-                    .font(.title3)
-                    .foregroundStyle(saved ? Color.orange : Color.secondary)
+                Image(systemName: saved ? "bookmark.circle.fill" : "bookmark.circle")
+                    .font(.system(size: 30))
             }
-            .disabled(saved)
-            .accessibilityLabel(saved ? "\(artist.name) is saved for later"
+            .accessibilityLabel(saved ? "Remove \(artist.name) from Saved for Later"
                                       : "Save \(artist.name) for later")
         }
         .padding(.horizontal)
@@ -1787,7 +1790,7 @@ struct ENDiscographyView: View {
                     }),
                 saveForLater: DiscographySaveForLater(
                     isSaved: { savedForLater.contains(bookmark) },
-                    save: { savedForLater.save(bookmark) }),
+                    toggle: { savedForLater.toggle(bookmark) }),
                 exampleTrack: exampleTrack)
         } else {
             ContentUnavailableViewCompat(

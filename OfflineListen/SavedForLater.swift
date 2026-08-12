@@ -77,12 +77,12 @@ final class SavedForLaterStore: ObservableObject {
     var artists: [SavedForLaterItem] { items.filter { $0.kind != .genre } }
 
     func contains(_ item: SavedForLaterItem) -> Bool {
-        items.contains { $0.key == item.key }
+        items.contains { Self.sameThing($0, item) }
     }
 
     /// Saves (or re-saves, which just lifts it back to the top).
     func save(_ item: SavedForLaterItem) {
-        items.removeAll { $0.key == item.key }
+        items.removeAll { Self.sameThing($0, item) }
         items.insert(item, at: 0)
         if items.count > Self.maxItems {
             items.removeLast(items.count - Self.maxItems)
@@ -91,9 +91,42 @@ final class SavedForLaterStore: ObservableObject {
         appLog("Saved for later: \(item.name)", category: "Browse")
     }
 
+    /// On/off for the buttons that read as switches — the artist bar's
+    /// bookmark and the discography page's tile. Saving takes whatever
+    /// flavour of the row the caller has; unsaving takes **every** row for
+    /// that thing, so an artist saved off the map and re-saved off their
+    /// discography can't survive one tap of "remove".
+    func toggle(_ item: SavedForLaterItem) {
+        guard contains(item) else { return save(item) }
+        items.removeAll { Self.sameThing($0, item) }
+        persist()
+        appLog("Removed from Saved for Later: \(item.name)", category: "Browse")
+    }
+
     func remove(_ item: SavedForLaterItem) {
         items.removeAll { $0.id == item.id }
         persist()
+    }
+
+    /// Whether two saved rows are the same genre or the same artist.
+    ///
+    /// Not just `key ==`, because one artist legitimately arrives in two
+    /// shapes: off the map they're a shard id inside a genre, off Spotify (a
+    /// search hit, or the discography page's own button) they're a catalogue
+    /// id with no genre at all. Nothing links those two ids, so the **name**
+    /// is what they have in common — which is also what the user means when
+    /// they open a page and expect the button to already read as saved. Two
+    /// distinct artists sharing a name collapse into one row; that's the
+    /// price, and it's a good deal cheaper than the same artist appearing
+    /// twice and each button disagreeing about whether they're saved.
+    private static func sameThing(_ a: SavedForLaterItem, _ b: SavedForLaterItem) -> Bool {
+        if a.key == b.key { return true }
+        // A genre is its key on the map, whatever it's called.
+        if a.kind == .genre || b.kind == .genre {
+            return a.kind == b.kind && a.genreKey == b.genreKey
+        }
+        if a.kind == b.kind, let idA = a.artistID, let idB = b.artistID, idA == idB { return true }
+        return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedSame
     }
 
     func clear() {

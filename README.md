@@ -758,7 +758,18 @@ same glyph and map colour History gives it. A row leads exactly where the
 History row it was saved from does — a genre shows its artists, a mapped artist
 lands on their genre's map with them selected, a Spotify artist re-opens their
 discography — and swipes away. Unlike History it's a **set, not a log**: saving
-something twice lifts it back to the top rather than listing it again. It
+something twice lifts it back to the top rather than listing it again.
+
+Being a set means deciding when two saves are the same thing, and an artist
+legitimately arrives in two shapes: off the map they're a shard id inside a
+genre, off Spotify (a search hit, or the discography page's button) they're a
+catalogue id with no genre at all. Nothing links those two ids, so the **name**
+is what they have in common — which is also what you mean when you open an
+artist's page and expect the button to already read as saved. Two distinct
+artists sharing a name collapse into one row; that's the price, and it beats
+the same artist sitting there twice with each button disagreeing about whether
+they're saved. Unsaving removes *every* row for that artist, so one tap of
+"remove" can't leave a copy behind. It
 persists to `Documents/saved-for-later.json`, and its store is app-level
 (`SavedForLaterStore`) because a pushed discography page can't see anything
 injected inside the browser.
@@ -781,7 +792,9 @@ used to be: dismissing it was the least useful thing you could do to an artist
 you'd just tapped — the next tap on the map replaces the selection anyway, and
 leaving the mode clears it and stops the snippet — so the slot went to the one
 action that *keeps* them, [saving them for later](#saved-for-later) without
-leaving the map or interrupting the preview.
+leaving the map or interrupting the preview. It's a **switch**: drawn at the
+"+"'s size and in the same accent, it fills in while they're on the list and
+empties when tapped again.
 The track name comes from the same place the snippet does: the
 site labels each row `Artist "Song"`, so the bar shows the song and Scan shows
 it under the artist's name. The quotes are what's read, not the whole label —
@@ -848,7 +861,12 @@ reads "In Browse" once an equivalent source exists, so it never files a
 duplicate), while **Save for Later** just bookmarks them on the list behind
 the browser's own bookmark button (see
 [Saved for Later](#saved-for-later)) — keeping an artist without following
-them. Expanding a release shows its cover full-size, a **Download
+them. That one is a **switch**, and one that knows what it's looking at: the
+tile comes up **already filled** (the accent as a solid background rather than
+a tint) for an artist saved anywhere else — off the map, off a Spotify search,
+off this page on an earlier visit — and tapping it again takes them off the
+list. Add as Source stays one-way, since un-following a source would throw
+away everything it has surfaced. Expanding a release shows its cover full-size, a **Download
 Album** button, and its track names; the release's **magnifier** matches
 those against YouTube in place
 (ISRC-first, duration-gated — the pasted-link machinery), with live progress

@@ -390,12 +390,14 @@ struct DiscographyAddSource {
 
 /// The header's **Save for Later** button, beside Learn More and Add as
 /// Source: puts the artist on the Browse tab's bookmark list, to come back to
-/// without following them as a source. Same shape as `DiscographyAddSource` —
-/// passed only where the artist has an identity to save (the Every Noise
-/// push), and the button reads as saved once they're on the list.
+/// without following them as a source. Same shape as `DiscographyAddSource`,
+/// with one difference — this one is a **switch**, so `toggle` both saves and
+/// unsaves and `isSaved` is read on every redraw (the page comes up filled in
+/// for an artist saved anywhere else). Passed only where the artist has an
+/// identity to save: the Every Noise push.
 struct DiscographySaveForLater {
     var isSaved: () -> Bool
-    var save: () -> Void
+    var toggle: () -> Void
 }
 
 /// The shared album-first discography screen: sections of release rows, each
@@ -735,15 +737,20 @@ struct DiscographyBrowserView: View {
 
     /// Puts the artist on the Browse tab's Saved for Later list — the lighter
     /// half of Add as Source: come back to them later without following them.
+    ///
+    /// A switch rather than a one-way action: it comes up already filled for
+    /// an artist who is on the list (saved anywhere — off the map, off a
+    /// search, off this page on an earlier visit), and tapping it again takes
+    /// them off. Add as Source stays one-way, because un-following a source
+    /// would throw away everything it has surfaced.
     @ViewBuilder
     private var saveForLaterButton: some View {
         if let saveForLater {
             let saved = saveForLater.isSaved()
             headerButton(saved ? "Saved" : "Save for Later",
                          systemImage: saved ? "bookmark.fill" : "bookmark",
-                         tint: saved ? .orange : .accentColor,
-                         disabled: saved) {
-                saveForLater.save()
+                         filled: saved) {
+                saveForLater.toggle()
             }
         }
     }
@@ -770,27 +777,40 @@ struct DiscographyBrowserView: View {
     /// reads as a lozenge, not a button). They share a minimum width so the
     /// row stays even however the labels change — "Saved" is half the length
     /// of "Save for Later", and the row shouldn't shuffle when it flips.
+    ///
+    /// `filled` is the on state of a tile that's a switch: the same accent the
+    /// others wear as a tint, now as the whole background, which is what makes
+    /// "this is on" readable at a glance across a row of three.
+    @ViewBuilder
     private func headerButton(_ title: String,
                               systemImage: String,
                               tint: Color = .accentColor,
+                              filled: Bool = false,
                               disabled: Bool = false,
                               action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(spacing: 5) {
-                Image(systemName: systemImage)
-                    .font(.title3)
-                Text(title)
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-            }
-            .frame(minWidth: 84)
-            .padding(.vertical, 6)
+        let label = VStack(spacing: 5) {
+            Image(systemName: systemImage)
+                .font(.title3)
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
         }
-        .buttonStyle(.bordered)
+        .frame(minWidth: 84)
+        .padding(.vertical, 6)
+
+        Group {
+            if filled {
+                Button(action: action) { label }
+                    .buttonStyle(.borderedProminent)
+            } else {
+                Button(action: action) { label }
+                    .buttonStyle(.bordered)
+            }
+        }
         .buttonBorderShape(.roundedRectangle(radius: 12))
+        .tint(tint)
         .disabled(disabled)
-        .foregroundStyle(tint)
     }
 
     @MainActor
