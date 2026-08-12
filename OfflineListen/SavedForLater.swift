@@ -107,6 +107,37 @@ final class SavedForLaterStore: ObservableObject {
     }
 }
 
+/// The swipe-right action every list of genres and artists carries: keep this
+/// one for later. A modifier rather than a copy per list, since all four of
+/// them (History at both levels, the genre list, a genre's artist list) want
+/// exactly the same button — and it reads the store itself, so a caller only
+/// has to say *what* the row is.
+private struct SaveForLaterSwipe: ViewModifier {
+    @EnvironmentObject private var saved: SavedForLaterStore
+
+    let item: SavedForLaterItem
+
+    func body(content: Content) -> some View {
+        content.swipeActions(edge: .leading, allowsFullSwipe: true) {
+            let already = saved.contains(item)
+            Button {
+                saved.save(item)
+            } label: {
+                Label(already ? "Saved" : "Save for Later",
+                      systemImage: already ? "bookmark.fill" : "bookmark")
+            }
+            .tint(already ? .gray : .orange)
+        }
+    }
+}
+
+extension View {
+    /// Swipe this row right to put `item` on the Saved for Later list.
+    func saveForLaterSwipe(_ item: SavedForLaterItem) -> some View {
+        modifier(SaveForLaterSwipe(item: item))
+    }
+}
+
 /// The Saved for Later list: the genres and artists put aside from History (or
 /// from an artist's own page), grouped by kind. A row opens the thing itself —
 /// the same three destinations a History row leads to — and swipes away.

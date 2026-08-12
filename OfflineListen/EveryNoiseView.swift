@@ -949,6 +949,9 @@ struct ENGenreListView: View {
                         .accessibilityLabel("Sort by similarity to \(genre.name)")
                     }
                 }
+                // The same swipe History has: keep this one to come back to.
+                .saveForLaterSwipe(SavedForLaterItem(kind: .genre, genreKey: genre.key,
+                                                     name: genre.name, color: genre.color))
             }
             .listStyle(.plain)
             .everyNoiseBottomClearance()
@@ -967,9 +970,6 @@ struct ENGenreListView: View {
 /// and centered. The Find field filters it; rows swipe to delete.
 struct ENHistoryView: View {
     @EnvironmentObject private var store: EveryNoiseStore
-    /// Where a swipe-right row goes. App-level, so a genre's own History (a
-    /// pushed screen) saves into the same list the root's does.
-    @EnvironmentObject private var savedForLater: SavedForLaterStore
 
     let query: String
     /// Set on a genre's own page: only the artists tapped *in this genre*,
@@ -1045,17 +1045,7 @@ struct ENHistoryView: View {
                     // Swiping the other way keeps it instead of forgetting it:
                     // the row goes to the bookmark button's list, and stays in
                     // History as the log entry it is.
-                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                        let item = entry.savedForLater
-                        let already = savedForLater.contains(item)
-                        Button {
-                            savedForLater.save(item)
-                        } label: {
-                            Label(already ? "Saved" : "Save for Later",
-                                  systemImage: already ? "bookmark.fill" : "bookmark")
-                        }
-                        .tint(already ? .gray : .orange)
-                    }
+                    .saveForLaterSwipe(entry.savedForLater)
                 }
 
                 // Clearing is a whole-log action, so it belongs where the whole
@@ -1435,12 +1425,9 @@ struct ENGenreView: View {
             }
         } else if let selected {
             ENArtistBar(artist: selected, player: player,
+                        bookmark: bookmark(for: selected),
                         onBrowseDiscography: {
                             discographyArtist = selected
-                        },
-                        onClose: {
-                            self.selected = nil
-                            player.stop()
                         })
         }
     }
@@ -1540,6 +1527,7 @@ struct ENGenreView: View {
                         .accessibilityLabel("Sort by similarity to \(artist.name)")
                     }
                 }
+                .saveForLaterSwipe(bookmark(for: artist))
             }
             .listStyle(.plain)
             .everyNoiseBottomClearance()
@@ -1563,6 +1551,13 @@ struct ENGenreView: View {
             pendingSelectID = artist.id
             mode = .map
         }
+    }
+
+    /// An artist of this genre as something to save — the same row History
+    /// would file, so a saved artist re-opens here with them selected.
+    private func bookmark(for artist: ENArtist) -> SavedForLaterItem {
+        SavedForLaterItem(kind: .artist, genreKey: genre.key, artistID: artist.id,
+                          name: artist.name, color: artist.color, detail: genre.name)
     }
 
     /// Tap an artist: the preview starts right away, the action bar (with
@@ -1598,19 +1593,23 @@ struct ENGenreView: View {
 }
 
 /// The tapped artist's bar: name + example track, play/pause for the preview
-/// snippet, and the **+** that files them into Browse as an Artist source —
-/// Top 10 or Discography, the same two depths the rest of the app offers.
+/// snippet, a **bookmark** that keeps them for later, and the **+** that files
+/// them into Browse as an Artist source — Top 10 or Discography, the same two
+/// depths the rest of the app offers.
 struct ENArtistBar: View {
     let artist: ENArtist
     @ObservedObject var player: ENPreviewPlayer
+    /// This artist as a saved row, built by the genre view (which knows the
+    /// genre they belong to).
+    let bookmark: SavedForLaterItem
     /// Pushes the live-from-Spotify discography (offered when credentials are
     /// saved — the scraped dataset itself carries no discographies).
     var onBrowseDiscography: (() -> Void)? = nil
-    let onClose: () -> Void
 
     @EnvironmentObject private var playback: PlaybackManager
     @EnvironmentObject private var browse: BrowseStore
     @EnvironmentObject private var spotifySettings: SpotifySettingsStore
+    @EnvironmentObject private var savedForLater: SavedForLaterStore
     /// The artist map underneath ignores the bottom safe area, so the mini
     /// player doesn't push this bar up on its own — it clears it by hand.
     @Environment(\.miniPlayerHeight) private var miniPlayerHeight
@@ -1685,13 +1684,23 @@ struct ENArtistBar: View {
                                     : "Follow \(artist.name) in Browse")
             }
 
+            // Where the bar's close button used to be. Dismissing it was the
+            // least useful thing you could do to an artist you'd just tapped —
+            // another tap on the map replaces the selection anyway, and
+            // leaving the mode clears it — so the slot goes to the one action
+            // that keeps them: onto the Saved for Later list, without leaving
+            // the map or interrupting the snippet.
+            let saved = savedForLater.contains(bookmark)
             Button {
-                onClose()
+                savedForLater.save(bookmark)
             } label: {
-                Image(systemName: "xmark.circle.fill")
+                Image(systemName: saved ? "bookmark.fill" : "bookmark")
                     .font(.title3)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(saved ? Color.orange : Color.secondary)
             }
+            .disabled(saved)
+            .accessibilityLabel(saved ? "\(artist.name) is saved for later"
+                                      : "Save \(artist.name) for later")
         }
         .padding(.horizontal)
         .padding(.vertical, 10)

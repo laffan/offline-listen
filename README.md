@@ -687,7 +687,9 @@ a **Find** field — at both levels:
   lands on top, its sonic neighbors follow), exactly like clicking a genre
   on the site. A third order, **Popularity**, reads the scraped font-size
   percent — the site's popularity cue — biggest names first. The artist list
-  inside a genre sorts the same three ways.
+  inside a genre sorts the same three ways. Rows here swipe **right** for
+  **Save for Later**, exactly as History's do — genres in the genre list,
+  artists in a genre's own.
 - **Scan** auto-plays through the example tracks in map order — the site's
   scan mode as a bottom transport bar (prev / play-pause / next), with the map
   following along and the current entry drawn inverted. It works on the genre
@@ -743,11 +745,13 @@ History answers "what have I already looked at?", which is the wrong question
 for something you meant to come back to — a genre you opened mid-scan, an
 artist you liked and then browsed past. **Saved for Later** is the list of
 those, behind the **bookmark button** beside the sources button in the Browse
-tab's top-right corner (filled once there's anything on it). Three ways in:
-**swipe a History row right** at either level, and the **Save for Later**
-button on an artist's discography page, alongside Learn More and Add as Source
-— the lighter half of that pair, since it keeps the artist without following
-them as a source.
+tab's top-right corner (filled once there's anything on it). Four ways in, all
+of them where you already are rather than a screen you have to go to:
+**swipe right** on a row in History (at either level) or in **List** mode (a
+genre, or an artist inside a genre); the **bookmark** in a tapped artist's
+action bar on the map; and the **Save for Later** button on an artist's
+discography page, alongside Learn More and Add as Source — the lighter half of
+that pair, since it keeps the artist without following them as a source.
 
 The list opens as a sheet, artists first, then genres, each row wearing the
 same glyph and map colour History gives it. A row leads exactly where the
@@ -772,7 +776,13 @@ larger of the two heights that applies, not their sum.
 Tapping an **artist** plays a **30-second preview of their top song** (the
 snippet URL is embedded in the scraped data — no Spotify account or API key is
 involved) and opens an action bar naming **the artist and the track playing**,
-with a **"+"**. The track name comes from the same place the snippet does: the
+with a **"+"** and a **bookmark**. The bookmark is where the bar's close button
+used to be: dismissing it was the least useful thing you could do to an artist
+you'd just tapped — the next tap on the map replaces the selection anyway, and
+leaving the mode clears it and stops the snippet — so the slot went to the one
+action that *keeps* them, [saving them for later](#saved-for-later) without
+leaving the map or interrupting the preview.
+The track name comes from the same place the snippet does: the
 site labels each row `Artist "Song"`, so the bar shows the song and Scan shows
 it under the artist's name. The quotes are what's read, not the whole label —
 a row with no snippet carries the bare string `(no sample available)` there,
