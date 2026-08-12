@@ -710,6 +710,30 @@ final class YoutubeDLExtractor: MediaExtractor {
                        level: .error, category: category)
                 throw ExtractorError.unplayableVideoCodec(list)
             }
+            // The wrapper's `extractInfo` returns only the formats its own
+            // `bestvideo,bestaudio` selector settled on — two, typically — not
+            // the ladder underneath them. That's invisible most of the time,
+            // but it means "what does this source offer?" cannot be answered
+            // from here: a video with 144p→720p H.264 available shows up as one
+            // rendition. When the job asked to choose and there's nothing to
+            // choose between, read the client's whole format list the way the
+            // recovery does. It's a second resolve, paid only on a download
+            // that asked, and only when the first answer was too thin.
+            #if canImport(PythonKit)
+            if quality == .ask, Set(playable.compactMap(\.height)).count < 2 {
+                appLog("The default extraction settled on \(playable.count) rendition(s) — reading the full ladder so there's something to choose from.",
+                       category: category)
+                if let chosen = try await extractViaForcedClients(
+                    url: url, mode: .video, quality: quality, category: category,
+                    offeredVideoHeight: formats.filter { !$0.isAudioOnly }.compactMap(\.height).max(),
+                    onDownloadStart: onDownloadStart, onProgress: onProgress) {
+                    return chosen
+                }
+                appLog("No client offered a fuller list — going with what the default extraction found.",
+                       level: .warning, category: category)
+            }
+            #endif
+
             // What the source actually offers, put to the user when the job
             // asked to choose (`.ask`); any other preference answers from
             // itself without a prompt.
@@ -905,6 +929,19 @@ final class YoutubeDLExtractor: MediaExtractor {
         // device they almost always fail the n-challenge (no JS runtime), so
         // they're a last resort. We accept the first client that yields a usable
         // stream, so this order is what decides quality and which client wins.
+        //
+        // **`android_vr` sits second for video, and it earns the place.** It's
+        // the client modern yt-dlp reaches for by default on a runtime with no
+        // JS (it needs no nsig and no PO token), and on device it comes back
+        // with the whole H.264 ladder — 144p through 720p, every one carrying a
+        // real URL — where `tv` can fail on DRM or a stale player and `android`
+        // arrives SABR-stripped to a single 360p muxed stream. Leaving it out
+        // is what made a video whose 720p H.264 was there all along save at
+        // 360p, and what left the quality picker with a single row to offer.
+        // (The *default* extraction resolves through this same client, but the
+        // wrapper hands back only the formats its own `bestvideo,bestaudio`
+        // selector picked — an AV1 rendition here — so the ladder underneath is
+        // invisible until a forced resolve reads the format list itself.)
         // Wire the on-device JS runtime for the forced clients below, under
         // the app-wide Python gate: `load_all_plugins()` (the plugin import)
         // must never overlap another `extract_info`, and with two pipeline
@@ -920,8 +957,8 @@ final class YoutubeDLExtractor: MediaExtractor {
         // now resolvable thanks to on-device nsig solving + PO tokens — are the
         // fallback tier.
         let clientSets: [[String]] = mode == .video
-            ? [["tv"], ["ios"], ["android"], ["web_safari"], ["mweb"], ["web"]]
-            : [["ios"], ["android"], ["tv"], ["web_safari"], ["mweb"], ["web"]]
+            ? [["tv"], ["android_vr"], ["ios"], ["android"], ["web_safari"], ["mweb"], ["web"]]
+            : [["ios"], ["android_vr"], ["android"], ["tv"], ["web_safari"], ["mweb"], ["web"]]
 
         for clients in clientSets {
             let label = clients.joined(separator: ",")

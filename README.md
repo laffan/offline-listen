@@ -1776,7 +1776,8 @@ whose controls call `next()` / `previous()` / `skipForward()` directly.
   happens when the on-device player JS can't be resolved and every H.264 URL,
   which needs nsig descrambling, gets dropped), the yt-dlp path runs a
   **recovery**: it re-resolves forcing alternate **player clients** (`tv`,
-  `ios`, `android`, `web_safari`, `mweb`, `web`) one at a time, whose H.264 URLs
+  `android_vr`, `ios`, `android`, `web_safari`, `mweb`, `web`) one at a time,
+  whose H.264 URLs
   need no descrambling — the same renditions Safari plays — and takes the first
   that yields a decodable stream. The order matters for quality: it accepts the
   first client that works, so the no-token, **higher-resolution** source (`tv`,
@@ -1784,7 +1785,13 @@ whose controls call `next()` / `previous()` / `skipForward()` directly.
   YouTube's 2024–25 SABR / PO-token tightening, whereas `ios` is increasingly
   gated or slow — and `android`, whose formats SABR frequently caps low (360p),
   follows; the web-family clients come last because on device they usually fail
-  the n-challenge (no JS runtime). When the
+  the n-challenge (no JS runtime). **`android_vr` sits second and earns it**:
+  it's the client modern yt-dlp reaches for by default on a runtime with no JS
+  (no nsig, no PO token), and on device it returns the whole H.264 ladder —
+  144p through 720p, every rung carrying a real URL — where `tv` can fail on
+  DRM or a stale player and `android` arrives SABR-stripped to a single 360p
+  muxed stream. Its absence is what made a film whose 720p H.264 was there all
+  along save at 360p. When the
   recovered H.264 is much lower than what was offered, the log says so — a 360p
   save from a 2160p AV1-only source reads as a codec ceiling, not a bug. Only if
   every client still yields nothing decodable does the download fail with a clear
@@ -1810,6 +1817,19 @@ file** (`VideoMerger`), which is exactly how the higher resolutions are
 possible at all. Only renditions this device can decode are listed; the codec
 ceiling described above still applies, so a video offering 2160p in AV1 only
 genuinely has 720p as its best.
+
+**Getting a list worth showing.** The yt-dlp wrapper's `extractInfo` hands back
+only the formats *its own* `bestvideo,bestaudio` selector settled on — usually
+two — not the ladder underneath them. That's invisible most of the time, but it
+means the question "what does this source offer?" can't be answered from the
+default extraction: a video with 144p→720p H.264 available comes back as a
+single rendition, and a picker with one row is no picker. So when a download
+asked to choose and the default answer is that thin, the app **reads the
+client's whole format list** the way the codec recovery does. It's a second
+resolve, paid only on a download that asked, and only when the first answer
+couldn't be chosen from. A source that genuinely offers one device-playable
+rendition doesn't prompt at all — it says so in the Log ("Only one
+device-playable quality here (360p)") and gets on with it.
 
 **It asks once, and only where asking is welcome.** One download resolves more
 than once — the default extraction, then the forced-client recovery, then any

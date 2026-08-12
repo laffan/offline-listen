@@ -281,11 +281,17 @@ final class VideoQualityChooser: ObservableObject {
             .filter { seen.insert($0.height).inserted }
 
         guard options.count > 1 else {
-            // Nothing to choose between: don't stop a download to say so.
-            let only = options.first?.height
-            appLog("Only one video quality on offer\(only.map { " (\($0)p)" } ?? "") — taking it.",
-                   level: .debug, category: "Queue")
-            remember(nil, for: key)
+            // Nothing to choose between: don't stop a download to say so — and
+            // **don't remember this as an answer**. One download resolves
+            // several times and the early passes routinely see less than the
+            // later ones (a native extraction whose stream URLs didn't
+            // decipher, a client whose ladder SABR stripped down to one
+            // rendition). Memoizing "no choice" from one of those is what
+            // stops the pass that *does* have a ladder from ever asking.
+            if let only = options.first?.height {
+                appLog("Only one device-playable quality here (\(only)p) — downloading that, nothing to choose.",
+                       category: "Queue")
+            }
             return nil
         }
 
