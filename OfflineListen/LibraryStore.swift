@@ -68,6 +68,7 @@ final class LibraryStore: ObservableObject {
     private var cachedActiveTracks: [Track]?
     private var cachedTrackIndexByID: [UUID: Int]?
     private var cachedFolderTrackCounts: [UUID: Int]?
+    private var cachedFolderArtists: [UUID: String]?
     private var cachedSearchKeys: [UUID: String]?
     private var cachedTrackIDsBySource: [String: UUID]?
 
@@ -75,6 +76,7 @@ final class LibraryStore: ObservableObject {
         cachedActiveTracks = nil
         cachedTrackIndexByID = nil
         cachedFolderTrackCounts = nil
+        cachedFolderArtists = nil
         cachedSearchKeys = nil
         cachedTrackIDsBySource = nil
     }
@@ -136,6 +138,44 @@ final class LibraryStore: ObservableObject {
             cachedFolderTrackCounts = counts
         }
         return cachedFolderTrackCounts?[folderID] ?? 0
+    }
+
+    /// The artist a folder belongs to — the one every track in it names. An
+    /// album pulled down whole from a discography is exactly that, so its row
+    /// can print the artist under the album title; a folder of unrelated songs
+    /// agrees on nobody and gets nothing.
+    ///
+    /// Derived from the tracks rather than stored on the folder, so it follows
+    /// an Edit Metadata fix and an album assembled by hand earns it too.
+    /// Computed for every folder in one pass and memoized beside the counts —
+    /// the folder list asks per row, per redraw.
+    func folderArtist(of folderID: UUID) -> String? {
+        if cachedFolderArtists == nil {
+            // A folder is in `byFolder` only while its tracks still agree;
+            // `mixed` is the set that has been ruled out for good, so a later
+            // track can't put a disqualified folder back.
+            var byFolder: [UUID: String] = [:]
+            var mixed: Set<UUID> = []
+            for track in tracks where !track.isArchived {
+                guard let id = track.folderID, !mixed.contains(id) else { continue }
+                let artist = track.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !artist.isEmpty, artist.lowercased() != "unknown" else {
+                    mixed.insert(id)
+                    byFolder[id] = nil
+                    continue
+                }
+                if let known = byFolder[id] {
+                    if known.localizedCaseInsensitiveCompare(artist) != .orderedSame {
+                        mixed.insert(id)
+                        byFolder[id] = nil
+                    }
+                } else {
+                    byFolder[id] = artist
+                }
+            }
+            cachedFolderArtists = byFolder
+        }
+        return cachedFolderArtists?[folderID]
     }
 
     /// True when `trackID` is an active member of `folderID` — the check that
@@ -1485,6 +1525,16 @@ final class LibraryStore: ObservableObject {
         save()
     }
 
+    /// Records a captured subtitle file on a track (the WebVTT itself is
+    /// already written to `AppPaths.subtitles`). Called best-effort after a
+    /// video download; see `SubtitleFetcher`.
+    func setSubtitles(for id: UUID, fileName: String) {
+        guard let index = tracks.firstIndex(where: { $0.id == id }),
+              tracks[index].subtitleFileName != fileName else { return }
+        tracks[index].subtitleFileName = fileName
+        save()
+    }
+
     /// The folder equivalent: points a folder at a cover already written to
     /// `AppPaths.folderArtwork`. An album downloaded whole from a discography
     /// wears its release cover in the Library's folder list this way.
@@ -1551,6 +1601,9 @@ final class LibraryStore: ObservableObject {
         if let art = current.artworkFileURL {
             try? FileManager.default.removeItem(at: art)
         }
+        if let captions = current.subtitleFileURL {
+            try? FileManager.default.removeItem(at: captions)
+        }
         if current.isSynced {
             exportOp(.removeRemote(rel: current.fileName), rootID: current.syncRootID)
         }
@@ -1571,6 +1624,9 @@ final class LibraryStore: ObservableObject {
             if let art = track.artworkFileURL {
                 try? FileManager.default.removeItem(at: art)
             }
+            if let captions = track.subtitleFileURL {
+                try? FileManager.default.removeItem(at: captions)
+            }
             if track.isSynced {
                 exportOp(.removeRemote(rel: track.fileName), rootID: track.syncRootID)
             }
@@ -1588,6 +1644,9 @@ final class LibraryStore: ObservableObject {
             try? FileManager.default.removeItem(at: tracks[index].fileURL)
             if let art = tracks[index].artworkFileURL {
                 try? FileManager.default.removeItem(at: art)
+            }
+            if let captions = tracks[index].subtitleFileURL {
+                try? FileManager.default.removeItem(at: captions)
             }
             if tracks[index].isSynced {
                 exportOp(.removeRemote(rel: tracks[index].fileName), rootID: tracks[index].syncRootID)

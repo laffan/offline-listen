@@ -129,6 +129,11 @@ struct PlayerView: View {
     @EnvironmentObject private var library: LibraryStore
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
+    /// Whether captions are drawn over a video that has them. Shared with
+    /// Settings (which styles them) through `UserDefaults`, so the CC button
+    /// here and the toggle there are the same switch.
+    @AppStorage(SubtitleSettings.enabledKey) private var subtitlesEnabled = true
+
     /// Whether the control overlay is visible in fullscreen video.
     @State private var showVideoControls = true
     /// Set by tapping the picture in portrait: the video takes over the screen
@@ -198,6 +203,13 @@ struct PlayerView: View {
                                 withAnimation { portraitFullscreen = true }
                             }
                     }
+                    // Both of these go *after* the tap target so they sit on
+                    // top of it: captions must not swallow the tap, and the CC
+                    // button must get its own.
+                    .overlay(alignment: .bottom) { subtitleLayer(for: track) }
+                    .overlay(alignment: .topTrailing) {
+                        captionsButton(for: track).padding(8)
+                    }
             } else {
                 artworkView(track)
             }
@@ -246,11 +258,25 @@ struct PlayerView: View {
                     withAnimation { showVideoControls.toggle() }
                 }
 
+            // Captions ride above the picture whether the controls are up or
+            // not — they're part of the film, not part of the transport — and
+            // lift clear of the control panel while it's showing.
+            if let track = playback.currentTrack {
+                VStack {
+                    Spacer()
+                    subtitleLayer(for: track)
+                        .padding(.bottom, showVideoControls ? 150 : 24)
+                }
+            }
+
             if showVideoControls {
                 VStack {
-                    if portraitFullscreen {
-                        HStack {
-                            Spacer()
+                    HStack(spacing: 10) {
+                        Spacer()
+                        if let track = playback.currentTrack {
+                            captionsButton(for: track)
+                        }
+                        if portraitFullscreen {
                             Button {
                                 withAnimation { portraitFullscreen = false }
                             } label: {
@@ -261,9 +287,9 @@ struct PlayerView: View {
                             }
                             .accessibilityLabel("Exit fullscreen")
                         }
-                        .padding(.horizontal)
-                        .padding(.top, 8)
                     }
+                    .padding(.horizontal)
+                    .padding(.top, 8)
                     Spacer()
                     VStack(spacing: 14) {
                         scrubber
@@ -290,6 +316,47 @@ struct PlayerView: View {
 
     private func hasArtist(_ track: Track) -> Bool {
         !track.artist.isEmpty && track.artist.lowercased() != "unknown"
+    }
+
+    // MARK: - Subtitles
+
+    /// The track's captured captions. Read from the library's live copy rather
+    /// than playback's snapshot: the capture is best-effort and lands a moment
+    /// *after* the download, so a video started straight away picks them up
+    /// when they arrive.
+    private func cues(for track: Track) -> [SubtitleCue] {
+        SubtitleStore.cues(for: library.track(withID: track.id) ?? track)
+    }
+
+    /// The caption line itself, drawn over the bottom of the picture in the
+    /// size, colour and backdrop chosen in Settings. Never takes a touch — the
+    /// picture underneath still toggles fullscreen or the controls.
+    @ViewBuilder
+    private func subtitleLayer(for track: Track) -> some View {
+        let lines = cues(for: track)
+        if subtitlesEnabled, !lines.isEmpty {
+            SubtitleOverlay(player: playback.player, cues: lines)
+                .padding(.bottom, 10)
+                .allowsHitTesting(false)
+        }
+    }
+
+    /// The CC button, shown only on a video that actually has captions —
+    /// nothing is worse than a control that does nothing.
+    @ViewBuilder
+    private func captionsButton(for track: Track) -> some View {
+        if track.isVideo, !cues(for: track).isEmpty {
+            Button {
+                subtitlesEnabled.toggle()
+            } label: {
+                Image(systemName: subtitlesEnabled ? "captions.bubble.fill" : "captions.bubble")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(subtitlesEnabled ? Color.accentColor : Color.white)
+                    .padding(8)
+                    .background(.ultraThinMaterial, in: Circle())
+            }
+            .accessibilityLabel(subtitlesEnabled ? "Hide subtitles" : "Show subtitles")
+        }
     }
 
     /// The saved album art, when the track has any — falling back to the
@@ -590,6 +657,91 @@ private struct CurrentChapterLabel: View {
                 .multilineTextAlignment(.center)
                 .lineLimit(1)
         }
+    }
+}
+
+/// The caption line over a video.
+///
+/// It runs off its **own** periodic observer on the player rather than the
+/// app's 2 Hz progress ticker: half a second is nothing for a scrubber and
+/// plainly late for a subtitle, which has to change on the word. Five reads a
+/// second costs nothing (the cue lookup is a binary search over an array that's
+/// already in memory) and only exists while a video with captions is on screen.
+private struct SubtitleOverlay: View {
+    let player: AVPlayer
+    let cues: [SubtitleCue]
+
+    @StateObject private var clock = SubtitleClock()
+
+    @AppStorage(SubtitleSettings.sizeKey) private var size = SubtitleTextSize.medium.rawValue
+    @AppStorage(SubtitleSettings.colorKey) private var colorHex = SubtitleSettings.defaultColorHex
+    @AppStorage(SubtitleSettings.backdropKey) private var backdrop = SubtitleBackdrop.dim.rawValue
+
+    private var textSize: CGFloat {
+        (SubtitleTextSize(rawValue: size) ?? .medium).points
+    }
+
+    private var textColor: Color {
+        Color(mixtapeHex: colorHex) ?? .white
+    }
+
+    private var backdropOpacity: Double {
+        (SubtitleBackdrop(rawValue: backdrop) ?? .dim).opacity
+    }
+
+    var body: some View {
+        Group {
+            if let cue = cues.cue(at: clock.time) {
+                Text(cue.text)
+                    .font(.system(size: textSize, weight: .semibold))
+                    .foregroundStyle(textColor)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.black.opacity(backdropOpacity),
+                                in: RoundedRectangle(cornerRadius: 6))
+                    // A dark outline is what keeps unbacked captions legible
+                    // over a bright shot.
+                    .shadow(color: .black.opacity(0.9), radius: 2)
+                    .padding(.horizontal, 16)
+            }
+        }
+        .onAppear { clock.follow(player) }
+        .onDisappear { clock.stop() }
+    }
+}
+
+/// A 5 Hz playhead reader for the caption overlay, torn down with the view that
+/// owns it (an orphaned `AVPlayer` time observer outlives its view and keeps
+/// firing).
+@MainActor
+private final class SubtitleClock: ObservableObject {
+    @Published var time: Double = 0
+
+    private var observer: Any?
+    private weak var player: AVPlayer?
+
+    func follow(_ player: AVPlayer) {
+        guard observer == nil else { return }
+        self.player = player
+        let now = player.currentTime().seconds
+        time = now.isFinite ? now : 0
+        // Hopped onto the main actor the way every other player callback in
+        // the app is, rather than assumed onto it from a queue argument.
+        observer = player.addPeriodicTimeObserver(
+            forInterval: CMTime(seconds: 0.2, preferredTimescale: 600),
+            queue: .main
+        ) { [weak self] current in
+            let seconds = current.seconds
+            guard seconds.isFinite else { return }
+            Task { @MainActor in self?.time = seconds }
+        }
+    }
+
+    func stop() {
+        if let observer { player?.removeTimeObserver(observer) }
+        observer = nil
+        player = nil
     }
 }
 

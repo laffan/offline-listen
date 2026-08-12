@@ -487,6 +487,42 @@ extension MacYtDlp {
         }
     }
 
+    /// The English caption URL for a video, best-effort — the Mac's answer to
+    /// the embedded-Python half of `SubtitleFetcher`. Manual subtitles are
+    /// preferred over the automatic transcript, and a format the parser reads
+    /// over one it has to sniff.
+    static func englishSubtitleURL(for url: URL) async -> String? {
+        guard isAvailable else { return nil }
+        do {
+            var arguments = baseArguments
+            arguments += ["-J", url.absoluteString]
+            let output = try await run(arguments: arguments)
+            guard output.status == 0, let data = output.stdout.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return nil
+            }
+            for key in ["subtitles", "automatic_captions"] {
+                guard let table = json[key] as? [String: Any] else { continue }
+                var formats: [[String: Any]] = []
+                for (code, value) in table where SubtitleFetcher.isEnglish(code) {
+                    if let list = value as? [[String: Any]] { formats += list }
+                }
+                for wanted in ["vtt", "srt"] {
+                    if let hit = formats.first(where: { ($0["ext"] as? String) == wanted }),
+                       let link = hit["url"] as? String {
+                        return link
+                    }
+                }
+                if let link = formats.first?["url"] as? String { return link }
+            }
+            return nil
+        } catch {
+            appLog("Couldn't read subtitles: \(error.localizedDescription)",
+                   level: .debug, category: SubtitleFetcher.category)
+            return nil
+        }
+    }
+
     /// A playlist's entries via a flat extraction — the entries listed without
     /// resolving each video's streams, matching what `PlaylistResolver` does
     /// with the Python module on iOS. Nil means "treat the link as a single

@@ -77,6 +77,28 @@ protocol DiscographyProviding {
     func tracks(for release: DiscographyRelease) async throws -> [DiscographyTrackInfo]
     /// The YouTube video for one track, or nil when nothing usable matches.
     func youTubeURL(for track: DiscographyTrackInfo) async -> String?
+    /// Which record a loose song belongs to — the one thing the artist's
+    /// sample track arrives without. Nil when the provider can't say.
+    func albumName(forTrackNamed name: String, artist: String) async -> String?
+}
+
+extension DiscographyProviding {
+    /// A layout that carries its tracklists inline is searched by the caller;
+    /// only a provider that can *ask* (Spotify) overrides this.
+    func albumName(forTrackNamed name: String, artist: String) async -> String? { nil }
+}
+
+/// Case- and diacritic-insensitive comparison for catalogue text, which
+/// reaches the app from three sources (Spotify, the model, the scraped site)
+/// that don't agree on either — "Beyoncé" and "beyonce" are the same song
+/// title as far as placing a track goes.
+func discographyNamesMatch(_ a: String, _ b: String) -> Bool {
+    func fold(_ text: String) -> String {
+        text.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
+                     locale: nil)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    return !a.isEmpty && fold(a) == fold(b)
 }
 
 /// The artist's *real* catalogue, live from Spotify: releases grouped
@@ -195,6 +217,21 @@ struct SpotifyDiscographyProvider: DiscographyProviding {
                                  isrc: $0.isrc,
                                  artworkURL: $0.albumImageURL ?? release.imageURL)
         }
+    }
+
+    /// Asks the catalogue which record a song is on — one search, which is
+    /// what makes it worth doing for the *one* song the artist page arrives
+    /// with. A hit has to be the same recording by the same artist, and an
+    /// album named after the song itself is no answer at all (a single tells
+    /// you nothing you can't already see), so those are passed over.
+    func albumName(forTrackNamed name: String, artist: String) async -> String? {
+        let query = artist.isEmpty ? name : "\(artist) \(name)"
+        guard let hits = try? await client.searchTracks(query: query, limit: 8) else { return nil }
+        let credible = hits.filter {
+            discographyNamesMatch($0.name, name)
+                && (artist.isEmpty || discographyNamesMatch($0.primaryArtist, artist))
+        }
+        return credible.first { !discographyNamesMatch($0.albumName, name) }?.albumName
     }
 
     func youTubeURL(for track: DiscographyTrackInfo) async -> String? {
@@ -351,6 +388,16 @@ struct DiscographyAddSource {
     var add: () -> Void
 }
 
+/// The header's **Save for Later** button, beside Learn More and Add as
+/// Source: puts the artist on the Browse tab's bookmark list, to come back to
+/// without following them as a source. Same shape as `DiscographyAddSource` —
+/// passed only where the artist has an identity to save (the Every Noise
+/// push), and the button reads as saved once they're on the list.
+struct DiscographySaveForLater {
+    var isSaved: () -> Bool
+    var save: () -> Void
+}
+
 /// The shared album-first discography screen: sections of release rows, each
 /// expandable to its track names, each searchable to match those tracks
 /// against YouTube in place — matched tracks light up with Download/Preview
@@ -371,6 +418,8 @@ struct DiscographyBrowserView: View {
     var onFetched: ((DiscographyCatalogue) -> Void)? = nil
     /// The header's Add as Source button (nil hides it — see the type).
     var addSource: DiscographyAddSource? = nil
+    /// The header's Save for Later button (nil hides it — see the type).
+    var saveForLater: DiscographySaveForLater? = nil
     /// The song this artist was auditioned with on the way here — the Every
     /// Noise preview's track. It gets a row of its own above everything else,
     /// because it's the one song you already know you liked. Nil for a
@@ -582,6 +631,7 @@ struct DiscographyBrowserView: View {
                                                   artistName: catalogue.artistName,
                                                   artworkURL: catalogue.artistImageURL,
                                                   provider: provider,
+                                                  knownReleases: catalogue.sections.flatMap(\.releases),
                                                   downloadFolderName: downloadFolderName) { item in
                                 previewQueue = [item]
                                 previewItem = item
@@ -638,7 +688,9 @@ struct DiscographyBrowserView: View {
 
     /// The page's masthead: the artist's portrait (when the catalogue carries
     /// one — Spotify does, the AI layout doesn't), their name in large type,
-    /// and the **Learn More** button that opens the AI bio sheet.
+    /// and up to three buttons — **Learn More** (the AI bio sheet), **Save for
+    /// Later** and **Add as Source**, the last two only where the caller
+    /// wired them up.
     private func artistHeader(_ catalogue: DiscographyCatalogue) -> some View {
         VStack(spacing: 12) {
             if let urlString = catalogue.artistImageURL, let url = URL(string: urlString) {
@@ -661,39 +713,79 @@ struct DiscographyBrowserView: View {
             Text(catalogue.artistName)
                 .font(.title.weight(.bold))
                 .multilineTextAlignment(.center)
-            HStack(spacing: 10) {
-                Button {
-                    showingBio = true
-                } label: {
-                    Label("Learn More", systemImage: "text.book.closed")
-                        .font(.subheadline.weight(.semibold))
+            // Three capsules don't fit across a phone, so they break onto a
+            // second line rather than being shortened into initials.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    learnMoreButton
+                    saveForLaterButton
+                    addSourceButton
                 }
-                .buttonStyle(.bordered)
-                .buttonBorderShape(.capsule)
-
-                // Files the artist into Browse as a discography-mode Artist
-                // source. `isAdded` reads the live source list, so the label
-                // flips to a checkmark the moment the source exists (and
-                // shows as one from the start if it already did).
-                if let addSource {
-                    let added = addSource.isAdded()
-                    Button {
-                        addSource.add()
-                    } label: {
-                        Label(added ? "In Browse" : "Add as Source",
-                              systemImage: added ? "checkmark.circle.fill" : "plus.circle")
-                            .font(.subheadline.weight(.semibold))
+                VStack(spacing: 8) {
+                    HStack(spacing: 10) {
+                        learnMoreButton
+                        saveForLaterButton
                     }
-                    .buttonStyle(.bordered)
-                    .buttonBorderShape(.capsule)
-                    .disabled(added)
-                    .foregroundStyle(added ? Color.green : Color.accentColor)
+                    addSourceButton
                 }
             }
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 8)
         .padding(.bottom, 4)
+    }
+
+    private var learnMoreButton: some View {
+        Button {
+            showingBio = true
+        } label: {
+            Label("Learn More", systemImage: "text.book.closed")
+                .font(.subheadline.weight(.semibold))
+        }
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.capsule)
+    }
+
+    /// Puts the artist on the Browse tab's Saved for Later list — the lighter
+    /// half of Add as Source: come back to them later without following them.
+    @ViewBuilder
+    private var saveForLaterButton: some View {
+        if let saveForLater {
+            let saved = saveForLater.isSaved()
+            Button {
+                saveForLater.save()
+            } label: {
+                Label(saved ? "Saved" : "Save for Later",
+                      systemImage: saved ? "bookmark.fill" : "bookmark")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
+            .disabled(saved)
+            .foregroundStyle(saved ? Color.orange : Color.accentColor)
+        }
+    }
+
+    /// Files the artist into Browse as a discography-mode Artist source.
+    /// `isAdded` reads the live source list, so the label flips to a checkmark
+    /// the moment the source exists (and shows as one from the start if it
+    /// already did).
+    @ViewBuilder
+    private var addSourceButton: some View {
+        if let addSource {
+            let added = addSource.isAdded()
+            Button {
+                addSource.add()
+            } label: {
+                Label(added ? "In Browse" : "Add as Source",
+                      systemImage: added ? "checkmark.circle.fill" : "plus.circle")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
+            .disabled(added)
+            .foregroundStyle(added ? Color.green : Color.accentColor)
+        }
     }
 
     @MainActor
@@ -1320,6 +1412,11 @@ private struct DiscographyExampleRow: View {
     /// the map has no cover of its own.
     let artworkURL: String?
     let provider: any DiscographyProviding
+    /// The catalogue's own releases, searched first for the song: a layout
+    /// that carries its tracklists inline (the AI one) answers "which album is
+    /// this?" for free, and an answer that names a record listed right below
+    /// beats one that doesn't.
+    let knownReleases: [DiscographyRelease]
     let downloadFolderName: String?
     let onPreview: (BrowseItem) -> Void
 
@@ -1330,6 +1427,8 @@ private struct DiscographyExampleRow: View {
     @State private var url: String?
     @State private var matching = true
     @State private var sent = false
+    /// The record this song is on, once it's been placed.
+    @State private var albumName: String?
 
     private var info: DiscographyTrackInfo {
         DiscographyTrackInfo(id: "example", name: trackName, artist: artistName,
@@ -1347,9 +1446,12 @@ private struct DiscographyExampleRow: View {
                 Text(trackName)
                     .font(.callout.weight(.medium))
                     .lineLimit(2)
-                Text("Artist Sample Track")
+                // Which record it's off, once the catalogue has placed it —
+                // far more use than repeating what the row obviously is.
+                Text(albumName ?? "Artist Sample Track")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
             Spacer(minLength: 8)
             if matching {
@@ -1393,6 +1495,31 @@ private struct DiscographyExampleRow: View {
             url = await provider.youTubeURL(for: info)
             matching = false
         }
+        // Placing the song runs alongside the YouTube match rather than
+        // behind it: neither answer needs the other, and the row is usable
+        // the moment either lands.
+        .task { await placeOnAnAlbum() }
+    }
+
+    /// Works out which record the sample track is from — the catalogue's own
+    /// tracklists first (free, and it names a record listed right below),
+    /// then the provider's own lookup. A miss simply leaves the caption as it
+    /// was.
+    @MainActor
+    private func placeOnAnAlbum() async {
+        guard albumName == nil else { return }
+        for release in knownReleases where release.kind == .release {
+            guard let tracks = release.tracks else { continue }
+            if tracks.contains(where: { discographyNamesMatch($0.name, trackName) }) {
+                albumName = release.name
+                return
+            }
+        }
+        guard let matched = await provider.albumName(forTrackNamed: trackName, artist: artistName),
+              !matched.isEmpty else { return }
+        albumName = matched
+        appLog("Sample track \"\(trackName)\" placed on \"\(matched)\".",
+               level: .debug, category: "Browse")
     }
 
     private func enqueue(_ url: String) {

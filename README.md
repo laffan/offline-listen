@@ -19,7 +19,9 @@ vertical space goes to the content instead.
    Spotify discography, or files them into Browse as an Artist source (see
    [The Every Noise browser](#the-every-noise-browser)). The **sources** you
    keep tabs on live one tap away, behind the **stack button** in the
-   top-right corner — which wears a **dot** when a refresh has turned up
+   top-right corner — beside a **bookmark button** holding what you've
+   [saved for later](#saved-for-later) — and the stack wears a **dot** when a
+   refresh has turned up
    items you haven't acted on (see
    [Browse: keeping tabs on audio sources](#browse-keeping-tabs-on-audio-sources)):
    YouTube channels/playlists, RSS feeds, a **Blog Agent** for blogs
@@ -91,7 +93,12 @@ vertical space goes to the content instead.
    **Folders** organize the library, and have a tab of their own. A folder with
    a **cover** — an album pulled down whole from a
    discography — draws it as a thumbnail on the left of its row in place of
-   the folder icon. The three virtual folders that used to sit pinned above them
+   the folder icon. A folder whose tracks all name the **same artist** — which
+   an album pulled down from a discography is by construction — prints that
+   artist under the folder's name, the same title-over-artist shape a track row
+   has. It's derived from the tracks rather than stored on the folder, so an
+   album you assembled by hand earns it too, an Edit Metadata fix moves it, and
+   a folder of unrelated songs (which agrees on nobody) shows nothing extra. The three virtual folders that used to sit pinned above them
    — **Inbox** (every track you haven't listened to yet; starting playback — or
    a **Mark Played** swipe — clears it from the Inbox), **Recent** and
    **Watch** — are tabs now; the **Archive** is still pinned to
@@ -165,7 +172,15 @@ vertical space goes to the content instead.
    edge-to-edge in portrait, and **tapping the picture hands it the whole
    screen**: title, transport, nav and tab bars all step aside, and a tap
    brings back the floating controls with a button to shrink it again. It
-   also goes fullscreen on its own when the phone rotates to landscape. For a
+   also goes fullscreen on its own when the phone rotates to landscape.
+
+   **Subtitles.** A video downloaded with an English caption track (see
+   [Subtitles](#subtitles)) draws it over the bottom of the picture, and a
+   **CC button** sits in the corner of the picture — inline and fullscreen
+   alike — to turn it off and on. The button only appears on a video that
+   actually *has* captions, and the switch it flips is the same one in
+   Settings ▸ Subtitles, where the text's size, colour and backdrop are
+   chosen. For a
    chaptered track, small **dots** sit along the scrubber at each chapter's
    start and the **current chapter title** shows on its own line beneath the
    title/artist, updating as playback crosses a marker.
@@ -190,7 +205,12 @@ vertical space goes to the content instead.
    pad themselves by it, since the maps run edge to edge under the tab bar.
 4. **Download** — paste one or more URLs (whitespace/line-break separated; any
    http(s) link is queued and the rest of a pasted blob is skipped), choose
-   **Audio** or **Video** (default Audio), watch the queue. Links from **any site
+   **Audio** or **Video** (default Audio) from the **toggle inside the input
+   field** — two small icons after the paste button, the Library's own
+   music-note and film glyphs, exactly like the search-target toggle in
+   Browse's Find field (it used to be a segmented picker on a line of its own,
+   which spent a row of the screen saying what two icons say) — and watch the
+   queue. Links from **any site
    yt-dlp supports** work — YouTube, Vimeo, SoundCloud and ~hundreds more — not
    just YouTube — plus **Spotify** links, which take a different route (see
    **Spotify links** below). Swipe a row for **Cancel** (active/queued), **Restart**, or
@@ -265,12 +285,17 @@ vertical space goes to the content instead.
    episodes are skipped (each noted in the Log). Unlike the YouTube playlist
    path, none of this touches the on-device yt-dlp module, so Spotify links work
    on a fresh install — only the downloads they spawn need the extractor.
-5. **Settings** — AI configuration on top, then **Spotify** credentials, an
+5. **Settings** — AI configuration on top, then **Spotify** credentials, a
+   **Subtitles** section, an
    **Every Noise Data** section, a
    **Local Sync** section, a
    **Blog Agent** section (posts per
    refresh / songs per post limits for the Browse tab's Blog Agent sources),
    and the **Log** as a section beneath them.
+   - **Subtitles.** Whether captions show at all (the same switch the Player's
+     CC button flips), their **text size**, a **colour** swatch and what sits
+     **behind the text** (None / Dim / Solid), over a live sample — the only
+     way to judge any of it is to see it. See [Subtitles](#subtitles).
    - **Every Noise Data.** An opt-in toggle that lets browsing the genre map
      top the bundled dataset up, a tally of what it has found, **Download New
      Data** to share that off the device, and a **Data Folder** to keep a copy
@@ -701,11 +726,38 @@ a **Find** field — at both levels:
   previewing. Like the Library's Recent it's a log, not a set — revisits
   re-append, only consecutive repeats collapse — capped at 200, filtered by
   Find, rows swipe to delete, with a Clear History button at the bottom
-  (`Documents/everynoise-history.json`). **A genre's own page has it too**,
+  (`Documents/everynoise-history.json`). Swiping a row the **other** way
+  (right) keeps it rather than forgetting it: **Save for Later** files that
+  genre or artist behind the **bookmark button** in the top-right corner (see
+  [Saved for Later](#saved-for-later)) and leaves the log entry where it is.
+  **A genre's own page has it too**,
   scoped to that genre: which of *its* artists you've already heard is the
   useful question there, and the answer used to be reachable only from the
   root, mixed in with every other genre you'd opened. A row there doesn't push
-  anything — it puts the artist back on the map, selected and playing.
+  anything — it puts the artist back on the map, selected and playing. (Its
+  rows swipe both ways too, into the same saved list.)
+
+#### Saved for Later
+
+History answers "what have I already looked at?", which is the wrong question
+for something you meant to come back to — a genre you opened mid-scan, an
+artist you liked and then browsed past. **Saved for Later** is the list of
+those, behind the **bookmark button** beside the sources button in the Browse
+tab's top-right corner (filled once there's anything on it). Three ways in:
+**swipe a History row right** at either level, and the **Save for Later**
+button on an artist's discography page, alongside Learn More and Add as Source
+— the lighter half of that pair, since it keeps the artist without following
+them as a source.
+
+The list opens as a sheet, artists first, then genres, each row wearing the
+same glyph and map colour History gives it. A row leads exactly where the
+History row it was saved from does — a genre shows its artists, a mapped artist
+lands on their genre's map with them selected, a Spotify artist re-opens their
+discography — and swipes away. Unlike History it's a **set, not a log**: saving
+something twice lifts it back to the top rather than listing it again. It
+persists to `Documents/saved-for-later.json`, and its store is app-level
+(`SavedForLaterStore`) because a pushed discography page can't see anything
+injected inside the browser.
 
 Every one of those modes clears the bar beneath it. The maps ignore the bottom
 safe area outright, and a `List` inside a `NavigationStack` never picks up an
@@ -747,6 +799,19 @@ one chosen song is a different proposition from a dozen searches for songs you
 may not want. (It travels with the scan's "+" too, so following something
 mid-scan lands on the page with that song at the top.)
 
+**The row also places the song on a record.** The site hands over a title and
+nothing else, so the line under it used to read "Artist Sample Track" — which
+the row plainly is, and which tells you nothing you can't see. As the
+discography loads, the song is looked for in the catalogue's **own tracklists**
+first (free: the AI layout carries them inline, and an answer naming a record
+listed right below beats one that doesn't), and failing that in **one Spotify
+track search**, whose hit must be the same recording by the same artist. An
+album named after the song itself is passed over — a single tells you nothing —
+and when something is found, **the album's name replaces the caption**. A miss
+leaves it as it was. The lookup runs alongside the YouTube match rather than
+behind it: neither answer needs the other, and the row is usable the moment
+either lands.
+
 A pinned **Top 10** row with a **Search Top 10** button sits beneath it —
 the artist's most popular tracks, matched against YouTube on tap, which is
 where the popup's old Top 10 option went. The tracklist comes from four
@@ -762,11 +827,17 @@ out); Spotify's dedicated top-tracks endpoint is only the final resort,
 because newer client-credentials apps find it 403-gated. Beneath it,
 releases group into
 Albums / Singles & EPs / Compilations, newest first — each with its **cover
-art** beside it, and the artist's portrait, name, **Learn More** bio button
-and an **Add as Source** button heading the page — the latter files the
+art** beside it, and the artist's portrait, name, **Learn More** bio button,
+a **Save for Later** button and an **Add as Source** button heading the page
+(three capsules don't fit across a phone, so they break onto a second line
+rather than being shortened into initials). The last two are a pair: **Add as
+Source** files the
 artist into Browse as a discography-mode **Artist source** on the spot (it
 reads "In Browse" once an equivalent source exists, so it never files a
-duplicate). Expanding a release shows its cover full-size, a **Download
+duplicate), while **Save for Later** just bookmarks them on the list behind
+the browser's own bookmark button (see
+[Saved for Later](#saved-for-later)) — keeping an artist without following
+them. Expanding a release shows its cover full-size, a **Download
 Album** button, and its track names; the release's **magnifier** matches
 those against YouTube in place
 (ISRC-first, duration-gated — the pasted-link machinery), with live progress
@@ -1114,6 +1185,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `VideoAudioExtractor.swift` | Extracts audio from a muxed video via AVFoundation. |
 | `HLSDownloader.swift` | Saves an HLS (`.m3u8`) stream by fetching and joining its fMP4 segments — the fallback that makes Vimeo (progressive-free) work, with no FFmpeg. |
 | `ChapterFetcher.swift` | Best-effort capture of YouTube chapter markers via the on-device yt-dlp module. |
+| `Subtitles.swift` | English subtitles: the cue model and the VTT/SRT/timedtext parser (including the unrolling auto-captions need), the memoized on-disk loader, the appearance keys Settings and the Player share, and `SubtitleFetcher` — the watch-page capture with the yt-dlp metadata fallback. |
 | `PlaylistResolver.swift` | Detects playlist links and flat-resolves their entries (on-device yt-dlp) so a playlist downloads into a folder. |
 | `ChapterSplitter.swift` | Exports one file per chapter (AVFoundation) for "Break Chapters into Playlist". |
 | `VideoMerger.swift` | Muxes a video-only + audio-only stream into one MP4. |
@@ -1138,11 +1210,12 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `EveryNoiseData.swift` | The bundled Every Noise dataset: models, the lazy/LRU shard-loading store, the memory-mapped global artist search (`ENArtistIndex`), and the 30-second preview player. |
 | `EveryNoiseUpdates.swift` | `ENUpdateStore` — the opt-in, heavily throttled Spotify harvest that records what the frozen dataset is missing as you browse; the exportable JSONL it writes for `tools/everynoise/merge_updates.py`; `merged(_:genre:)`, which draws the findings onto the genre's map straight away; and `ENDataFolder`, the separately bookmarked folder a copy of the records is kept in. |
 | `NoiseMapView.swift` | The virtualized `UIScrollView` scatter map (spatial grid + recycled labels) both noise maps render through — opens centered on its canvas, with the draggable scroll-pill ring on the right edge. |
+| `SavedForLater.swift` | The Saved for Later list: the saved genre/artist model, the app-level `SavedForLaterStore` (`saved-for-later.json`), and the sheet behind the Browse tab's bookmark button. |
 | `EveryNoiseView.swift` | The Every Noise browser: Map/List/Scan/History modes + Find at both levels (with the root's genre/artist/Spotify toggle), the scan transport and its "+", the artist bar whose "+" opens the live discography (or creates Artist sources when Spotify isn't set up), and the measured bottom-bar clearance the maps and lists inset by. |
 | `EveryNoiseData/` | Bundled (folder reference): `genres.json` index + per-genre artist shards from the one-time `tools/everynoise/scrape.py`, plus the derived `artists.idx.z` from `build_artist_index.py`. |
 | `BrowseSourceView.swift` | One source's items with per-row Download/Preview/Discard, plus a **Select** mode for bulk download; also `BrowseTrackStatusButton`, the green play button every browse list shows once a download is in the library. |
 | `BrowsePreviewView.swift` | The preview modal: pipeline download, mini player with prev/play-pause/next over the queue it was opened with (auto-advancing at the end of each track — off its own frozen-playhead watchdog, not just the end notification — phone locked or not), the lock-screen metadata it borrows while it plays, Save/Discard. |
-| `*View.swift` | The five SwiftUI screens, in tab order (Browse, Library, Player, Download, Settings — which embeds the Log); none of them sets a navigation title. `LibraryView.swift` also holds `LibraryTab`, the Recent/Folders/Inbox/Watch/All strip. `PlayerView.swift` also holds the tap-to-seek scrubber and the `MiniPlayerBar` the other tabs inset above the tab bar. |
+| `*View.swift` | The five SwiftUI screens, in tab order (Browse, Library, Player, Download, Settings — which embeds the Log); none of them sets a navigation title. `LibraryView.swift` also holds `LibraryTab`, the Recent/Folders/Inbox/Watch/All strip. `PlayerView.swift` also holds the tap-to-seek scrubber, the caption overlay (and its own 5 Hz playhead clock) and the `MiniPlayerBar` the other tabs inset above the tab bar. |
 | `FolderView.swift` | Folder detail (tap-to-play, reorder, subfolders, mixtape header/Edit Cover), plus the Library's Inbox and Recent tabs. |
 | `MixtapeViews.swift` | Mixtape banner rendering (non-destructive crop), the shared folder-row label, and the Edit Cover sheet (PhotosPicker + drag/pinch + font picker). |
 | `WatchFolderView.swift` | The phone's Library **Watch** tab (manage what's been sent to the watch). |
@@ -1683,6 +1756,54 @@ whose controls call `next()` / `previous()` / `skipForward()` directly.
   save from a 2160p AV1-only source reads as a codec ceiling, not a bug. Only if
   every client still yields nothing decodable does the download fail with a clear
   `unplayableVideoCodec` message.
+
+  A video download also captures the source's **English subtitles**, when it
+  has any — see below.
+
+## Subtitles
+
+Every **video** download tries to bring its **English captions** with it. The
+capture runs after the file has landed, best-effort and off the queue, exactly
+as the album-art fetch does: a video with no captions is the ordinary case, so
+a miss is logged at debug level and costs the download nothing. Audio downloads
+skip it — there's no picture to draw captions over.
+
+Two routes, in order:
+
+- **The YouTube page.** YouTube publishes its caption tracks in the watch
+  page's player response (`captionTracks`), which is a plain HTTPS read that
+  needs nothing installed — the fast path, and the one that covers nearly every
+  download. A **human-written** track is taken over the machine transcript
+  (`kind: "asr"`) whenever there is one.
+- **yt-dlp's metadata**, for anything else — and for a YouTube page that won't
+  give them up. Same rules `ChapterFetcher` lives by: it runs only when the
+  yt-dlp Python module is **already present**, so capturing subtitles never
+  triggers the tens-of-MB module download on its own, and everything touching
+  the interpreter goes through the app-wide `PythonGate`. On the Mac the real
+  yt-dlp binary answers the same question.
+
+Whatever comes back — WebVTT, SRT, or YouTube's own timedtext XML — is parsed
+into plain cues and written as a standard **`.vtt`** in
+`Documents/Subtitles/<track-id>.vtt`, recorded on the track
+(`subtitleFileName`). It's app-local display metadata like artwork: never
+synced or exported, and deleted with the track.
+
+**Auto-generated captions need unrolling.** YouTube writes them as *rolling*
+text: each cue repeats the line already on screen and adds a few words, with a
+hair-thin cue in between carrying the finished line. Read literally, every line
+shows twice. So the parser drops cues shorter than a tenth of a second, strips
+a cue's opening line when it's the one already showing, and drops exact
+repeats — along with WebVTT's inline markup (`<c>`, per-word timestamps), which
+is what makes each of those cues look different in the first place.
+
+**Drawing them.** The cue is rendered by the app rather than by AVFoundation (a
+sidecar file isn't part of the asset), which is also what makes it styleable.
+The overlay runs off its **own** periodic observer on the player at 5 Hz, not
+the app's 2 Hz progress ticker: half a second is nothing for a scrubber and
+plainly late for a subtitle. Looking a cue up is a binary search over an array
+already in memory, and the observer only exists while a captioned video is on
+screen. Settings ▸ **Subtitles** sets the size, colour and backdrop; the
+Player's **CC button** and the Settings toggle are the same switch.
 
 ## Extraction: native primaries + yt-dlp fallback
 

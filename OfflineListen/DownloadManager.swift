@@ -736,6 +736,11 @@ final class DownloadManager: ObservableObject {
             // cover URL — fetch it and hang it on the track. Never blocks the
             // queue, never fatal.
             ArtworkFetcher.attach(job.artworkURL, to: track.id, library: library)
+            // English subtitles (best-effort, video only): captured off the
+            // source the same way, after the file has landed, so a caption
+            // track that isn't there costs the download nothing.
+            SubtitleFetcher.attach(from: url, to: track.id,
+                                   isVideo: track.isVideo, library: library)
             // A format conversion (Library ▸ Convert to Video/Audio): only
             // now that the replacement has fully landed does the original —
             // file and all — leave the library.

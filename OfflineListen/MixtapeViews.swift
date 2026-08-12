@@ -235,9 +235,21 @@ struct FolderRowLabel: View {
     private var plainRow: some View {
         HStack(spacing: 12) {
             leadingIcon
-            Text(folder.name)
-                .font(.body)
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(folder.name)
+                    .font(.body)
+                    .lineLimit(1)
+                // An album (a discography download, usually) is one artist's
+                // record, so the row names them under the title — the same
+                // title-over-artist shape a track row has. A folder whose
+                // tracks don't agree on an artist shows nothing extra.
+                if let artist = library.folderArtist(of: folder.id) {
+                    Text(artist)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
             Spacer()
             Text("\(count)")
                 .font(.caption)

@@ -15,6 +15,9 @@ struct EveryNoiseView: View {
     /// Carries a row tapped in the home-screen widget, parked until the index
     /// below has loaded and can resolve it.
     @EnvironmentObject private var router: AppRouter
+    /// What History (and an artist's page) has put aside — shown by the
+    /// bookmark button beside the sources one.
+    @EnvironmentObject private var savedForLater: SavedForLaterStore
     /// The maps ignore the bottom safe area, so the mini player's height is
     /// handed to them as extra content inset (UIKit can't see the SwiftUI bar).
     @Environment(\.miniPlayerHeight) private var miniPlayerHeight
@@ -58,6 +61,8 @@ struct EveryNoiseView: View {
     @State private var centerRequest: NoiseMapCenter?
     /// Briefly highlights a genre jumped to via Find.
     @State private var flashID: String?
+    /// Whether the Saved for Later list is up.
+    @State private var showingSaved = false
 
     var body: some View {
         Group {
@@ -74,6 +79,33 @@ struct EveryNoiseView: View {
         // No title: this is the Browse tab's own screen, and the map wants every
         // point of height it can get. The mode bar underneath says where you are.
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
+                Button {
+                    showingSaved = true
+                } label: {
+                    Image(systemName: savedForLater.items.isEmpty ? "bookmark" : "bookmark.fill")
+                }
+                .accessibilityLabel("Saved for later")
+
+                // A push, not a cover: the sources list lives inside the main
+                // nav — tab bar in place — like every other Browse screen. A
+                // link rather than a presented destination, since the map
+                // already carries two of those for genres and artists.
+                NavigationLink {
+                    BrowseSourcesView()
+                } label: {
+                    SourcesButtonLabel()
+                }
+            }
+        }
+        .sheet(isPresented: $showingSaved) {
+            SavedForLaterView { item in
+                // The sheet is on its way out; the push it asked for has to
+                // wait for the next runloop turn or it lands under it.
+                DispatchQueue.main.async { open(saved: item) }
+            }
+        }
         .navigationDestination(isPresented: genreIsPushed) {
             if let pushedGenre {
                 // Pushed destinations are hosted by Browse's NavigationStack,
@@ -208,6 +240,29 @@ struct EveryNoiseView: View {
         } else {
             pushedArtistID = entry.artistID
             pushedGenre = genre
+        }
+    }
+
+    /// A Saved for Later row leads exactly where the History row it was saved
+    /// from does — the three destinations differ only in how they're reached.
+    private func open(saved item: SavedForLaterItem) {
+        present {
+            if item.kind == .spotify {
+                guard let id = item.artistID else { return }
+                self.liveArtist = ENLiveArtist(name: item.name, spotifyID: id)
+                return
+            }
+            guard let genre = self.store.genres.first(where: { $0.key == item.genreKey }) else {
+                appLog("Saved genre '\(item.genreKey)' isn't in the map any more.",
+                       level: .warning, category: "Browse")
+                return
+            }
+            if item.kind == .genre {
+                self.push(genre)
+            } else {
+                self.pushedArtistID = item.artistID
+                self.pushedGenre = genre
+            }
         }
     }
 
@@ -912,6 +967,9 @@ struct ENGenreListView: View {
 /// and centered. The Find field filters it; rows swipe to delete.
 struct ENHistoryView: View {
     @EnvironmentObject private var store: EveryNoiseStore
+    /// Where a swipe-right row goes. App-level, so a genre's own History (a
+    /// pushed screen) saves into the same list the root's does.
+    @EnvironmentObject private var savedForLater: SavedForLaterStore
 
     let query: String
     /// Set on a genre's own page: only the artists tapped *in this genre*,
@@ -983,6 +1041,20 @@ struct ENHistoryView: View {
                         } label: {
                             Label("Remove", systemImage: "trash")
                         }
+                    }
+                    // Swiping the other way keeps it instead of forgetting it:
+                    // the row goes to the bookmark button's list, and stays in
+                    // History as the log entry it is.
+                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                        let item = entry.savedForLater
+                        let already = savedForLater.contains(item)
+                        Button {
+                            savedForLater.save(item)
+                        } label: {
+                            Label(already ? "Saved" : "Save for Later",
+                                  systemImage: already ? "bookmark.fill" : "bookmark")
+                        }
+                        .tint(already ? .gray : .orange)
                     }
                 }
 
@@ -1672,6 +1744,13 @@ struct ENDiscographyView: View {
     @EnvironmentObject private var spotifySettings: SpotifySettingsStore
     @EnvironmentObject private var aiSettings: AISettingsStore
     @EnvironmentObject private var browse: BrowseStore
+    @EnvironmentObject private var savedForLater: SavedForLaterStore
+
+    /// This artist as a bookmark: a Spotify-kind row, exactly like one saved
+    /// from a Find ▸ Spotify visit, so it re-opens this same page.
+    private var bookmark: SavedForLaterItem {
+        SavedForLaterItem(kind: .spotify, genreKey: "", artistID: spotifyID, name: artistName)
+    }
 
     var body: some View {
         if let client = spotifySettings.client {
@@ -1697,6 +1776,9 @@ struct ENDiscographyView: View {
                                          input: artistName,
                                          artistMode: .spotifyDiscography)
                     }),
+                saveForLater: DiscographySaveForLater(
+                    isSaved: { savedForLater.contains(bookmark) },
+                    save: { savedForLater.save(bookmark) }),
                 exampleTrack: exampleTrack)
         } else {
             ContentUnavailableViewCompat(

@@ -97,6 +97,13 @@ struct SettingsView: View {
     /// Spotify" is answerable at a glance.
     @State private var spotifyCooldown: TimeInterval = 0
 
+    // How captions are drawn — the same keys the Player reads, so a change
+    // here shows on the next cue.
+    @AppStorage(SubtitleSettings.enabledKey) private var subtitlesEnabled = true
+    @AppStorage(SubtitleSettings.sizeKey) private var subtitleSize = SubtitleTextSize.medium.rawValue
+    @AppStorage(SubtitleSettings.colorKey) private var subtitleColorHex = SubtitleSettings.defaultColorHex
+    @AppStorage(SubtitleSettings.backdropKey) private var subtitleBackdrop = SubtitleBackdrop.dim.rawValue
+
     // The Blog Agent's limits — same keys `BlogAgentSettings` reads at
     // refresh time, so a change here applies to the next refresh.
     @AppStorage(BlogAgentSettings.maxPostsKey)
@@ -118,6 +125,7 @@ struct SettingsView: View {
                 #endif
                 aiSection
                 spotifySection
+                subtitlesSection
                 everyNoiseDataSection
                 localSyncSection
                 blogAgentSection
@@ -416,6 +424,79 @@ struct SettingsView: View {
         guard total > 0 else { return "Syncing…" }
         let done = min(localSync.syncedFileCount, total)
         return "Syncing \(done) of \(total) track\(total == 1 ? "" : "s")"
+    }
+
+    // MARK: - Subtitles
+
+    /// How captions are drawn, plus the master switch the Player's CC button
+    /// also flips. Deliberately a short list — size, colour, what sits behind
+    /// the text — with a live sample, since the only way to judge any of it is
+    /// to see it.
+    private var subtitlesSection: some View {
+        Section {
+            Toggle("Show subtitles", isOn: $subtitlesEnabled)
+
+            Picker("Text Size", selection: $subtitleSize) {
+                ForEach(SubtitleTextSize.allCases) { size in
+                    Text(size.displayName).tag(size.rawValue)
+                }
+            }
+
+            LabeledContent("Colour") {
+                HStack(spacing: 10) {
+                    ForEach(SubtitleSettings.swatches, id: \.self) { hex in
+                        Button {
+                            subtitleColorHex = hex
+                        } label: {
+                            Circle()
+                                .fill(Color(mixtapeHex: hex) ?? .white)
+                                .frame(width: 22, height: 22)
+                                .overlay(
+                                    Circle().strokeBorder(
+                                        subtitleColorHex == hex ? Color.accentColor : Color.secondary.opacity(0.4),
+                                        lineWidth: subtitleColorHex == hex ? 3 : 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Subtitle colour \(hex)")
+                    }
+                }
+            }
+
+            Picker("Behind the Text", selection: $subtitleBackdrop) {
+                ForEach(SubtitleBackdrop.allCases) { backdrop in
+                    Text(backdrop.displayName).tag(backdrop.rawValue)
+                }
+            }
+
+            subtitleSample
+        } header: {
+            Text("Subtitles")
+        } footer: {
+            Text("English subtitles are captured alongside a video download when the source has them — a real caption track where there is one, the automatic transcript otherwise. The Player's CC button flips the same switch as the toggle above.")
+        }
+    }
+
+    /// A caption drawn over a dark plate in the current style — the same
+    /// rendering the player uses, so the settings can be judged here.
+    private var subtitleSample: some View {
+        let size = (SubtitleTextSize(rawValue: subtitleSize) ?? .medium).points
+        let backdrop = (SubtitleBackdrop(rawValue: subtitleBackdrop) ?? .dim).opacity
+        return ZStack {
+            LinearGradient(colors: [Color.gray.opacity(0.8), Color.black],
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
+                .frame(height: 74)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            Text("The quick brown fox")
+                .font(.system(size: size, weight: .semibold))
+                .foregroundStyle(Color(mixtapeHex: subtitleColorHex) ?? .white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color.black.opacity(backdrop), in: RoundedRectangle(cornerRadius: 6))
+                .shadow(color: .black.opacity(0.9), radius: 2)
+        }
+        .opacity(subtitlesEnabled ? 1 : 0.35)
+        .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
     }
 
     // MARK: - Blog Agent

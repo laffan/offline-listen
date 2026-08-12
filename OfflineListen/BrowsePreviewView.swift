@@ -1179,6 +1179,11 @@ final class BrowsePreviewModel: ObservableObject, RemoteAudioSource {
         // Album art (best-effort) when the item carried a cover URL — the
         // discography browser's matched tracks do.
         ArtworkFetcher.attach(item.artworkURL, to: track.id, library: library)
+        // …and its English subtitles, when it's a video the source captions.
+        if let sourceURL = URL(string: item.url) {
+            SubtitleFetcher.attach(from: sourceURL, to: track.id,
+                                   isVideo: track.isVideo, library: library)
+        }
         appLog("Preview saved to library: \"\(title)\"", level: .success, category: "Browse")
         return track
     }

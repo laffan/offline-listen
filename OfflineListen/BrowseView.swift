@@ -8,21 +8,11 @@ import SwiftUI
 struct BrowseView: View {
     var body: some View {
         NavigationStack {
+            // The two corner buttons — Saved for Later and Sources — are
+            // declared by the browser itself, so they sit in one group in a
+            // known order rather than in two toolbars that merge however
+            // SwiftUI feels like.
             EveryNoiseView()
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        // A push, not a cover: the sources list lives inside
-                        // the main nav — tab bar in place — like every other
-                        // Browse screen. A link rather than a presented
-                        // destination, since the map already carries two of
-                        // those for genres and artists.
-                        NavigationLink {
-                            BrowseSourcesView()
-                        } label: {
-                            SourcesButtonLabel()
-                        }
-                    }
-                }
         }
     }
 }
@@ -34,7 +24,7 @@ struct BrowseView: View {
 ///
 /// It observes the store on its own so that a refresh redraws *this* and not
 /// the genre map behind it.
-private struct SourcesButtonLabel: View {
+struct SourcesButtonLabel: View {
     @EnvironmentObject private var browse: BrowseStore
 
     var body: some View {

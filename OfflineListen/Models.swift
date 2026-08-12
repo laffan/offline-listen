@@ -90,6 +90,16 @@ enum AppPaths {
         return url
     }
 
+    /// Downloaded subtitles, one WebVTT file per track (`<track-id>.vtt`) — an
+    /// English caption track captured best-effort alongside a video download.
+    /// App-local display metadata like `artwork`: never synced or exported,
+    /// deleted with the track.
+    static var subtitles: URL {
+        let url = documents.appendingPathComponent("Subtitles", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
     /// Where cover images for *unsynced* mixtape folders live (a synced
     /// mixtape's cover lives in its directory's `.mixtapedata` instead).
     static var mixtapeCovers: URL {
@@ -147,6 +157,16 @@ enum DownloadMode: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .audio: return "Audio"
         case .video: return "Video"
+        }
+    }
+
+    /// The Library's own glyphs for the two kinds of thing a download can
+    /// become, so the mode picker in the Download field reads as the same
+    /// distinction the library rows draw.
+    var icon: String {
+        switch self {
+        case .audio: return "music.note"
+        case .video: return "film"
         }
     }
 }
@@ -542,6 +562,10 @@ struct Track: Identifiable, Codable, Hashable {
     /// fetched). Written best-effort after a download whose enqueue carried an
     /// artwork URL — Spotify-sourced tracks, mostly.
     var artworkFileName: String?
+    /// The saved subtitle file in `AppPaths.subtitles` (nil when none was ever
+    /// captured). Written best-effort after a **video** download, from the
+    /// source's own English caption track — see `SubtitleFetcher`.
+    var subtitleFileName: String?
     /// True when the track is mirrored to a sync folder. Its file lives in
     /// that root's app-local sync store (`Documents/Synced/<root-id>/…`) and
     /// `fileName` is a path relative to that store (it may contain directory
@@ -568,6 +592,7 @@ struct Track: Identifiable, Codable, Hashable {
          chapters: [Chapter] = [],
          sentToWatch: Bool = false,
          artworkFileName: String? = nil,
+         subtitleFileName: String? = nil,
          isSynced: Bool = false,
          syncRootID: UUID? = nil) {
         self.id = id
@@ -587,12 +612,13 @@ struct Track: Identifiable, Codable, Hashable {
         self.chapters = chapters
         self.sentToWatch = sentToWatch
         self.artworkFileName = artworkFileName
+        self.subtitleFileName = subtitleFileName
         self.isSynced = isSynced
         self.syncRootID = syncRootID
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, artist, fileName, sourceURL, duration, dateAdded, isArchived, kind, lastPosition, isVideo, folderID, hasBeenPlayed, originalTitle, chapters, sentToWatch, artworkFileName, isSynced, syncRootID
+        case id, title, artist, fileName, sourceURL, duration, dateAdded, isArchived, kind, lastPosition, isVideo, folderID, hasBeenPlayed, originalTitle, chapters, sentToWatch, artworkFileName, subtitleFileName, isSynced, syncRootID
     }
 
     // Custom decode so libraries saved before these fields existed still load.
@@ -615,6 +641,7 @@ struct Track: Identifiable, Codable, Hashable {
         chapters = try c.decodeIfPresent([Chapter].self, forKey: .chapters) ?? []
         sentToWatch = try c.decodeIfPresent(Bool.self, forKey: .sentToWatch) ?? false
         artworkFileName = try c.decodeIfPresent(String.self, forKey: .artworkFileName)
+        subtitleFileName = try c.decodeIfPresent(String.self, forKey: .subtitleFileName)
         isSynced = try c.decodeIfPresent(Bool.self, forKey: .isSynced) ?? false
         syncRootID = try c.decodeIfPresent(UUID.self, forKey: .syncRootID)
     }
@@ -633,6 +660,11 @@ struct Track: Identifiable, Codable, Hashable {
     /// The track's saved album art on disk, nil when none was ever fetched.
     var artworkFileURL: URL? {
         artworkFileName.map { AppPaths.artwork.appendingPathComponent($0) }
+    }
+
+    /// The track's saved subtitle file on disk, nil when none was captured.
+    var subtitleFileURL: URL? {
+        subtitleFileName.map { AppPaths.subtitles.appendingPathComponent($0) }
     }
 
     /// On-disk size in bytes (0 when the file is missing/unreadable).

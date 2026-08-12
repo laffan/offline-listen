@@ -121,37 +121,52 @@ struct DownloadView: View {
                     }
                     .accessibilityLabel("Clear")
                 }
+
+                modeToggle
             }
             .padding(12)
             .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
 
-            HStack {
-                Picker("Mode", selection: $mode) {
-                    ForEach(DownloadMode.allCases) { m in
-                        Text(m.displayName).tag(m)
-                    }
+            Button(action: submit) {
+                if searching {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(maxWidth: .infinity)
+                } else {
+                    Label(isSearch ? "Search" : "Download",
+                          systemImage: isSearch ? "magnifyingglass" : "arrow.down")
+                        .fontWeight(.semibold)
+                        .frame(maxWidth: .infinity)
                 }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 160)
-
-                Spacer()
-
-                Button(action: submit) {
-                    if searching {
-                        ProgressView()
-                            .controlSize(.small)
-                            .frame(minWidth: 90)
-                    } else {
-                        Label(isSearch ? "Search" : "Download",
-                              systemImage: isSearch ? "magnifyingglass" : "arrow.down")
-                            .fontWeight(.semibold)
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(urlText.trimmingCharacters(in: .whitespaces).isEmpty || searching)
             }
+            .buttonStyle(.borderedProminent)
+            .disabled(urlText.trimmingCharacters(in: .whitespaces).isEmpty || searching)
         }
         .padding(.horizontal)
+    }
+
+    /// The Audio/Video toggle, riding inside the field's trailing edge after
+    /// the paste button — the same shape (and the same behaviour) the Browse
+    /// field's search-target toggle has, wearing the Library's own music/film
+    /// glyphs. It used to be a segmented picker in the row below, which spent a
+    /// line of the screen saying what two small icons say here.
+    private var modeToggle: some View {
+        HStack(spacing: 4) {
+            ForEach(DownloadMode.allCases) { candidate in
+                Button {
+                    mode = candidate
+                } label: {
+                    Image(systemName: candidate.icon)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(mode == candidate ? Color.white : Color.secondary)
+                        .frame(width: 28, height: 22)
+                        .background(mode == candidate ? Color.accentColor : Color.clear,
+                                    in: RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Download as \(candidate.displayName)")
+            }
+        }
     }
 
     /// URLs download; anything else searches YouTube.

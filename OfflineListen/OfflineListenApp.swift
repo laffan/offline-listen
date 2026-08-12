@@ -17,6 +17,10 @@ struct OfflineListenApp: App {
     /// (which exports it) see the same store — a browser-local one would be
     /// invisible to Settings.
     @StateObject private var everyNoiseUpdates: ENUpdateStore
+    /// Also app-level: the browser fills it, its own button shows it, and an
+    /// artist's (pushed) discography page saves into it — a store injected
+    /// inside the browser would be invisible to the last of those.
+    @StateObject private var savedForLater = SavedForLaterStore()
     /// Where a tapped home-screen widget row is parked until the screen that
     /// can act on it is up.
     @StateObject private var router = AppRouter()
@@ -82,6 +86,7 @@ struct OfflineListenApp: App {
                 .environmentObject(browse)
                 .environmentObject(localSync)
                 .environmentObject(everyNoiseUpdates)
+                .environmentObject(savedForLater)
                 .environmentObject(router)
                 .environmentObject(LogStore.shared)
                 #if os(macOS)

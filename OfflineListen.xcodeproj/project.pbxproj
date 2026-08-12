@@ -52,6 +52,8 @@
 		1B00000000000000000002E9 /* BlogAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E9 /* BlogAgent.swift */; };
 		1B00000000000000000002EA /* DiscographyAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002EA /* DiscographyAgent.swift */; };
 		1B00000000000000000002EB /* PythonGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002EB /* PythonGate.swift */; };
+		1B0000000000000000006A02 /* SavedForLater.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000006A02 /* SavedForLater.swift */; };
+		1B0000000000000000006A01 /* Subtitles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000006A01 /* Subtitles.swift */; };
 		1B0000000000000000005F01 /* Platform.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000005F01 /* Platform.swift */; };
 		1B000000000000000005F03 /* MacYtDlp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000005F03 /* MacYtDlp.swift */; };
 		1B000000000000000005F02 /* NoiseMapViewMac.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000005F02 /* NoiseMapViewMac.swift */; };
@@ -193,6 +195,8 @@
 		1A00000000000000000002E9 /* BlogAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlogAgent.swift; sourceTree = "<group>"; };
 		1A00000000000000000002EA /* DiscographyAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscographyAgent.swift; sourceTree = "<group>"; };
 		1A00000000000000000002EB /* PythonGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PythonGate.swift; sourceTree = "<group>"; };
+		1A0000000000000000006A02 /* SavedForLater.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedForLater.swift; sourceTree = "<group>"; };
+		1A0000000000000000006A01 /* Subtitles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Subtitles.swift; sourceTree = "<group>"; };
 		1A0000000000000000005F01 /* Platform.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Platform.swift; sourceTree = "<group>"; };
 		1A000000000000000005F03 /* MacYtDlp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacYtDlp.swift; sourceTree = "<group>"; };
 		1A000000000000000005F02 /* NoiseMapViewMac.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoiseMapViewMac.swift; sourceTree = "<group>"; };
@@ -305,6 +309,8 @@
 				1A00000000000000000002E9 /* BlogAgent.swift */,
 				1A00000000000000000002EA /* DiscographyAgent.swift */,
 				1A00000000000000000002EB /* PythonGate.swift */,
+				1A0000000000000000006A02 /* SavedForLater.swift */,
+				1A0000000000000000006A01 /* Subtitles.swift */,
 				1A0000000000000000005F01 /* Platform.swift */,
 				1A000000000000000005F03 /* MacYtDlp.swift */,
 				1A000000000000000005F02 /* NoiseMapViewMac.swift */,
@@ -616,6 +622,8 @@
 				1B00000000000000000002E9 /* BlogAgent.swift in Sources */,
 				1B00000000000000000002EA /* DiscographyAgent.swift in Sources */,
 				1B00000000000000000002EB /* PythonGate.swift in Sources */,
+				1B0000000000000000006A02 /* SavedForLater.swift in Sources */,
+				1B0000000000000000006A01 /* Subtitles.swift in Sources */,
 				1B0000000000000000005F01 /* Platform.swift in Sources */,
 				1B000000000000000005F03 /* MacYtDlp.swift in Sources */,
 				1B000000000000000005F02 /* NoiseMapViewMac.swift in Sources */,
