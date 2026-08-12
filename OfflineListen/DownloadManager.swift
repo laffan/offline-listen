@@ -1237,6 +1237,10 @@ final class DownloadManager: ObservableObject {
         let parentTrimmed = (parentName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let parent = parentTrimmed.isEmpty ? nil : folder(named: parentTrimmed, fallback: "Browse")
         let album = albumFolder(named: albumName, fallback: "Album", parent: parent?.id)
+        // A release filed whole is an album whether or not a cover comes with
+        // it — one that doesn't (the AI catalogue carries no art) wears a
+        // colour until the user gives it one.
+        library.convertToAlbum(album)
         ArtworkFetcher.attach(artworkURL, toFolder: album.id, library: library)
         // Recorded before anything is queued, so the first track to land
         // already has somewhere to be. Merged into any order already there,

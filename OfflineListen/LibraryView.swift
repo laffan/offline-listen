@@ -288,6 +288,10 @@ enum LibraryRoute: Hashable {
     /// folder mirroring a sync folder, collected in one place.
     case synced
     case archived
+    /// An album's artist, as their live discography — the button at the foot
+    /// of an album folder. Carries the name because that's all a library
+    /// folder knows about them; Spotify resolves it.
+    case discography(String)
 }
 
 /// The Library's top-level sections, in the order their tabs sit across the
@@ -321,7 +325,6 @@ enum LibraryTab: String, CaseIterable, Identifiable {
 struct LibraryView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var playback: PlaybackManager
-    @Environment(\.openURL) private var openURL
 
     /// Called after a track starts playing so the parent can switch to the player tab.
     let onPlay: () -> Void
@@ -462,6 +465,8 @@ struct LibraryView: View {
                     SyncedFoldersView()
                 case .archived:
                     ArchivedTracksView(onPlay: onPlay, share: $share)
+                case .discography(let artist):
+                    LibraryDiscographyView(artistName: artist)
                 }
             }
             .alert("New Folder", isPresented: $showNewFolder) {
@@ -560,7 +565,8 @@ struct LibraryView: View {
     }
 
     /// The **Folders** tab: user folders, then the optional "Synced" grouping
-    /// and the Archive pinned beneath them.
+    /// and the Archive pinned beneath them — as one list, or as covers (see
+    /// `folderCoverList`), whichever the tab's view picker is set to.
     @ViewBuilder
     private var folderList: some View {
         let showsSynced = library.groupSyncedFolders && !library.syncedRootFolders.isEmpty
@@ -572,6 +578,8 @@ struct LibraryView: View {
                 description: "Make one with the folder button above, then touch and hold a track and choose Move to Folder."
             )
             .frame(maxHeight: .infinity)
+        } else if library.folderViewMode == .cover {
+            folderCoverList(showsSynced: showsSynced, showsArchive: showsArchive)
         } else {
             List {
                 // Drag-to-reorder (touch and hold a row) only makes sense in
@@ -599,6 +607,73 @@ struct LibraryView: View {
             }
             .listStyle(.plain)
             .miniPlayerClearance()
+        }
+    }
+
+    /// Cover view: three groups stacked down the screen — the **albums** as a
+    /// grid of their sleeves, the **mixtapes** in their banner rows, then the
+    /// **plain folders** — each in the sort the tab is set to. It's the same
+    /// set of folders the list shows, sorted the same way; only the shape
+    /// changes, and the Synced/Archive rows stay pinned beneath it all.
+    ///
+    /// Drag-to-reorder isn't offered here: User Order is one sequence over all
+    /// the folders, and three separate groups can't express a move between
+    /// them. Switch back to the list to set the order.
+    private func folderCoverList(showsSynced: Bool, showsArchive: Bool) -> some View {
+        let folders = library.displayedFolders
+        let albums = folders.filter { library.isAlbumFolder($0) }
+        let mixtapes = folders.filter { $0.isMixtape }
+        let plain = folders.filter { !$0.isMixtape && !library.isAlbumFolder($0) }
+        return List {
+            if !albums.isEmpty {
+                Section("Albums") {
+                    albumGrid(albums)
+                        .listRowInsets(EdgeInsets(top: 10, leading: 14, bottom: 14, trailing: 14))
+                        .listRowSeparator(.hidden)
+                }
+            }
+            if !mixtapes.isEmpty {
+                Section("Mixtapes") {
+                    ForEach(mixtapes) { folder in
+                        folderRow(folder)
+                    }
+                }
+            }
+            if !plain.isEmpty {
+                Section("Folders") {
+                    ForEach(plain) { folder in
+                        folderRow(folder)
+                    }
+                }
+            }
+            if showsSynced {
+                syncedRow
+            }
+            if showsArchive {
+                archiveRow
+            }
+        }
+        .listStyle(.plain)
+        .miniPlayerClearance()
+    }
+
+    /// The albums, as covers. One list row holding the whole grid, so the
+    /// groups below it stay ordinary rows with their swipes and menus intact.
+    private func albumGrid(_ albums: [Folder]) -> some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 104, maximum: 180), spacing: 12, alignment: .top)],
+            alignment: .leading,
+            spacing: 14
+        ) {
+            ForEach(albums) { folder in
+                NavigationLink(value: LibraryRoute.folder(folder.id)) {
+                    AlbumCoverCell(folder: folder, playingHere: isPlaying(in: folder))
+                }
+                .buttonStyle(.plain)
+                .contextMenu {
+                    FolderContextMenu(folder: folder)
+                }
+            }
         }
     }
 
@@ -647,6 +722,22 @@ struct LibraryView: View {
         .pickerStyle(.segmented)
         .textCase(nil)
         .padding(.vertical, 4)
+    }
+
+    /// List or covers, as two glyphs in the top-left corner: the Folders tab's
+    /// own view switch, opposite the sort and New Folder buttons it shares the
+    /// bar with.
+    private var folderViewPicker: some View {
+        Picker("Folder View", selection: $library.folderViewMode) {
+            ForEach(FolderViewMode.allCases) { mode in
+                Image(systemName: mode.icon)
+                    .accessibilityLabel(mode.displayName)
+                    .tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .frame(width: 96)
+        .accessibilityLabel("Folder view — \(library.folderViewMode.displayName)")
     }
 
     /// Sort the folder list by name or by User Order — the control the
@@ -829,13 +920,7 @@ struct LibraryView: View {
                         Label("Break Chapters into Playlist", systemImage: "list.bullet.indent")
                     }
                 }
-                if let url = URL(string: track.sourceURL) {
-                    Button {
-                        openURL(url)
-                    } label: {
-                        Label("View Original", systemImage: "safari")
-                    }
-                }
+                TrackSourceButtons(track: track)
             }
 
         if editMode.isEditing {
@@ -886,6 +971,14 @@ struct LibraryView: View {
                     Label("Actions", systemImage: "ellipsis.circle")
                 }
                 .disabled(selection.isEmpty)
+            }
+        }
+
+        // The Folders tab's view switch, in the corner opposite its own
+        // actions. Nothing to switch between on an empty library.
+        if tab == .folders && !isEmptyLibrary && !isSearching && !editMode.isEditing {
+            ToolbarItem(placement: .navigationBarLeading) {
+                folderViewPicker
             }
         }
 
@@ -1371,9 +1464,9 @@ struct ChapterContext: Identifiable {
 }
 
 /// The shared touch-and-hold menu for a folder row: Send to Watch, Sync to
-/// Local (when a sync folder is configured), and the mixtape conversion pair —
-/// Convert to Mixtape for childless plain folders, Convert to Folder for
-/// mixtapes.
+/// Local (when a sync folder is configured), and the conversions — a folder is
+/// either plain, a **mixtape** or an **album**, so it offers the two it isn't
+/// and Convert to Folder is the way back from either.
 struct FolderContextMenu: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var localSync: LocalSyncStore
@@ -1397,12 +1490,27 @@ struct FolderContextMenu: View {
             } label: {
                 Label("Convert to Folder", systemImage: "folder")
             }
-        } else if !library.hasSubfolders(folder.id) {
-            // Mixtapes can't contain folders, so only childless folders convert.
+        } else if library.isAlbumFolder(folder) {
             Button {
-                library.convertToMixtape(folder)
+                library.convertAlbumToFolder(folder)
             } label: {
-                Label("Convert to Mixtape", systemImage: "recordingtape")
+                Label("Convert to Folder", systemImage: "folder")
+            }
+        } else {
+            if !library.hasSubfolders(folder.id) {
+                // Mixtapes can't contain folders, so only childless folders convert.
+                Button {
+                    library.convertToMixtape(folder)
+                } label: {
+                    Label("Convert to Mixtape", systemImage: "recordingtape")
+                }
+            }
+            // An album takes a square cover — set it from the sleeve on the
+            // folder's own screen — and its songs wear it.
+            Button {
+                library.convertToAlbum(folder)
+            } label: {
+                Label("Convert to Album", systemImage: "square.stack")
             }
         }
     }
@@ -1474,6 +1582,30 @@ struct SendToWatchButton: View {
                 } label: {
                     Label("Send to Watch", systemImage: "applewatch")
                 }
+            }
+        }
+    }
+}
+
+/// The pair of context-menu entries a track's **source link** offers: copy it
+/// (to paste into the Download field, a message, a browser) or open it. Both
+/// need a real link, so a local-sync import — which has none — shows neither.
+/// Safe to drop into any track's `contextMenu`.
+struct TrackSourceButtons: View {
+    @Environment(\.openURL) private var openURL
+    let track: Track
+
+    var body: some View {
+        if track.sourceURL.lowercased().hasPrefix("http"), let url = URL(string: track.sourceURL) {
+            Button {
+                Pasteboard.copy(track.sourceURL)
+            } label: {
+                Label("Copy URL", systemImage: "doc.on.doc")
+            }
+            Button {
+                openURL(url)
+            } label: {
+                Label("View Original", systemImage: "safari")
             }
         }
     }

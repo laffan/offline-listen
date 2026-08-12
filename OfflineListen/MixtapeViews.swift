@@ -260,32 +260,41 @@ struct FolderRowLabel: View {
     }
 
     /// The row's leading mark: the folder's cover when it has one (an album
-    /// downloaded whole from a discography), otherwise the folder/sync glyph.
-    /// The artwork is drawn a little wider than the glyph's slot so it reads as
-    /// a cover rather than an icon, and the icon path keeps its exact previous
-    /// metrics so ordinary folder rows are untouched.
+    /// downloaded whole from a discography, or one the user gave art to),
+    /// otherwise the folder/sync glyph. An album with no art at all shows its
+    /// colour in the cover's place, so it reads as a record in the list just
+    /// as it does in the grid. The artwork is drawn a little wider than the
+    /// glyph's slot so it reads as a cover rather than an icon, and the icon
+    /// path keeps its exact previous metrics so ordinary folder rows are
+    /// untouched.
     @ViewBuilder
     private var leadingIcon: some View {
         if let image = FolderArtwork.image(for: folder) {
-            Image(platformImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 38, height: 38)
-                .clipShape(RoundedRectangle(cornerRadius: 5))
-                .overlay(alignment: .bottomTrailing) {
-                    if folder.isSynced {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                            .font(.system(size: 9, weight: .bold))
-                            .padding(2)
-                            .background(.regularMaterial, in: Circle())
-                            .offset(x: 3, y: 3)
-                    }
-                }
+            cover { Image(platformImage: image).resizable().scaledToFill() }
+        } else if library.isAlbumFolder(folder) {
+            cover { AlbumColor.color(for: folder) }
         } else {
             Image(systemName: folder.isSynced ? "arrow.triangle.2.circlepath" : "folder.fill")
                 .foregroundStyle(playingHere ? Color.accentColor : .secondary)
                 .frame(width: 24)
         }
+    }
+
+    /// The cover slot: a square of whatever fills it, with the sync badge
+    /// tucked into its corner.
+    private func cover<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        content()
+            .frame(width: 38, height: 38)
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .overlay(alignment: .bottomTrailing) {
+                if folder.isSynced {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 9, weight: .bold))
+                        .padding(2)
+                        .background(.regularMaterial, in: Circle())
+                        .offset(x: 3, y: 3)
+                }
+            }
     }
 }
 

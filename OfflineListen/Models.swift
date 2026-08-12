@@ -282,6 +282,30 @@ enum FolderSort: String, CaseIterable, Identifiable {
     }
 }
 
+/// How the Folders tab draws what it holds: one flat list (the original), or
+/// **covers** — albums as a grid of their sleeves, then mixtapes, then plain
+/// folders. Either way the chosen `FolderSort` orders each group.
+enum FolderViewMode: String, CaseIterable, Identifiable {
+    case list
+    case cover
+
+    var id: String { rawValue }
+    var displayName: String {
+        switch self {
+        case .list: return "List"
+        case .cover: return "Covers"
+        }
+    }
+
+    /// The glyph the Folders tab's view picker shows for this mode.
+    var icon: String {
+        switch self {
+        case .list: return "list.bullet"
+        case .cover: return "square.grid.2x2"
+        }
+    }
+}
+
 /// How a track behaves on playback. Songs always start from the beginning;
 /// podcasts resume from their saved playhead.
 enum TrackKind: String, Codable {
@@ -455,11 +479,25 @@ struct Folder: Identifiable, Codable, Hashable {
     /// `artworkFileName` — never synced or exported, and quite separate from a
     /// mixtape's hand-framed `coverURL`.
     var artworkFileName: String?
+    /// True when the folder is an **album**: it wears a square cover and its
+    /// songs share it. A folder downloaded whole from a discography is one by
+    /// construction (the release cover lands on it); any other folder becomes
+    /// one through **Convert to Album**.
+    var isAlbum: Bool
+    /// The square cover the *user* assigned (`<folder-id>-cover.jpg`, also in
+    /// `AppPaths.folderArtwork`). Kept apart from `artworkFileName` — the
+    /// cover the download brought — so **Reset** can put that one back.
+    var customArtworkFileName: String?
+    /// The colour an album with no cover at all falls back to, as "#RRGGBB":
+    /// a folder the user turned into an album before picking an image, or one
+    /// whose custom art was reset with no downloaded cover to return to.
+    var albumColorHex: String?
 
     init(id: UUID = UUID(), name: String, dateCreated: Date = Date(), isArchived: Bool = false,
          parentID: UUID? = nil, isSynced: Bool = false, syncRootID: UUID? = nil, syncedPath: String? = nil,
          isMixtape: Bool = false, mixtape: MixtapeStyle = MixtapeStyle(),
-         artworkFileName: String? = nil) {
+         artworkFileName: String? = nil, isAlbum: Bool = false,
+         customArtworkFileName: String? = nil, albumColorHex: String? = nil) {
         self.id = id
         self.name = name
         self.dateCreated = dateCreated
@@ -471,11 +509,14 @@ struct Folder: Identifiable, Codable, Hashable {
         self.isMixtape = isMixtape
         self.mixtape = mixtape
         self.artworkFileName = artworkFileName
+        self.isAlbum = isAlbum
+        self.customArtworkFileName = customArtworkFileName
+        self.albumColorHex = albumColorHex
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, dateCreated, isArchived, parentID, isSynced, syncRootID, syncedPath, isMixtape, mixtape
-        case artworkFileName
+        case artworkFileName, isAlbum, customArtworkFileName, albumColorHex
     }
 
     // Custom decode so folders.json saved before newer fields existed still loads.
@@ -492,6 +533,12 @@ struct Folder: Identifiable, Codable, Hashable {
         isMixtape = try c.decodeIfPresent(Bool.self, forKey: .isMixtape) ?? false
         mixtape = try c.decodeIfPresent(MixtapeStyle.self, forKey: .mixtape) ?? MixtapeStyle()
         artworkFileName = try c.decodeIfPresent(String.self, forKey: .artworkFileName)
+        // Albums predate the flag: every folder that already carried a
+        // downloaded release cover was one, so a file saved before this reads
+        // back as the album it always was.
+        isAlbum = try c.decodeIfPresent(Bool.self, forKey: .isAlbum) ?? (artworkFileName != nil)
+        customArtworkFileName = try c.decodeIfPresent(String.self, forKey: .customArtworkFileName)
+        albumColorHex = try c.decodeIfPresent(String.self, forKey: .albumColorHex)
     }
 
     /// The synced folder's directory inside its root's app-local sync store
@@ -514,6 +561,19 @@ struct Folder: Identifiable, Codable, Hashable {
     var artworkFileURL: URL? {
         artworkFileName.map { AppPaths.folderArtwork.appendingPathComponent($0) }
     }
+
+    /// The user-assigned square cover file, when one has been set.
+    var customArtworkFileURL: URL? {
+        customArtworkFileName.map { AppPaths.folderArtwork.appendingPathComponent($0) }
+    }
+
+    /// The cover file the folder actually shows: the user's pick first, then
+    /// whatever the download brought.
+    var coverArtworkFileName: String? { customArtworkFileName ?? artworkFileName }
+
+    /// Where a hand-picked album cover is written — beside the downloaded one
+    /// rather than over it, so a reset has something to go back to.
+    static func customArtworkName(for id: UUID) -> String { "\(id.uuidString)-cover.jpg" }
 }
 
 /// One entry in the listening log behind the Library's **Recent** folder.

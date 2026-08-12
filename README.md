@@ -91,9 +91,10 @@ vertical space goes to the content instead.
    chapter list also highlights the chapter currently playing.
 
    **Folders** organize the library, and have a tab of their own. A folder with
-   a **cover** — an album pulled down whole from a
-   discography — draws it as a thumbnail on the left of its row in place of
-   the folder icon. A folder whose tracks all name the **same artist** — which
+   a **cover** — an album pulled down whole from a discography, or one you gave
+   art to yourself — draws it as a thumbnail on the left of its row in place of
+   the folder icon (an album with no art yet shows its colour there instead).
+   A folder whose tracks all name the **same artist** — which
    an album pulled down from a discography is by construction — prints that
    artist under the folder's name, the same title-over-artist shape a track row
    has. It's derived from the tracks rather than stored on the folder, so an
@@ -117,7 +118,10 @@ vertical space goes to the content instead.
    into the same folder, and the original is replaced only once the fresh
    download has fully landed — a failed conversion costs nothing (the
    attempt shows in the Download tab like any job). Tracks with no source
-   link (local-sync imports) don't offer it. Swipe
+   link (local-sync imports) don't offer it. The link itself is on the menu
+   too — **Copy URL** puts it on the clipboard (to paste into the Download
+   field, or anywhere else) and **View Original** opens it in the browser;
+   a track with no link offers neither. Swipe
    a folder row for its slide menu: **Delete**, **Rename**, and **Archive**
    (move the whole folder, tracks and all, into the Archive).
 
@@ -149,6 +153,17 @@ vertical space goes to the content instead.
    into place; the order persists to `folders.json`. Folders persist to
    `Documents/folders.json`.
 
+   **Two ways to look at them.** A pair of glyphs in the Folders tab's
+   **top-left corner** — opposite the sort and folder buttons — switches
+   between the **list** (everything in one column, as above) and **covers**:
+   three groups stacked down the screen, **albums** as a grid of their
+   sleeves, then the **mixtapes** in their banner rows, then the plain
+   **folders**. It's the same set of folders either way, sorted the same way —
+   the sort applies within each group — with the Synced and Archive rows
+   pinned beneath them as ever. The choice persists. Drag-to-reorder stays in
+   the list: User Order is one sequence over *all* the folders, which three
+   separate groups can't express, so setting it means switching back.
+
    **Folders nest.** A folder's own screen has the same folder-plus button to
    create a subfolder, and any subfolders list in a **Folders** section above
    the tracks. (Nesting is what lets the local sync folder's directory tree
@@ -161,6 +176,14 @@ vertical space goes to the content instead.
    track list for picking the image, positioning the crop, and choosing a
    title font. **Convert to Folder** turns it back. See
    [Mixtape folders](#mixtape-folders).
+
+   **Albums.** The same menu offers **Convert to Album**, the other thing a
+   folder can be: a record, wearing a **square cover** its songs share. A
+   folder pulled down whole from a discography already is one; this is how any
+   other folder becomes one. Tapping the sleeve on the album's own screen
+   **changes or resets** the art, and a **Discography** button at the foot of
+   its track list opens the artist's catalogue. **Convert to Folder** is the
+   way back. See [Album folders](#album-folders).
 3. **Player** — artwork, scrubber, play/pause, skip, next/previous — the same
    control suite for audio and video, and it drives the lock screen and
    Control Center. A track downloaded with **album art** (anything
@@ -365,7 +388,9 @@ result appeared. Three things keep it quick, and they're worth preserving:
 
 - **`LibraryStore` memoizes its derived state.** The set of archived folder ids
   (the closure of `isArchived` over the parent links), the active-track list,
-  a track-id index, per-folder track counts, and the search index are each
+  a track-id index, per-folder track counts, per-folder track *lists* (the
+  cover grid asks each album for its tracks, to see what artwork they share),
+  and the search index are each
   computed once and cached. Every cache is dropped by a `didSet` on `tracks` /
   `folders`, so nothing can go stale — mutate the arrays as usual and the
   answers rebuild on next read.
@@ -411,6 +436,12 @@ synced folder keeps its sync badge, tucked into the corner of the cover), and
 as a **sleeve above the track list** inside the folder itself. It's quite
 separate from a **mixtape**'s hand-framed banner, which is still its own thing
 (and takes precedence — a mixtape shows its banner instead).
+
+A cover can also be given by hand: an **album** folder takes a square one from
+Photos, kept beside the downloaded cover as `<folder-id>-cover.jpg` and shown
+in preference to it, and copied onto every song in the folder. Which is where
+album art stops being only something a download brings — see
+[Album folders](#album-folders).
 
 A folder that never went through **Download Album** can earn the same sleeve:
 when *every* track in it carries the same cover — a Spotify album pasted into
@@ -1156,6 +1187,54 @@ files and folders are ignored. The trade-off of the copy model is deliberate:
 each synced file exists twice (app copy + provider copy) — that's what makes
 playback offline-proof.
 
+## Album folders
+
+A folder that *is* a record is a different thing from a folder that groups
+songs, and the app already knew it in one direction only: an album pulled down
+whole from a discography came back wearing the release's cover. **Convert to
+Album** (touch and hold a folder) says it in the other direction — this folder
+is a record — and everything an album gets follows from that.
+
+**Its cover is square, and its songs wear it.** Tapping the sleeve on an
+album's own screen offers **Change Album Art**: pick an image, frame it in a
+square (drag to pan, pinch or slide to zoom), and Save crops it and writes it
+in two places — on the folder, and onto **every song in it**, so the record
+shows in the Player, on the lock screen and in the mini player, exactly as a
+Spotify-sourced download does. That last part is the point of doing it here
+rather than track by track, and it does replace whatever covers those songs
+were wearing.
+
+**Reset puts it back.** The hand-picked cover is written *beside* the
+downloaded one (`<folder-id>-cover.jpg` next to `<folder-id>.jpg` in
+`Documents/FolderArtwork/`) rather than over it, which is what leaves anything
+to go back to: **Reset Album Art** drops the custom cover, and the album
+returns to the art its download brought — restored on the songs too. An album
+you made yourself has no such cover to return to, so it falls back to a flat
+**colour** instead, and the copies the custom art left on its songs are taken
+off (matched on content, so a song carrying different art keeps it). Reset is
+only offered once there's something of yours to undo.
+
+A colour is also what a **new** album shows: converting a folder assigns one
+from a small palette straight away, so it reads as a record in the cover grid
+before any image is picked. A real cover always supersedes it.
+
+**The Discography button.** At the foot of an album's track list, a
+**Discography** row opens that artist's live Spotify catalogue — the same
+album-first browser the Every Noise map and a Browse Artist source push (see
+[The Every Noise browser](#the-every-noise-browser)), so the rest of the
+record collection is one tap from the record. All a library folder knows is
+the artist's *name*, so Spotify's search resolves it, and the Settings ▸
+Spotify credentials are needed exactly as they are everywhere else the
+catalogue is read. The button appears only when the folder's tracks agree on
+**one** artist — which is the same derivation that prints the artist under a
+folder's name — because a compilation has no single catalogue to send anyone
+to.
+
+Album-ness is a flag on the folder (`isAlbum` in `folders.json`) rather than
+something re-derived per redraw, so the Folders tab's cover view can group by
+it cheaply. Folders saved before the flag existed read back as albums if they
+carry a downloaded release cover, which is exactly what they were.
+
 ## Mixtape folders
 
 **Convert to Mixtape** (touch-and-hold a folder) dresses a playlist up as a
@@ -1201,8 +1280,8 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | File | Role |
 |------|------|
 | `OfflineListenApp.swift` | App entry; wires up the shared stores. |
-| `Models.swift` | `Track`, `Folder`, `DownloadMode`, `LibraryFilter`, `FolderSort`, paths, helpers. |
-| `LibraryStore.swift` | Persists the library to `Documents/library.json` and folders to `Documents/folders.json`; owns the local moves across the sync boundary (queueing replica ops), the importer's reconcile primitives, and the mixtape conversions. |
+| `Models.swift` | `Track`, `Folder`, `DownloadMode`, `LibraryFilter`, `FolderSort`, `FolderViewMode`, paths, helpers. |
+| `LibraryStore.swift` | Persists the library to `Documents/library.json` and folders to `Documents/folders.json`; owns the local moves across the sync boundary (queueing replica ops), the importer's reconcile primitives, and the mixtape/album conversions — including the album cover write that lands on the folder *and* every song in it, and the reset that puts the downloaded one (or a colour) back. |
 | `LocalSync.swift` | `LocalSyncStore` — the sync folder's security-scoped bookmark, the stamped manifest + journaled exporter, the coordinated importer (placeholder-aware copies), kqueue monitoring, and the off-main tree scan. |
 | `DownloadManager.swift` | Download queue (two concurrent slots) + `DownloadJob` + persisted history; `enqueueAlbum`, which files a whole release into one folder in tracklist order with the catalogue's own titles/artists; `ArtworkFetcher`, the best-effort album-art fetch a finished download (or an album folder) triggers; and `VideoQualityChooser`, which puts the source's real rendition list to the user mid-extraction (once per video, hand-queued downloads only). |
 | `PythonGate.swift` | App-wide async mutex serializing every embedded-Python call, so the two-slot pipeline never runs concurrent interpreter work. |
@@ -1248,9 +1327,10 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `EveryNoiseData/` | Bundled (folder reference): `genres.json` index + per-genre artist shards from the one-time `tools/everynoise/scrape.py`, plus the derived `artists.idx.z` from `build_artist_index.py`. |
 | `BrowseSourceView.swift` | One source's items with per-row Download/Preview/Discard, plus a **Select** mode for bulk download; also `BrowseTrackStatusButton`, the green play button every browse list shows once a download is in the library. |
 | `BrowsePreviewView.swift` | The preview modal: pipeline download, mini player with prev/play-pause/next over the queue it was opened with (auto-advancing at the end of each track — off its own frozen-playhead watchdog, not just the end notification — phone locked or not), the lock-screen metadata it borrows while it plays, Save/Discard. |
-| `*View.swift` | The five SwiftUI screens, in tab order (Browse, Library, Player, Download, Settings — which embeds the Log); none of them sets a navigation title. `LibraryView.swift` also holds `LibraryTab`, the Recent/Folders/Inbox/Watch/All strip. `PlayerView.swift` also holds the tap-to-seek scrubber, the caption overlay (and its own 5 Hz playhead clock) and the `MiniPlayerBar` the other tabs inset above the tab bar. |
-| `FolderView.swift` | Folder detail (tap-to-play, reorder, subfolders, mixtape header/Edit Cover), plus the Library's Inbox and Recent tabs. |
+| `*View.swift` | The five SwiftUI screens, in tab order (Browse, Library, Player, Download, Settings — which embeds the Log); none of them sets a navigation title. `LibraryView.swift` also holds `LibraryTab`, the Recent/Folders/Inbox/Watch/All strip, and the Folders tab's two shapes (the list, and the cover view's album grid). `PlayerView.swift` also holds the tap-to-seek scrubber, the caption overlay (and its own 5 Hz playhead clock) and the `MiniPlayerBar` the other tabs inset above the tab bar. |
+| `FolderView.swift` | Folder detail (tap-to-play, reorder, subfolders, mixtape header/Edit Cover, the album sleeve that opens its art options and the Discography row beneath its tracks), the discography push a library album makes, plus the Library's Inbox and Recent tabs. |
 | `MixtapeViews.swift` | Mixtape banner rendering (non-destructive crop), the shared folder-row label, and the Edit Cover sheet (PhotosPicker + drag/pinch + font picker). |
+| `AlbumViews.swift` | The album side of a folder: the stand-in colour palette, the square sleeve (cover or colour) the folder screen and the cover grid draw, the grid's own cell, and the Album Art sheet — PhotosPicker, square framing, and the crop that turns the framing into the JPEG copied onto every song. |
 | `WatchFolderView.swift` | The phone's Library **Watch** tab (manage what's been sent to the watch). |
 | `WatchManifest.swift` | Wire format shared by the iPhone and watch targets (the sync manifest, the remote-control `RemoteNowPlaying`/`RemoteCommand` types, + WC keys). |
 | `WatchSync.swift` | Phone-side WatchConnectivity bridge: pushes the manifest + audio files, handles the watch's "Clear all". |

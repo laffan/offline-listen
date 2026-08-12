@@ -26,6 +26,15 @@ final class LibraryStore: ObservableObject {
             UserDefaults.standard.set(folderSort.rawValue, forKey: Self.folderSortKey)
         }
     }
+    /// Whether the Folders tab draws one list or the cover view (albums as a
+    /// grid, then mixtapes, then plain folders). Persisted like the sort — a
+    /// display choice, so it sticks across launches and changes nothing else.
+    @Published var folderViewMode: FolderViewMode = .list {
+        didSet {
+            guard folderViewMode != oldValue else { return }
+            UserDefaults.standard.set(folderViewMode.rawValue, forKey: Self.folderViewModeKey)
+        }
+    }
 
     /// Purely cosmetic: when on, the folders that mirror a sync folder are
     /// collected under a single "Synced" row at the root of the library's
@@ -40,6 +49,7 @@ final class LibraryStore: ObservableObject {
     }
 
     private static let folderSortKey = "folderSort"
+    private static let folderViewModeKey = "folderViewMode"
     static let groupSyncedKey = "groupSyncedFolders"
 
     /// Set by `LocalSyncStore`: receives a `SyncOp` (with the sync root it
@@ -68,6 +78,7 @@ final class LibraryStore: ObservableObject {
     private var cachedActiveTracks: [Track]?
     private var cachedTrackIndexByID: [UUID: Int]?
     private var cachedFolderTrackCounts: [UUID: Int]?
+    private var cachedTracksByFolder: [UUID: [Track]]?
     private var cachedFolderArtists: [UUID: String]?
     private var cachedSearchKeys: [UUID: String]?
     private var cachedTrackIDsBySource: [String: UUID]?
@@ -76,6 +87,7 @@ final class LibraryStore: ObservableObject {
         cachedActiveTracks = nil
         cachedTrackIndexByID = nil
         cachedFolderTrackCounts = nil
+        cachedTracksByFolder = nil
         cachedFolderArtists = nil
         cachedSearchKeys = nil
         cachedTrackIDsBySource = nil
@@ -355,14 +367,31 @@ final class LibraryStore: ObservableObject {
 
     /// Active tracks in a folder, in library order (which doubles as the
     /// folder's user-set order; see `moveTracks(in:fromOffsets:toOffset:)`).
+    ///
+    /// Grouped for every folder in one pass and memoized beside the counts:
+    /// the Folders tab's cover view asks per album, per redraw (each one needs
+    /// its tracks to work out the artwork they share), and filtering the whole
+    /// library per cell would be quadratic in the library's size.
     func tracks(in folderID: UUID) -> [Track] {
-        tracks.filter { $0.folderID == folderID && !$0.isArchived }
+        if cachedTracksByFolder == nil {
+            var grouped: [UUID: [Track]] = [:]
+            for track in tracks where !track.isArchived {
+                guard let id = track.folderID else { continue }
+                grouped[id, default: []].append(track)
+            }
+            cachedTracksByFolder = grouped
+        }
+        return cachedTracksByFolder?[folderID] ?? []
     }
 
     init() {
         if let raw = UserDefaults.standard.string(forKey: Self.folderSortKey),
            let sort = FolderSort(rawValue: raw) {
             folderSort = sort
+        }
+        if let raw = UserDefaults.standard.string(forKey: Self.folderViewModeKey),
+           let mode = FolderViewMode(rawValue: raw) {
+            folderViewMode = mode
         }
         groupSyncedFolders = UserDefaults.standard.bool(forKey: Self.groupSyncedKey)
         load()
@@ -644,9 +673,12 @@ final class LibraryStore: ObservableObject {
         // with the folders that carried them (the same rule a track's artwork
         // follows).
         for id in doomed {
-            let name = "\(id.uuidString).jpg"
-            try? FileManager.default.removeItem(at: AppPaths.folderArtwork.appendingPathComponent(name))
-            FolderArtwork.invalidate(fileName: name)
+            // Both covers a folder can carry: the downloaded release art and
+            // the square one the user framed over it.
+            for name in ["\(id.uuidString).jpg", Folder.customArtworkName(for: id)] {
+                try? FileManager.default.removeItem(at: AppPaths.folderArtwork.appendingPathComponent(name))
+                FolderArtwork.invalidate(fileName: name)
+            }
         }
         saveFolders()
         var changed = false
@@ -1216,6 +1248,147 @@ final class LibraryStore: ObservableObject {
         saveFolders()
     }
 
+    // MARK: - Albums
+
+    /// True when the folder is an album — it wears a square cover above its
+    /// tracks and as its thumbnail, and its songs share that cover. Mixtapes
+    /// are their own thing and never count as one.
+    func isAlbumFolder(_ folder: Folder) -> Bool {
+        !folder.isMixtape && folder.isAlbum
+    }
+
+    /// Turns a plain folder into an album. With no cover to show yet it takes
+    /// a random colour, so it reads as an album in the folder grid straight
+    /// away; picking an image is the next step (tap the cover).
+    func convertToAlbum(_ folder: Folder) {
+        guard let index = folders.firstIndex(where: { $0.id == folder.id }),
+              !folders[index].isMixtape,
+              !folders[index].isAlbum else { return }
+        folders[index].isAlbum = true
+        if folders[index].coverArtworkFileName == nil, folders[index].albumColorHex == nil {
+            folders[index].albumColorHex = AlbumColor.randomHex(excluding: nil)
+        }
+        saveFolders()
+    }
+
+    /// Turns an album back into a plain folder, discarding the cover the user
+    /// picked (and its colour) the way `convertToFolder` discards a mixtape's.
+    /// A cover the *download* brought stays — it's the record's own art, and
+    /// re-downloading the album would only fetch it again. The songs keep
+    /// whatever they're wearing.
+    func convertAlbumToFolder(_ folder: Folder) {
+        guard let index = folders.firstIndex(where: { $0.id == folder.id }),
+              folders[index].isAlbum else { return }
+        if let name = folders[index].customArtworkFileName {
+            try? FileManager.default.removeItem(
+                at: AppPaths.folderArtwork.appendingPathComponent(name))
+            FolderArtwork.invalidate(fileName: name)
+            folders[index].customArtworkFileName = nil
+        }
+        folders[index].isAlbum = false
+        folders[index].albumColorHex = nil
+        coverRevision += 1
+        saveFolders()
+    }
+
+    /// Applies a square cover the user framed: it becomes the album's own art
+    /// and is copied onto **every song in the folder**, so the record wears it
+    /// in the Player, on the lock screen and in the mini player — the same
+    /// places a Spotify-sourced download's art shows. Written beside any
+    /// downloaded cover rather than over it, which is what `resetAlbumArtwork`
+    /// goes back to.
+    func setAlbumArtwork(_ folder: Folder, imageData: Data) {
+        guard let index = folders.firstIndex(where: { $0.id == folder.id }) else { return }
+        let name = Folder.customArtworkName(for: folder.id)
+        do {
+            try imageData.write(to: AppPaths.folderArtwork.appendingPathComponent(name),
+                                options: .atomic)
+        } catch {
+            appLog("Couldn't save the album cover: \(error.localizedDescription)",
+                   level: .error, category: "Library")
+            return
+        }
+        FolderArtwork.invalidate(fileName: name)
+        folders[index].customArtworkFileName = name
+        folders[index].isAlbum = true
+        folders[index].albumColorHex = nil
+        saveFolders()
+        applyArtwork(imageData, toTracksIn: folder.id)
+        coverRevision += 1
+        appLog("Set album art on \"\(folders[index].name)\".", level: .success, category: "Library")
+    }
+
+    /// Puts an album's cover back where it started: the one the download
+    /// brought, when there is one, and otherwise a fresh random colour. The
+    /// songs follow — they get the release cover back, or lose the copy the
+    /// custom art left on them (a song wearing art of its own is left alone).
+    func resetAlbumArtwork(_ folder: Folder) {
+        guard let index = folders.firstIndex(where: { $0.id == folder.id }) else { return }
+        // Read before it's deleted: it's what identifies the copies this
+        // cover left on the tracks.
+        let customData = folders[index].customArtworkFileURL.flatMap { try? Data(contentsOf: $0) }
+        if let name = folders[index].customArtworkFileName {
+            try? FileManager.default.removeItem(
+                at: AppPaths.folderArtwork.appendingPathComponent(name))
+            FolderArtwork.invalidate(fileName: name)
+            folders[index].customArtworkFileName = nil
+        }
+        if let downloaded = folders[index].artworkFileURL,
+           let data = try? Data(contentsOf: downloaded) {
+            folders[index].albumColorHex = nil
+            saveFolders()
+            applyArtwork(data, toTracksIn: folder.id)
+        } else {
+            folders[index].albumColorHex = AlbumColor.randomHex(excluding: folders[index].albumColorHex)
+            saveFolders()
+            if let customData { clearTrackArtwork(matching: customData, in: folder.id) }
+            FolderCover.invalidate()
+        }
+        coverRevision += 1
+    }
+
+    /// Writes one image onto every active track in a folder (as each track's
+    /// own `<track-id>.jpg`, which is where all the artwork readers look) in a
+    /// single library save.
+    private func applyArtwork(_ data: Data, toTracksIn folderID: UUID) {
+        var changed = false
+        for index in tracks.indices where tracks[index].folderID == folderID && !tracks[index].isArchived {
+            let name = "\(tracks[index].id.uuidString).jpg"
+            do {
+                try data.write(to: AppPaths.artwork.appendingPathComponent(name), options: .atomic)
+            } catch {
+                appLog("Couldn't put the album cover on \"\(tracks[index].title)\": \(error.localizedDescription)",
+                       level: .warning, category: "Library")
+                continue
+            }
+            TrackArtwork.invalidate(fileName: name)
+            if tracks[index].artworkFileName != name {
+                tracks[index].artworkFileName = name
+                changed = true
+            }
+        }
+        // The shared-cover verdict compares these very files.
+        FolderCover.invalidate()
+        if changed { save() }
+    }
+
+    /// Removes the album cover's copies from a folder's songs, matched on
+    /// content — a song carrying different art (one added after the cover was
+    /// applied, say) keeps it.
+    private func clearTrackArtwork(matching data: Data, in folderID: UUID) {
+        var changed = false
+        for index in tracks.indices where tracks[index].folderID == folderID {
+            guard let name = tracks[index].artworkFileName else { continue }
+            let url = AppPaths.artwork.appendingPathComponent(name)
+            guard let current = try? Data(contentsOf: url), current == data else { continue }
+            try? FileManager.default.removeItem(at: url)
+            TrackArtwork.invalidate(fileName: name)
+            tracks[index].artworkFileName = nil
+            changed = true
+        }
+        if changed { save() }
+    }
+
     // MARK: - Apple Watch
 
     /// Whether a track is currently pushed to the watch.
@@ -1537,11 +1710,16 @@ final class LibraryStore: ObservableObject {
 
     /// The folder equivalent: points a folder at a cover already written to
     /// `AppPaths.folderArtwork`. An album downloaded whole from a discography
-    /// wears its release cover in the Library's folder list this way.
+    /// wears its release cover in the Library's folder list this way — and a
+    /// folder handed a release's cover *is* an album, which is what flags it
+    /// as one for the folder grid and the discography button.
     func setFolderArtwork(for id: UUID, fileName: String) {
         guard let index = folders.firstIndex(where: { $0.id == id }),
-              folders[index].artworkFileName != fileName else { return }
+              folders[index].artworkFileName != fileName || !folders[index].isAlbum else { return }
         folders[index].artworkFileName = fileName
+        folders[index].isAlbum = true
+        // A real cover supersedes the stand-in colour.
+        folders[index].albumColorHex = nil
         saveFolders()
     }
 

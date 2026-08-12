@@ -37,6 +37,7 @@
 		1B00000000000000000000CF /* PlaylistResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BD /* PlaylistResolver.swift */; };
 		1B00000000000000000000D0 /* LocalSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BE /* LocalSync.swift */; };
 		1B00000000000000000000D2 /* MixtapeViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000000BF /* MixtapeViews.swift */; };
+		1B0000000000000000007A01 /* AlbumViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000007A01 /* AlbumViews.swift */; };
 		1B00000000000000000001E0 /* JSChallengeSolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000001E0 /* JSChallengeSolver.swift */; };
 		1B00000000000000000001E1 /* POTokenMinter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000001E1 /* POTokenMinter.swift */; };
 		1B00000000000000000001E2 /* PythonBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000001E2 /* PythonBridge.swift */; };
@@ -180,6 +181,7 @@
 		1A00000000000000000000BD /* PlaylistResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaylistResolver.swift; sourceTree = "<group>"; };
 		1A00000000000000000000BE /* LocalSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSync.swift; sourceTree = "<group>"; };
 		1A00000000000000000000BF /* MixtapeViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MixtapeViews.swift; sourceTree = "<group>"; };
+		1A0000000000000000007A01 /* AlbumViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlbumViews.swift; sourceTree = "<group>"; };
 		1A00000000000000000001E0 /* JSChallengeSolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSChallengeSolver.swift; sourceTree = "<group>"; };
 		1A00000000000000000001E1 /* POTokenMinter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = POTokenMinter.swift; sourceTree = "<group>"; };
 		1A00000000000000000001E2 /* PythonBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PythonBridge.swift; sourceTree = "<group>"; };
@@ -325,6 +327,7 @@
 				1A00000000000000000000AA /* LibraryView.swift */,
 				1A00000000000000000000B6 /* FolderView.swift */,
 				1A00000000000000000000BF /* MixtapeViews.swift */,
+				1A0000000000000000007A01 /* AlbumViews.swift */,
 				1A00000000000000000000B7 /* ChapterFetcher.swift */,
 				1A00000000000000000000BD /* PlaylistResolver.swift */,
 				1A00000000000000000000B8 /* ChapterSplitter.swift */,
@@ -639,6 +642,7 @@
 				1B00000000000000000000C8 /* FolderView.swift in Sources */,
 				1B00000000000000000000D0 /* LocalSync.swift in Sources */,
 				1B00000000000000000000D2 /* MixtapeViews.swift in Sources */,
+				1B0000000000000000007A01 /* AlbumViews.swift in Sources */,
 				1B00000000000000000000C9 /* ChapterFetcher.swift in Sources */,
 				1B00000000000000000000CF /* PlaylistResolver.swift in Sources */,
 				1B00000000000000000000CA /* ChapterSplitter.swift in Sources */,

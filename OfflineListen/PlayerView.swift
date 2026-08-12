@@ -33,12 +33,14 @@ enum TrackArtwork {
 /// The same memoized loader for **folder** covers (`AppPaths.folderArtwork`) —
 /// an album downloaded whole from a discography wears its release cover as the
 /// thumbnail on its Library row, and the folder list redraws often enough that
-/// re-reading the JPEG per row would show.
+/// re-reading the JPEG per row would show. A cover the *user* assigned wins
+/// over the downloaded one (see `Folder.coverArtworkFileName`), which is what
+/// leaves the downloaded file intact for **Reset Album Art** to return to.
 enum FolderArtwork {
     private static let cache = NSCache<NSString, PlatformImage>()
 
     static func image(for folder: Folder) -> PlatformImage? {
-        guard let name = folder.artworkFileName else { return nil }
+        guard let name = folder.coverArtworkFileName else { return nil }
         if let hit = cache.object(forKey: name as NSString) { return hit }
         guard let image = PlatformImage(contentsOfFile: AppPaths.folderArtwork.appendingPathComponent(name).path) else {
             return nil

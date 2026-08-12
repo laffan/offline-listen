@@ -7,7 +7,6 @@ import SwiftUI
 struct FolderDetailView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var playback: PlaybackManager
-    @Environment(\.openURL) private var openURL
 
     let folderID: UUID
     let onPlay: () -> Void
@@ -24,6 +23,10 @@ struct FolderDetailView: View {
     /// The subfolder a swipe-Delete is asking about (see `DeleteFolderConfirm`).
     @State private var deletingFolder: Folder?
     @State private var editingCover = false
+    /// The album-art sheet, and the change/reset dialog a tap on the sleeve
+    /// opens first.
+    @State private var editingAlbumArt = false
+    @State private var albumArtOptions = false
 
     private var folder: Folder? {
         library.folders.first { $0.id == folderID }
@@ -31,6 +34,19 @@ struct FolderDetailView: View {
 
     private var isMixtape: Bool {
         folder?.isMixtape ?? false
+    }
+
+    private var isAlbum: Bool {
+        folder.map { library.isAlbumFolder($0) } ?? false
+    }
+
+    /// The one artist an album belongs to — what the **Discography** button at
+    /// the foot of the list opens. Nil for a folder that isn't an album, and
+    /// for an album whose tracks name more than one artist: a compilation has
+    /// no single catalogue to send anyone to.
+    private var albumArtist: String? {
+        guard isAlbum else { return nil }
+        return library.folderArtist(of: folderID)
     }
 
     private var tracks: [Track] {
@@ -43,7 +59,9 @@ struct FolderDetailView: View {
 
     var body: some View {
         Group {
-            if tracks.isEmpty && subfolders.isEmpty && !isMixtape {
+            // An album keeps its screen even while empty — the sleeve is where
+            // its art is set, so a placeholder would strand it.
+            if tracks.isEmpty && subfolders.isEmpty && !isMixtape && !isAlbum {
                 ContentUnavailableViewCompat(
                     title: "Empty folder",
                     systemImage: "folder",
@@ -65,6 +83,25 @@ struct FolderDetailView: View {
             if let folder {
                 MixtapeCoverEditor(folder: folder)
             }
+        }
+        .sheet(isPresented: $editingAlbumArt) {
+            if let folder {
+                AlbumCoverEditor(folder: folder)
+            }
+        }
+        .confirmationDialog("Album Art", isPresented: $albumArtOptions, titleVisibility: .visible) {
+            Button("Change Album Art") { editingAlbumArt = true }
+            // Only offered once there's something of the user's to undo.
+            if folder?.customArtworkFileName != nil {
+                Button("Reset Album Art", role: .destructive) {
+                    if let folder { library.resetAlbumArtwork(folder) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(folder?.artworkFileName == nil
+                 ? "The art is cropped to a square and applied to every song in the folder. Resetting drops it for a colour."
+                 : "The art is cropped to a square and applied to every song in the folder. Resetting puts back the cover this album was downloaded with.")
         }
         .alert("New Folder", isPresented: $showNewFolder) {
             TextField("Folder name", text: $newFolderName)
@@ -145,6 +182,11 @@ struct FolderDetailView: View {
                     // as inset rather than centered.
                     .listRowSeparator(.hidden)
                 }
+                // An album is one artist's record, so the catalogue it came
+                // from is one tap from the record itself.
+                if let albumArtist {
+                    discographyRow(albumArtist)
+                }
             }
         }
         .listStyle(.plain)
@@ -152,25 +194,61 @@ struct FolderDetailView: View {
     }
 
     /// The album sleeve, when this folder has one to show: its downloaded
-    /// cover, or the artwork every track in it shares. Sits above everything
-    /// else, so a folder that *is* a record looks like one. A mixtape has its
-    /// own banner instead and never reaches here.
+    /// cover, the one the user framed, or the artwork every track in it
+    /// shares. Sits above everything else, so a folder that *is* a record
+    /// looks like one. A mixtape has its own banner instead and never reaches
+    /// here.
+    ///
+    /// On an **album** the sleeve is also the way into its art: tapping it
+    /// offers to change the cover or reset it. A folder that merely happens to
+    /// show shared artwork isn't one, so its sleeve stays a picture.
     @ViewBuilder
     private var coverHeader: some View {
-        if let folder, let cover = FolderCover.image(for: folder, tracks: tracks) {
-            Section {
-                Image(platformImage: cover)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: 220, maxHeight: 220)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .shadow(radius: 6, y: 3)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
+        if let folder {
+            let cover = FolderCover.image(for: folder, tracks: tracks)
+            if library.isAlbumFolder(folder) {
+                Section {
+                    Button {
+                        albumArtOptions = true
+                    } label: {
+                        AlbumCoverArt(folder: folder, image: cover, cornerRadius: 10)
+                            .frame(width: 220, height: 220)
+                            .shadow(radius: 6, y: 3)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Album art — change or reset")
                     .listRowInsets(EdgeInsets())
                     .listRowSeparator(.hidden)
+                }
+            } else if let cover {
+                Section {
+                    Image(platformImage: cover)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: 220, maxHeight: 220)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .shadow(radius: 6, y: 3)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
+                }
             }
         }
+    }
+
+    /// The **Discography** row at the foot of an album: the artist's catalogue,
+    /// read live from Spotify — the same browser the Every Noise map and a
+    /// Browse Artist source push.
+    private func discographyRow(_ artist: String) -> some View {
+        NavigationLink(value: LibraryRoute.discography(artist)) {
+            Label("Discography", systemImage: "square.stack")
+                .frame(maxWidth: .infinity)
+        }
+        .accessibilityLabel("Browse \(artist)'s discography")
+        .listRowSeparator(.hidden)
     }
 
     private func subfolderRow(_ subfolder: Folder) -> some View {
@@ -292,13 +370,7 @@ struct FolderDetailView: View {
                         Label("Break Chapters into Playlist", systemImage: "list.bullet.indent")
                     }
                 }
-                if let url = URL(string: track.sourceURL) {
-                    Button {
-                        openURL(url)
-                    } label: {
-                        Label("View Original", systemImage: "safari")
-                    }
-                }
+                TrackSourceButtons(track: track)
             }
 
         if editMode.isEditing {
@@ -314,12 +386,60 @@ struct FolderDetailView: View {
     }
 }
 
+/// An album folder's artist, as their live catalogue — the shared
+/// `DiscographyBrowserView` behind the **Discography** button at the foot of
+/// an album. All a library folder knows about the artist is their *name*, so
+/// the provider is left to resolve it through Spotify's search, exactly as a
+/// typed Artist source does.
+///
+/// It needs the Settings ▸ Spotify credentials, like every other way into the
+/// catalogue; without them it says so rather than pushing an empty screen.
+struct LibraryDiscographyView: View {
+    let artistName: String
+
+    @EnvironmentObject private var spotifySettings: SpotifySettingsStore
+    @EnvironmentObject private var aiSettings: AISettingsStore
+    @EnvironmentObject private var browse: BrowseStore
+
+    var body: some View {
+        if let client = spotifySettings.client {
+            DiscographyBrowserView(
+                title: artistName,
+                provider: SpotifyDiscographyProvider(client: client,
+                                                     artistName: artistName,
+                                                     aiSettings: aiSettings),
+                // Same as the Every Noise push: liking a record enough to
+                // open its catalogue is the moment you'd follow the artist.
+                addSource: DiscographyAddSource(
+                    isAdded: {
+                        browse.sources.contains {
+                            $0.kind == .artist
+                                && $0.artistSourceMode == .spotifyDiscography
+                                && $0.input.caseInsensitiveCompare(artistName) == .orderedSame
+                        }
+                    },
+                    add: {
+                        browse.addSource(kind: .artist, name: artistName,
+                                         input: artistName,
+                                         artistMode: .spotifyDiscography)
+                    }))
+        } else {
+            ContentUnavailableViewCompat(
+                title: "Couldn't load the discography",
+                systemImage: "exclamationmark.triangle",
+                description: "Add Spotify credentials in Settings ▸ Spotify first."
+            )
+            .navigationTitle(artistName)
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+}
+
 /// The Library's **Inbox** tab: every active track that hasn't been listened to
 /// yet. Tracks leave automatically once playback starts, or via Mark Played.
 struct InboxView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var playback: PlaybackManager
-    @Environment(\.openURL) private var openURL
 
     let onPlay: () -> Void
     @Binding var share: SharePayload?
@@ -408,13 +528,7 @@ struct InboxView: View {
                                         Label("Break Chapters into Playlist", systemImage: "list.bullet.indent")
                                     }
                                 }
-                                if let url = URL(string: track.sourceURL) {
-                                    Button {
-                                        openURL(url)
-                                    } label: {
-                                        Label("View Original", systemImage: "safari")
-                                    }
-                                }
+                                TrackSourceButtons(track: track)
                             }
                     }
                 }
@@ -512,6 +626,7 @@ struct RecentTracksView: View {
                                 AIOrganizeButton(track: pair.track)
                                 GetAlbumArtButton(track: pair.track)
                                 ConvertFormatButton(track: pair.track)
+                                TrackSourceButtons(track: pair.track)
                             }
                     }
                 }
