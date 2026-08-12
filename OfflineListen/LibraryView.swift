@@ -820,6 +820,7 @@ struct LibraryView: View {
                 SendToWatchButton(track: track)
                 AIOrganizeButton(track: track)
                 GetAlbumArtButton(track: track)
+                GetSubtitlesButton(track: track)
                 ConvertFormatButton(track: track)
                 if track.hasChapters {
                     Button {
@@ -1529,6 +1530,33 @@ struct ConvertFormatButton: View {
 /// wears (Player, lock screen, mini player). Shows itself only when Spotify
 /// credentials are saved; best-effort like every artwork fetch, so a miss
 /// logs and changes nothing. Safe to drop into any track's `contextMenu`.
+/// **Get Subtitles** for a video already in the library — the same best-effort
+/// capture a video download makes, on demand. It's the way back for everything
+/// downloaded before captions existed, for a video whose captions were
+/// published after you saved it, and for a capture that came back empty
+/// because the source was being difficult that day. The Log (category
+/// `Subtitles`) says which route answered and what it found.
+struct GetSubtitlesButton: View {
+    @EnvironmentObject private var library: LibraryStore
+    let track: Track
+
+    var body: some View {
+        // Nothing to caption without a picture, and nothing to ask without a
+        // source link (a local-sync import has none).
+        if track.isVideo, let url = URL(string: track.sourceURL), !track.sourceURL.isEmpty {
+            Button {
+                appLog("Get Subtitles: asking for English captions for \"\(track.title)\"…",
+                       category: SubtitleFetcher.category)
+                SubtitleFetcher.attach(from: url, to: track.id, isVideo: true,
+                                       library: library, requested: true)
+            } label: {
+                Label(track.subtitleFileName == nil ? "Get Subtitles" : "Refresh Subtitles",
+                      systemImage: "captions.bubble")
+            }
+        }
+    }
+}
+
 struct GetAlbumArtButton: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var spotifySettings: SpotifySettingsStore

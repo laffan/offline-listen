@@ -192,8 +192,20 @@ enum SubtitleStore {
         guard let name = track.subtitleFileName else { return [] }
         if let hit = cache[name] { return hit }
         guard let raw = try? String(contentsOf: AppPaths.subtitles.appendingPathComponent(name),
-                                    encoding: .utf8) else { return [] }
+                                    encoding: .utf8) else {
+            // The track points at a caption file that isn't there — worth
+            // saying, since from the player it looks exactly like a video that
+            // never had any.
+            appLog("Subtitle file \(name) is recorded on \"\(track.title)\" but couldn't be read.",
+                   level: .warning, category: SubtitleFetcher.category)
+            cache[name] = []
+            return []
+        }
         let cues = SubtitleParser.parse(raw)
+        if cues.isEmpty {
+            appLog("Subtitle file \(name) parsed to no cues (\(raw.count) characters read).",
+                   level: .warning, category: SubtitleFetcher.category)
+        }
         if cache.count >= cacheLimit { cache.removeAll() }
         cache[name] = cues
         return cues
@@ -290,10 +302,18 @@ enum SubtitleFetcher {
     /// Captures subtitles for a finished **video** download and records the
     /// file on the track. Audio downloads skip it — there's nothing to draw
     /// captions over.
-    static func attach(from url: URL, to trackID: UUID, isVideo: Bool, library: LibraryStore) {
+    /// `requested` marks the on-demand path (the library's **Get Subtitles**),
+    /// where a miss is news — the automatic one keeps quiet about a video that
+    /// simply has no captions, which is most of them.
+    static func attach(from url: URL, to trackID: UUID, isVideo: Bool,
+                       library: LibraryStore, requested: Bool = false) {
         guard isVideo else { return }
         Task {
-            guard let cues = await fetch(url: url), !cues.isEmpty else { return }
+            guard let cues = await fetch(url: url), !cues.isEmpty else {
+                appLog("No English captions on offer for \(url.absoluteString).",
+                       level: requested ? .warning : .debug, category: category)
+                return
+            }
             let fileName = "\(trackID.uuidString).vtt"
             let destination = AppPaths.subtitles.appendingPathComponent(fileName)
             do {
@@ -311,11 +331,20 @@ enum SubtitleFetcher {
         }
     }
 
-    /// The cues for a URL, or nil when nothing English is on offer.
+    /// The cues for a URL, or nil when nothing English is on offer. Which of
+    /// the two routes answered is logged: they fail for quite different
+    /// reasons, and "no captions" from one is not the same news as from both.
     static func fetch(url: URL) async -> [SubtitleCue]? {
-        if let cues = await fromYouTubePage(url), !cues.isEmpty { return cues }
+        if let cues = await fromYouTubePage(url), !cues.isEmpty {
+            appLog("Captions read from the watch page: \(cues.count) cue(s).",
+                   level: .debug, category: category)
+            return cues
+        }
         guard let link = await ytDlpSubtitleURL(for: url) else { return nil }
-        return await download(link)
+        let cues = await download(link)
+        appLog("Captions via yt-dlp's caption list: \(cues?.count ?? 0) cue(s).",
+               level: .debug, category: category)
+        return cues
     }
 
     // MARK: The YouTube page

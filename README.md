@@ -110,6 +110,8 @@ vertical space goes to the content instead.
    right), with **Reset to Original Title** to restore the download title —
    and, with Spotify credentials saved, **Get Album Art**, which finds the
    track's cover on Spotify and attaches it (see [Album art](#album-art)).
+   A **video** track offers **Get Subtitles** as well — the same capture a
+   video download makes, run on demand (see [Subtitles](#subtitles)).
    A downloaded track also offers **Convert to Video** / **Convert to
    Audio**: the file is re-downloaded from its source in the other format,
    into the same folder, and the original is replaced only once the fresh
@@ -1827,12 +1829,34 @@ is what makes each of those cues look different in the first place.
 
 **Drawing them.** The cue is rendered by the app rather than by AVFoundation (a
 sidecar file isn't part of the asset), which is also what makes it styleable.
-The overlay runs off its **own** periodic observer on the player at 5 Hz, not
-the app's 2 Hz progress ticker: half a second is nothing for a scrubber and
-plainly late for a subtitle. Looking a cue up is a binary search over an array
-already in memory, and the observer only exists while a captioned video is on
-screen. Settings ▸ **Subtitles** sets the size, colour and backdrop; the
-Player's **CC button** and the Settings toggle are the same switch.
+The overlay prefers its **own** periodic observer on the player at 5 Hz to the
+app's 2 Hz progress ticker: half a second is nothing for a scrubber and plainly
+late for a subtitle. Looking a cue up is a binary search over an array already
+in memory, and the observer only exists while a captioned video is on screen.
+It is not allowed to be a single point of failure, though: **until that
+observer has actually delivered a tick, the playhead comes from the app's own
+ticker** — the one the scrubber visibly runs on. A caption that can only appear
+if a second clock starts is a caption that silently doesn't appear. Settings ▸
+**Subtitles** sets the size, colour and backdrop; the Player's **CC button**
+and the Settings toggle are the same switch.
+
+**Getting them for a video you already have.** Touch and hold any video track
+for **Get Subtitles** (**Refresh Subtitles** once it has some): the same
+capture, on demand. It's the way back for everything downloaded before captions
+existed, for a video whose captions were published after you saved it, and for
+a capture that came back empty because the source was being difficult. Tracks
+with no source link (local-sync imports) don't offer it.
+
+**When nothing appears.** Captions that don't show look identical whether
+nothing was captured, the cues sit at the wrong times, the playhead never
+moved, or the film simply isn't saying anything just there — so the app
+distinguishes them rather than leaving it to guesswork. Tapping **CC** flashes
+**"Subtitles on · N lines"** (or "Subtitles off") over the picture, so the
+switch is never silent. And the Log's `Subtitles` category records the whole
+chain at debug level: which route answered the capture and with how many cues,
+how many cues the file parsed to when the player loaded it (a warning if that's
+zero, or if the file a track points at has gone missing), what the first and
+last cue times are, and the moment the caption clock starts ticking.
 
 ## Extraction: native primaries + yt-dlp fallback
 

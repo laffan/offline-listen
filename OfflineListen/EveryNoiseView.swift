@@ -1692,15 +1692,15 @@ struct ENArtistBar: View {
             // the map or interrupting the snippet.
             //
             // A switch, not a one-way door: it fills in when they're on the
-            // list and empties when tapped again. Drawn at the "+"'s size and
-            // in the same accent, since the two sit side by side and are the
-            // same kind of thing.
+            // list and empties when tapped again. The bare bookmark shape (no
+            // circle around it) at a size that balances the "+" beside it, in
+            // the same accent, since the two are the same kind of thing.
             let saved = savedForLater.contains(bookmark)
             Button {
                 savedForLater.toggle(bookmark)
             } label: {
-                Image(systemName: saved ? "bookmark.circle.fill" : "bookmark.circle")
-                    .font(.system(size: 30))
+                Image(systemName: saved ? "bookmark.fill" : "bookmark")
+                    .font(.system(size: 26))
             }
             .accessibilityLabel(saved ? "Remove \(artist.name) from Saved for Later"
                                       : "Save \(artist.name) for later")

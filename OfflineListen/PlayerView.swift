@@ -136,6 +136,8 @@ struct PlayerView: View {
 
     /// Whether the control overlay is visible in fullscreen video.
     @State private var showVideoControls = true
+    /// The brief "Subtitles on/off" flash after the CC button is tapped.
+    @State private var captionsNotice: String?
     /// Set by tapping the picture in portrait: the video takes over the screen
     /// (title, transport, nav and tab bars all out of the way) until it's
     /// tapped back down. Landscape goes fullscreen on its own, by orientation.
@@ -334,20 +336,38 @@ struct PlayerView: View {
     @ViewBuilder
     private func subtitleLayer(for track: Track) -> some View {
         let lines = cues(for: track)
-        if subtitlesEnabled, !lines.isEmpty {
-            SubtitleOverlay(player: playback.player, cues: lines)
-                .padding(.bottom, 10)
-                .allowsHitTesting(false)
+        VStack(spacing: 8) {
+            // Says what the CC button just did. Without it, turning captions
+            // on during a silent stretch — a title sequence, a scene with no
+            // dialogue — is indistinguishable from a button that does nothing.
+            if let captionsNotice {
+                Text(captionsNotice)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .transition(.opacity)
+            }
+            if subtitlesEnabled, !lines.isEmpty {
+                SubtitleOverlay(player: playback.player,
+                                progress: playback.progress,
+                                cues: lines)
+            }
         }
+        .padding(.bottom, 10)
+        .allowsHitTesting(false)
     }
 
     /// The CC button, shown only on a video that actually has captions —
     /// nothing is worse than a control that does nothing.
     @ViewBuilder
     private func captionsButton(for track: Track) -> some View {
-        if track.isVideo, !cues(for: track).isEmpty {
+        let lines = cues(for: track)
+        if track.isVideo, !lines.isEmpty {
             Button {
                 subtitlesEnabled.toggle()
+                announceCaptions(lines.count)
             } label: {
                 Image(systemName: subtitlesEnabled ? "captions.bubble.fill" : "captions.bubble")
                     .font(.subheadline.weight(.semibold))
@@ -356,6 +376,20 @@ struct PlayerView: View {
                     .background(.ultraThinMaterial, in: Circle())
             }
             .accessibilityLabel(subtitlesEnabled ? "Hide subtitles" : "Show subtitles")
+        }
+    }
+
+    /// Flashes what the toggle did, and logs it — the pair of facts that say
+    /// whether a caption that didn't appear is a broken switch or a quiet
+    /// moment in the film.
+    private func announceCaptions(_ count: Int) {
+        let notice = subtitlesEnabled ? "Subtitles on · \(count) lines" : "Subtitles off"
+        appLog(notice, level: .debug, category: SubtitleFetcher.category)
+        withAnimation { captionsNotice = notice }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_800_000_000)
+            guard captionsNotice == notice else { return }
+            withAnimation { captionsNotice = nil }
         }
     }
 
@@ -662,13 +696,21 @@ private struct CurrentChapterLabel: View {
 
 /// The caption line over a video.
 ///
-/// It runs off its **own** periodic observer on the player rather than the
-/// app's 2 Hz progress ticker: half a second is nothing for a scrubber and
-/// plainly late for a subtitle, which has to change on the word. Five reads a
-/// second costs nothing (the cue lookup is a binary search over an array that's
-/// already in memory) and only exists while a video with captions is on screen.
+/// It prefers its **own** periodic observer on the player to the app's 2 Hz
+/// progress ticker: half a second is nothing for a scrubber and plainly late
+/// for a subtitle, which has to change on the word. Five reads a second cost
+/// nothing (the cue lookup is a binary search over an array already in memory)
+/// and the observer only exists while a captioned video is on screen.
+///
+/// It is not, however, allowed to be a *single point of failure*: until that
+/// observer has actually produced a tick, the playhead comes from the app's
+/// own ticker — the one the scrubber runs on, which is visibly working
+/// whenever anything is playing. A caption that can only appear if a second
+/// clock starts is a caption that silently doesn't appear.
 private struct SubtitleOverlay: View {
     let player: AVPlayer
+    /// The app's own playhead, as the floor under the finer clock below.
+    @ObservedObject var progress: PlaybackProgress
     let cues: [SubtitleCue]
 
     @StateObject private var clock = SubtitleClock()
@@ -689,9 +731,15 @@ private struct SubtitleOverlay: View {
         (SubtitleBackdrop(rawValue: backdrop) ?? .dim).opacity
     }
 
+    /// The playhead the cue is looked up against: the fine clock once it's
+    /// running, the app's ticker until then.
+    private var time: Double {
+        clock.ticking ? clock.time : progress.currentTime
+    }
+
     var body: some View {
         Group {
-            if let cue = cues.cue(at: clock.time) {
+            if let cue = cues.cue(at: time) {
                 Text(cue.text)
                     .font(.system(size: textSize, weight: .semibold))
                     .foregroundStyle(textColor)
@@ -706,8 +754,22 @@ private struct SubtitleOverlay: View {
                     .padding(.horizontal, 16)
             }
         }
-        .onAppear { clock.follow(player) }
+        .onAppear {
+            clock.follow(player)
+            // Which of the two things that can go wrong has gone wrong is not
+            // guessable from the outside — captions that never appear look the
+            // same whether nothing was captured, the cues sit at the wrong
+            // times, or the playhead never moved. So the mount says what it
+            // has, and the first tick says the clock is live.
+            appLog("Subtitle overlay up: \(cues.count) cue(s), first at \(cueRange). Playhead \(progress.currentTime.asPlaybackTime).",
+                   level: .debug, category: SubtitleFetcher.category)
+        }
         .onDisappear { clock.stop() }
+    }
+
+    private var cueRange: String {
+        guard let first = cues.first, let last = cues.last else { return "—" }
+        return "\(first.start.asPlaybackTime), last ends \(last.end.asPlaybackTime)"
     }
 }
 
@@ -717,6 +779,9 @@ private struct SubtitleOverlay: View {
 @MainActor
 private final class SubtitleClock: ObservableObject {
     @Published var time: Double = 0
+    /// True once the observer has actually delivered a tick — until then the
+    /// overlay reads the app's own ticker instead of trusting this one.
+    @Published private(set) var ticking = false
 
     private var observer: Any?
     private weak var player: AVPlayer?
@@ -734,14 +799,24 @@ private final class SubtitleClock: ObservableObject {
         ) { [weak self] current in
             let seconds = current.seconds
             guard seconds.isFinite else { return }
-            Task { @MainActor in self?.time = seconds }
+            Task { @MainActor in self?.tick(seconds) }
         }
+    }
+
+    private func tick(_ seconds: Double) {
+        if !ticking {
+            ticking = true
+            appLog("Caption clock ticking at \(seconds.asPlaybackTime).",
+                   level: .debug, category: SubtitleFetcher.category)
+        }
+        time = seconds
     }
 
     func stop() {
         if let observer { player?.removeTimeObserver(observer) }
         observer = nil
         player = nil
+        ticking = false
     }
 }
 
