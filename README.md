@@ -829,8 +829,9 @@ releases group into
 Albums / Singles & EPs / Compilations, newest first — each with its **cover
 art** beside it, and the artist's portrait, name, **Learn More** bio button,
 a **Save for Later** button and an **Add as Source** button heading the page
-(three capsules don't fit across a phone, so they break onto a second line
-rather than being shortened into initials). The last two are a pair: **Add as
+(each **glyph over its label** in a rounded tile, which is what fits three of
+them across a phone on one line — as wide capsules they didn't). The last two
+are a pair: **Add as
 Source** files the
 artist into Browse as a discography-mode **Artist source** on the spot (it
 reads "In Browse" once an equivalent source exists, so it never files a

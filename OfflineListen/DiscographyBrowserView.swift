@@ -713,21 +713,13 @@ struct DiscographyBrowserView: View {
             Text(catalogue.artistName)
                 .font(.title.weight(.bold))
                 .multilineTextAlignment(.center)
-            // Three capsules don't fit across a phone, so they break onto a
-            // second line rather than being shortened into initials.
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) {
-                    learnMoreButton
-                    saveForLaterButton
-                    addSourceButton
-                }
-                VStack(spacing: 8) {
-                    HStack(spacing: 10) {
-                        learnMoreButton
-                        saveForLaterButton
-                    }
-                    addSourceButton
-                }
+            // Three wide capsules don't fit across a phone. Stacking each
+            // icon over its label does — three squarish tiles on one line,
+            // which reads as a row of actions rather than a broken sentence.
+            HStack(spacing: 10) {
+                learnMoreButton
+                saveForLaterButton
+                addSourceButton
             }
         }
         .frame(maxWidth: .infinity)
@@ -736,14 +728,9 @@ struct DiscographyBrowserView: View {
     }
 
     private var learnMoreButton: some View {
-        Button {
+        headerButton("Learn More", systemImage: "text.book.closed") {
             showingBio = true
-        } label: {
-            Label("Learn More", systemImage: "text.book.closed")
-                .font(.subheadline.weight(.semibold))
         }
-        .buttonStyle(.bordered)
-        .buttonBorderShape(.capsule)
     }
 
     /// Puts the artist on the Browse tab's Saved for Later list — the lighter
@@ -752,17 +739,12 @@ struct DiscographyBrowserView: View {
     private var saveForLaterButton: some View {
         if let saveForLater {
             let saved = saveForLater.isSaved()
-            Button {
+            headerButton(saved ? "Saved" : "Save for Later",
+                         systemImage: saved ? "bookmark.fill" : "bookmark",
+                         tint: saved ? .orange : .accentColor,
+                         disabled: saved) {
                 saveForLater.save()
-            } label: {
-                Label(saved ? "Saved" : "Save for Later",
-                      systemImage: saved ? "bookmark.fill" : "bookmark")
-                    .font(.subheadline.weight(.semibold))
             }
-            .buttonStyle(.bordered)
-            .buttonBorderShape(.capsule)
-            .disabled(saved)
-            .foregroundStyle(saved ? Color.orange : Color.accentColor)
         }
     }
 
@@ -774,18 +756,41 @@ struct DiscographyBrowserView: View {
     private var addSourceButton: some View {
         if let addSource {
             let added = addSource.isAdded()
-            Button {
+            headerButton(added ? "In Browse" : "Add as Source",
+                         systemImage: added ? "checkmark.circle.fill" : "plus.circle",
+                         tint: added ? .green : .accentColor,
+                         disabled: added) {
                 addSource.add()
-            } label: {
-                Label(added ? "In Browse" : "Add as Source",
-                      systemImage: added ? "checkmark.circle.fill" : "plus.circle")
-                    .font(.subheadline.weight(.semibold))
             }
-            .buttonStyle(.bordered)
-            .buttonBorderShape(.capsule)
-            .disabled(added)
-            .foregroundStyle(added ? Color.green : Color.accentColor)
         }
+    }
+
+    /// One of the header's action tiles: the glyph over its label, in a
+    /// rounded box rather than a capsule (a capsule around a two-line stack
+    /// reads as a lozenge, not a button). They share a minimum width so the
+    /// row stays even however the labels change — "Saved" is half the length
+    /// of "Save for Later", and the row shouldn't shuffle when it flips.
+    private func headerButton(_ title: String,
+                              systemImage: String,
+                              tint: Color = .accentColor,
+                              disabled: Bool = false,
+                              action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 5) {
+                Image(systemName: systemImage)
+                    .font(.title3)
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
+            .frame(minWidth: 84)
+            .padding(.vertical, 6)
+        }
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.roundedRectangle(radius: 12))
+        .disabled(disabled)
+        .foregroundStyle(tint)
     }
 
     @MainActor
