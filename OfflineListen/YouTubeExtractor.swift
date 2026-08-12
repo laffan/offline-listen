@@ -90,6 +90,24 @@ enum PlayableVideoCodec {
         let raw = mt[range.upperBound...].trimmingCharacters(in: CharacterSet(charactersIn: "\"' "))
         return isPlayable(codec: raw)
     }
+
+    /// The codec as a person would name it — for the quality picker, where
+    /// "avc1.640028" says nothing and "H.264" says enough.
+    static func name(for codec: String?) -> String {
+        let c = (codec ?? "").lowercased()
+        if c.hasPrefix("avc") || c.hasPrefix("h264") { return "H.264" }
+        if c.hasPrefix("hvc") || c.hasPrefix("hev") || c.hasPrefix("h265") { return "HEVC" }
+        if c.hasPrefix("av01") { return "AV1" }
+        if c.hasPrefix("vp9") || c.hasPrefix("vp09") { return "VP9" }
+        if let codec, !codec.isEmpty { return codec }
+        return "video"
+    }
+
+    /// The same, read out of a `video/mp4; codecs="…"` mime type.
+    static func name(forMimeType mimeType: String?) -> String {
+        guard let mt = mimeType, let range = mt.range(of: "codecs=") else { return "video" }
+        return name(for: mt[range.upperBound...].trimmingCharacters(in: CharacterSet(charactersIn: "\"' ")))
+    }
 }
 
 /// Reads the duration of a local media file (audio or video).
@@ -692,13 +710,24 @@ final class YoutubeDLExtractor: MediaExtractor {
                        level: .error, category: category)
                 throw ExtractorError.unplayableVideoCodec(list)
             }
-            guard let video = quality.pick(from: playable, height: { $0.height ?? 0 }) else {
+            // What the source actually offers, put to the user when the job
+            // asked to choose (`.ask`); any other preference answers from
+            // itself without a prompt.
+            let cap = await VideoQualityChooser.shared.cap(
+                for: quality, url: url, title: info.title,
+                renditions: playable.map {
+                    VideoRendition(id: $0.format_id, height: $0.height ?? 0,
+                                   codec: PlayableVideoCodec.name(for: $0.vcodec),
+                                   needsMerge: $0.isVideoOnly, bytes: $0.filesize)
+                })
+            guard let video = VideoQuality.pick(from: playable, maxHeight: cap,
+                                                height: { $0.height ?? 0 }) else {
                 throw ExtractorError.noVideoFormat
             }
             chosen = video
             mergeAudioRequest = bestAudio.flatMap(makeRequest)
             mergeAudioRefresh = bestAudio.map { refresher(formatID: $0.format_id) }
-            appLog("Selected video \(chosen.format_id) (\(chosen.height.map { "\($0)p" } ?? "?")\(quality.maxHeight.map { " · preference ≤\($0)p" } ?? "")) \(chosen.vcodec ?? "?") \(chosen.isVideoOnly ? "video-only — will merge audio" : "muxed")",
+            appLog("Selected video \(chosen.format_id) (\(chosen.height.map { "\($0)p" } ?? "?")\(cap.map { " · chose ≤\($0)p" } ?? "")) \(chosen.vcodec ?? "?") \(chosen.isVideoOnly ? "video-only — will merge audio" : "muxed")",
                    category: category)
         } else if let audio = bestAudio {
             chosen = audio
@@ -1231,10 +1260,22 @@ final class YoutubeDLExtractor: MediaExtractor {
         }
         let audios = candidates.filter { $0.hasAudio && !$0.hasVideo && $0.ext == "m4a" }
 
-        guard let video = quality.pick(from: videos, height: { $0.height ?? 0 }) else { return nil }
+        // The recovery's list is a *different* set from the default
+        // extraction's (a different player client), so it's offered on its own
+        // terms — and when the default path already asked about this URL, the
+        // chooser answers from that rather than asking twice.
+        let cap = await VideoQualityChooser.shared.cap(
+            for: quality, url: url, title: info.title ?? url.absoluteString,
+            renditions: videos.map {
+                VideoRendition(id: $0.formatID, height: $0.height ?? 0,
+                               codec: PlayableVideoCodec.name(for: $0.vcodec),
+                               needsMerge: !$0.hasAudio, bytes: nil)
+            })
+        guard let video = VideoQuality.pick(from: videos, maxHeight: cap,
+                                            height: { $0.height ?? 0 }) else { return nil }
         let videoHeight = video.height ?? 0
         let audio = audios.max(by: { $0.abr < $1.abr })
-        appLog("Recovery (\(client)) selected H.264 video \(videoHeight)p\(quality.maxHeight.map { " (preference ≤\($0)p)" } ?? "") (\(video.vcodec))\(audio == nil ? " · no separate audio" : " + m4a audio")",
+        appLog("Recovery (\(client)) selected H.264 video \(videoHeight)p\(cap.map { " (chose ≤\($0)p)" } ?? "") (\(video.vcodec))\(audio == nil ? " · no separate audio" : " + m4a audio")",
                level: .success, category: category)
         // If YouTube offered the video at a notably higher resolution but only in
         // a codec this device can't decode (AV1/VP9), say so — otherwise a 360p

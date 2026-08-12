@@ -14,6 +14,11 @@ struct RootView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var playback: PlaybackManager
     @EnvironmentObject private var router: AppRouter
+    /// The "which resolution?" question a video download raises once it knows
+    /// what the source offers. Presented here rather than in the Download tab
+    /// because the download that asks may well have been started from Browse —
+    /// and a question nobody can see is a download that waits for nothing.
+    @EnvironmentObject private var videoQuality: VideoQualityChooser
     @State private var selection: Tab = .library
 
     /// Downloads still working or waiting — the number shown on the Download
@@ -59,6 +64,9 @@ struct RootView: View {
         // A widget tap can land before this view exists (a cold launch from the
         // home screen), in which case the link is already parked and no change
         // fires — so both routes are checked on appear as well.
+        .sheet(item: $videoQuality.pending) { pending in
+            VideoQualityPickerView(pending: pending)
+        }
         .onAppear { routeBrowse(); routeTrack() }
         .onChange(of: router.pendingBrowse) { _ in routeBrowse() }
         .onChange(of: router.pendingTrackID) { _ in routeTrack() }

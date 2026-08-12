@@ -177,6 +177,12 @@ enum DownloadMode: String, Codable, CaseIterable, Identifiable {
 /// actually offers in a device-playable codec — a preference can't conjure a
 /// rendition YouTube didn't serve.
 enum VideoQuality: String, Codable, CaseIterable, Identifiable {
+    /// Decide when the real list is known: the extractor resolves the source's
+    /// renditions, then asks (see `VideoQualityChooser`). Only a *download*
+    /// uses this — a preview picks a tier up front, since it's meant to start
+    /// playing rather than to stop and ask. Anywhere it isn't resolved it
+    /// behaves exactly like `best`, so it can never strand a download.
+    case ask
     case best
     case p1080
     case p720
@@ -185,10 +191,14 @@ enum VideoQuality: String, Codable, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    /// The resolution cap, nil for `best`.
+    /// The tiers a picker offers as a standing preference — everything but
+    /// `ask`, which is a way of deciding rather than a resolution.
+    static var presets: [VideoQuality] { allCases.filter { $0 != .ask } }
+
+    /// The resolution cap, nil for `best` (and for an unresolved `ask`).
     var maxHeight: Int? {
         switch self {
-        case .best: return nil
+        case .ask, .best: return nil
         case .p1080: return 1080
         case .p720: return 720
         case .p480: return 480
@@ -198,6 +208,7 @@ enum VideoQuality: String, Codable, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
+        case .ask: return "Ask"
         case .best: return "Best"
         case .p1080: return "1080p"
         case .p720: return "720p"
@@ -211,6 +222,13 @@ enum VideoQuality: String, Codable, CaseIterable, Identifiable {
     /// offered, so a strict cap degrades to "smallest available" rather than
     /// failing.
     func pick<T>(from candidates: [T], height: (T) -> Int) -> T? {
+        Self.pick(from: candidates, maxHeight: maxHeight, height: height)
+    }
+
+    /// The same rule against a cap worked out at runtime — what a rendition
+    /// chosen from the source's own list gives, which needn't be one of the
+    /// tiers above (a source that offers 240p and nothing else, say).
+    static func pick<T>(from candidates: [T], maxHeight: Int?, height: (T) -> Int) -> T? {
         guard let cap = maxHeight else {
             return candidates.max(by: { height($0) < height($1) })
         }

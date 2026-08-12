@@ -176,7 +176,9 @@ struct DownloadView: View {
         if isSearch {
             search(for: text)
         } else {
-            downloads.enqueueLinks(from: urlText, mode: mode)
+            // A link pasted by hand is the one download worth stopping to ask
+            // about — see `VideoQualityChooser`.
+            downloads.enqueueLinks(from: urlText, mode: mode, asksQuality: true)
             urlText = ""
             urlFieldFocused = false
         }
@@ -416,6 +418,76 @@ struct PlaylistPickerView: View {
     }
 }
 
+/// The resolution picker: what the source turned out to offer, once the
+/// extraction has run. Not a menu of tiers the app hopes exist — every row is
+/// a stream that is actually there, with its codec, its size where the source
+/// declared one, and whether it comes with sound or will be muxed with the
+/// best audio track (which is how the taller resolutions are possible at all).
+///
+/// Dismissing takes the best available, which is what the app did before it
+/// asked — a picker you can ignore is better than a download that stalls
+/// waiting for you.
+struct VideoQualityPickerView: View {
+    let pending: PendingVideoQuality
+
+    @Environment(\.dismiss) private var dismiss
+    /// Guards against deciding twice (a tap, then `onDisappear`).
+    @State private var decided = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(pending.renditions) { rendition in
+                        Button {
+                            finish(rendition.height)
+                        } label: {
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(rendition.label)
+                                        .font(.body.weight(.medium))
+                                    Text(rendition.detail)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 8)
+                                Image(systemName: "arrow.down.circle")
+                                    .foregroundStyle(Color.accentColor)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                } header: {
+                    Text("\(pending.renditions.count) qualities available")
+                } footer: {
+                    Text("Only resolutions this device can decode are listed. A stream with no sound of its own is downloaded together with the best audio and the two are combined into one file.")
+                }
+
+                Section {
+                    Button("Best Available") { finish(nil) }
+                        .fontWeight(.semibold)
+                }
+            }
+            .navigationTitle(pending.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") { finish(nil) }
+                }
+            }
+            .onDisappear { finish(nil) }
+        }
+    }
+
+    private func finish(_ height: Int?) {
+        guard !decided else { return }
+        decided = true
+        pending.decide(height)
+        dismiss()
+    }
+}
+
 /// A finished Download-tab search: the query plus its top YouTube results,
 /// presented as a pick-a-result modal via `.sheet(item:)`.
 struct DownloadSearchResults: Identifiable {
@@ -473,7 +545,9 @@ private struct SearchResultsView: View {
     }
 
     private func download(_ result: YouTubeSearchResult) {
-        downloads.enqueue(urlString: result.url, mode: mode)
+        // One hit picked out of a list of five: as deliberate as a pasted
+        // link, so it gets the same quality question.
+        downloads.enqueue(urlString: result.url, mode: mode, asksQuality: true)
         sent.insert(result.videoID)
     }
 

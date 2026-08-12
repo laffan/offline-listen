@@ -88,6 +88,10 @@ struct OfflineListenApp: App {
                 .environmentObject(everyNoiseUpdates)
                 .environmentObject(savedForLater)
                 .environmentObject(router)
+                // Shared rather than owned here: the extractors reach it as a
+                // singleton (they have no view context), and this is what puts
+                // its question on screen.
+                .environmentObject(VideoQualityChooser.shared)
                 .environmentObject(LogStore.shared)
                 #if os(macOS)
                 // Dark, whatever the system is set to. `preferredColorScheme`

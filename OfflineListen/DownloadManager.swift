@@ -33,6 +33,11 @@ final class DownloadJob: ObservableObject, Identifiable {
     /// when there's no Anthropic key to do the cleaning.
     let knownTitle: String?
     let knownArtist: String?
+    /// Which resolution a video job takes. `.ask` stops once the extractor
+    /// knows what the source offers and puts the list up (see
+    /// `VideoQualityChooser`); everything queued as part of a *batch* carries
+    /// the standing preference instead, since forty prompts is not a feature.
+    let quality: VideoQuality
 
     @Published var title: String
     /// A live sub-status shown in place of the state label while a long
@@ -51,9 +56,11 @@ final class DownloadJob: ObservableObject, Identifiable {
     init(url: String, mode: DownloadMode, isPlaylist: Bool = false,
          spotifyRef: SpotifyRef? = nil, folderID: UUID? = nil,
          artworkURL: String? = nil, replacesTrackID: UUID? = nil,
-         knownTitle: String? = nil, knownArtist: String? = nil) {
+         knownTitle: String? = nil, knownArtist: String? = nil,
+         quality: VideoQuality = .best) {
         self.url = url
         self.mode = mode
+        self.quality = quality
         self.isPlaylist = isPlaylist
         self.spotifyRef = spotifyRef
         self.folderID = folderID
@@ -170,6 +177,166 @@ final class PlaylistDecisionBox: @unchecked Sendable {
             // Answer arrived before `attach`; hand it over when attach runs.
             pending = .some(value)
         }
+    }
+}
+
+// MARK: - Choosing a video quality
+
+/// One rendition a source is actually offering, as the picker lists it.
+/// Everything here comes from the extraction that just ran — this is not a
+/// menu of tiers the app hopes exist.
+struct VideoRendition: Identifiable, Hashable {
+    /// The extractor's own format id, which is what makes two renditions of
+    /// the same height distinct.
+    let id: String
+    let height: Int
+    /// "H.264" / "HEVC" — spelled for a person, not a codec string.
+    let codec: String
+    /// True when this stream carries no sound and the app will download the
+    /// best audio alongside it and mux the two (`VideoMerger`). Worth saying:
+    /// it's why the higher resolutions exist at all.
+    let needsMerge: Bool
+    /// Stream size in bytes when the source declared one.
+    let bytes: Int?
+
+    var label: String { "\(height)p" }
+
+    var detail: String {
+        var parts = [codec]
+        if let bytes, bytes > 0 {
+            parts.append("~\(bytes / 1024 / 1024) MB")
+        }
+        parts.append(needsMerge ? "video + audio, merged" : "video with audio")
+        return parts.joined(separator: " · ")
+    }
+}
+
+/// A download paused on "which of these?" — the same shape as
+/// `PendingPlaylist`, and presented the same way.
+struct PendingVideoQuality: Identifiable {
+    let id = UUID()
+    let title: String
+    /// Tallest first, one row per distinct height.
+    let renditions: [VideoRendition]
+    /// The chosen height cap; nil means "the best of them".
+    let decide: (Int?) -> Void
+}
+
+/// Asks which resolution a video download should take, once the extractor
+/// knows what the source actually offers.
+///
+/// The alternative — a standing Best/1080p/720p preference chosen in advance —
+/// is what the preview modal has, and it's the wrong shape for a download: it
+/// can only name tiers the app guessed at, and YouTube's answer varies per
+/// video (a 4K upload with H.264 only to 720p, a 240p-only rescue through the
+/// forced-client recovery). So the question is asked *after* resolution, with
+/// the real list.
+///
+/// It asks **once per video**: the same download resolves more than once (the
+/// default extraction, then the forced-client recovery, then a mid-download
+/// URL refresh), and a second prompt for the same file would be a bug. The
+/// answer is memoized against the URL for ten minutes, which also means a
+/// "Download Again" straight after a failure doesn't re-ask.
+@MainActor
+final class VideoQualityChooser: ObservableObject {
+    static let shared = VideoQualityChooser()
+
+    /// The question on screen, if any. `RootView` presents it, so it reaches
+    /// the user whichever tab they're on when the download comes up.
+    @Published var pending: PendingVideoQuality?
+
+    /// The last height chosen, as the standing default for everything that
+    /// can't stop and ask: bulk downloads, album and playlist children, and a
+    /// prompt nobody answered. 0 = best available.
+    static let preferredHeightKey = "preferredVideoHeight"
+
+    /// Long enough to cover one download's several resolutions, short enough
+    /// that coming back to a video later asks again.
+    private static let memoWindow: TimeInterval = 600
+    /// A prompt holds a pipeline slot, so it can't wait forever.
+    private static let promptTimeout: TimeInterval = 120
+
+    private var memo: [String: (cap: Int?, at: Date)] = [:]
+    private var resume: ((Int?) -> Void)?
+
+    /// The height cap this download should run with. Anything but `.ask`
+    /// answers from the preference it already carries, without a hop.
+    func cap(for quality: VideoQuality,
+             url: URL,
+             title: String,
+             renditions: [VideoRendition]) async -> Int? {
+        guard quality == .ask else { return quality.maxHeight }
+
+        let key = url.absoluteString
+        if let hit = memo[key], Date().timeIntervalSince(hit.at) < Self.memoWindow {
+            return hit.cap
+        }
+
+        // One row per height, tallest first — two encodings of 720p are one
+        // choice as far as anyone looking at this is concerned.
+        var seen = Set<Int>()
+        let options = renditions
+            .filter { $0.height > 0 }
+            .sorted { $0.height > $1.height }
+            .filter { seen.insert($0.height).inserted }
+
+        guard options.count > 1 else {
+            // Nothing to choose between: don't stop a download to say so.
+            let only = options.first?.height
+            appLog("Only one video quality on offer\(only.map { " (\($0)p)" } ?? "") — taking it.",
+                   level: .debug, category: "Queue")
+            remember(nil, for: key)
+            return nil
+        }
+
+        appLog("Asking which quality to download: \(options.map(\.label).joined(separator: ", ")).",
+               category: "Queue")
+        let chosen = await withCheckedContinuation { (continuation: CheckedContinuation<Int?, Never>) in
+            self.resume = { continuation.resume(returning: $0) }
+            let question = PendingVideoQuality(title: title, renditions: options) { [weak self] cap in
+                self?.finish(cap)
+            }
+            self.pending = question
+            // The sheet can only be answered by someone looking at it. If the
+            // phone is in a pocket, fall back to the standing preference
+            // rather than holding a pipeline slot until the app is reopened.
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(Self.promptTimeout * 1_000_000_000))
+                self?.timeOut(question.id)
+            }
+        }
+        remember(chosen, for: key)
+        appLog("Downloading at \(chosen.map { "\($0)p or below" } ?? "the best quality available").",
+               category: "Queue")
+        return chosen
+    }
+
+    /// The standing default: the last height chosen, or nil for best.
+    static var preferredHeight: Int? {
+        let stored = UserDefaults.standard.integer(forKey: preferredHeightKey)
+        return stored > 0 ? stored : nil
+    }
+
+    private func remember(_ cap: Int?, for key: String) {
+        memo[key] = (cap, Date())
+        if memo.count > 32 { memo.removeAll() }
+        UserDefaults.standard.set(cap ?? 0, forKey: Self.preferredHeightKey)
+    }
+
+    private func finish(_ cap: Int?) {
+        guard let resume else { return }
+        self.resume = nil
+        pending = nil
+        resume(cap)
+    }
+
+    /// Only times out the question it was scheduled for — a later prompt is a
+    /// different question with its own clock.
+    private func timeOut(_ id: UUID) {
+        guard pending?.id == id else { return }
+        appLog("Nobody answered the quality prompt — using \(Self.preferredHeight.map { "\($0)p" } ?? "the best available").",
+               level: .warning, category: "Queue")
+        finish(Self.preferredHeight)
     }
 }
 
@@ -371,8 +538,15 @@ final class DownloadManager: ObservableObject {
     /// prose only queues the links. We accept *any* site (not just YouTube) and
     /// let yt-dlp decide — it supports Vimeo, SoundCloud and ~hundreds of
     /// others.
-    func enqueueLinks(from text: String, mode: DownloadMode) {
+    /// `asksQuality` is the Download tab's own paste: a **single** video link
+    /// typed or pasted by hand is the one case where stopping to ask which
+    /// resolution is welcome. A paste holding several links isn't (they'd
+    /// queue several prompts), and neither is anything arriving from the Share
+    /// Extension, a playlist, or a batch.
+    func enqueueLinks(from text: String, mode: DownloadMode, asksQuality: Bool = false) {
         let tokens = text.split(whereSeparator: { $0.isWhitespace })
+        let links = tokens.map(String.init).filter { Self.isDownloadableToken($0) }
+        let asks = asksQuality && mode == .video && links.count == 1
         var added = 0
         var skipped = 0
         for token in tokens {
@@ -386,7 +560,7 @@ final class DownloadManager: ObservableObject {
                 if PlaylistURL.isPlaylistURL(link) {
                     enqueuePlaylist(urlString: link, mode: mode)
                 } else {
-                    enqueue(urlString: link, mode: mode)
+                    enqueue(urlString: link, mode: mode, asksQuality: asks)
                 }
                 added += 1
             } else {
@@ -399,6 +573,20 @@ final class DownloadManager: ObservableObject {
         if added == 0 {
             appLog("No links found in input.", level: .warning, category: "Queue")
         }
+    }
+
+    /// What a job should carry: the question for a hand-queued video, and the
+    /// last-chosen height for everything else (audio ignores it entirely).
+    private static func quality(asking: Bool, mode: DownloadMode) -> VideoQuality {
+        guard mode == .video else { return .best }
+        if asking { return .ask }
+        guard let height = VideoQualityChooser.preferredHeight else { return .best }
+        // The standing preference is a height, which needn't be one of the
+        // tiers — the nearest tier at or above it keeps the same rule the
+        // picker applied ("this height or below").
+        return VideoQuality.presets
+            .filter { ($0.maxHeight ?? .max) >= height }
+            .min(by: { ($0.maxHeight ?? .max) < ($1.maxHeight ?? .max) }) ?? .best
     }
 
     /// Any well-formed http(s) URL with a host is queueable; yt-dlp handles the
@@ -431,13 +619,19 @@ final class DownloadManager: ObservableObject {
     /// A `folderID` files the finished track into that folder (used for the child
     /// jobs a playlist expands into); `replacesTrackID` marks a format
     /// conversion — the named track leaves the library once this lands.
+    /// `asksQuality` puts the resolution question up once the extractor knows
+    /// what the source offers. Off by default, so every batch path — playlist
+    /// children, album tracks, Browse's bulk download, a format conversion —
+    /// keeps running unattended on the standing preference.
     func enqueue(urlString: String, mode: DownloadMode, folderID: UUID? = nil,
                  artworkURL: String? = nil, replacesTrackID: UUID? = nil,
-                 knownTitle: String? = nil, knownArtist: String? = nil) {
+                 knownTitle: String? = nil, knownArtist: String? = nil,
+                 asksQuality: Bool = false) {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         let job = DownloadJob(url: trimmed, mode: mode, folderID: folderID,
                               artworkURL: artworkURL, replacesTrackID: replacesTrackID,
-                              knownTitle: knownTitle, knownArtist: knownArtist)
+                              knownTitle: knownTitle, knownArtist: knownArtist,
+                              quality: Self.quality(asking: asksQuality, mode: mode))
         if URL(string: trimmed) == nil || !trimmed.lowercased().hasPrefix("http") {
             job.state = .failed(ExtractorError.invalidURL.localizedDescription)
             jobs.insert(job, at: 0)
@@ -527,9 +721,13 @@ final class DownloadManager: ObservableObject {
         } else if wasPlaylist {
             enqueuePlaylist(urlString: url, mode: mode)
         } else {
+            // A restart is one deliberate video at a time, so it asks which
+            // quality again — and the ten-minute memo means an immediate retry
+            // reuses the answer rather than re-asking.
             enqueue(urlString: url, mode: mode, folderID: folderID, artworkURL: artworkURL,
                     replacesTrackID: replacesTrackID,
-                    knownTitle: knownTitle, knownArtist: knownArtist)
+                    knownTitle: knownTitle, knownArtist: knownArtist,
+                    asksQuality: folderID == nil && replacesTrackID == nil)
         }
     }
 
@@ -680,6 +878,7 @@ final class DownloadManager: ObservableObject {
             let extracted = try await extractor.extractMedia(
                 from: url,
                 mode: job.mode,
+                quality: job.quality,
                 onDownloadStart: {
                     Task { @MainActor in job.state = .downloading }
                 },

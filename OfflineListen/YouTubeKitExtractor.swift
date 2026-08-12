@@ -44,12 +44,19 @@ final class YouTubeKitExtractor: MediaExtractor {
     /// can't decode the webm/opus streams YouTube also offers, so a webm pick
     /// would download completely and then fail verification; videos with no
     /// m4a audio route to the muxed-mp4 + extraction fallback instead.
-    private static func pickBestVideo(_ videoFormats: [VideoDownloadFormat],
-                                      quality: VideoQuality) -> VideoDownloadFormat? {
-        let playable = videoFormats.filter {
+    private static func playableVideos(_ videoFormats: [VideoDownloadFormat]) -> [VideoDownloadFormat] {
+        videoFormats.filter {
             $0.url != nil && ($0.mimeType ?? "").contains("mp4") && PlayableVideoCodec.isPlayable(mimeType: $0.mimeType)
         }
-        return quality.pick(from: playable, height: { $0.height ?? 0 })
+    }
+
+    /// Takes a height cap rather than a `VideoQuality` because the cap may
+    /// have come from the user picking off this very list (see
+    /// `VideoQualityChooser`), which needn't land on one of the tiers.
+    private static func pickBestVideo(_ videoFormats: [VideoDownloadFormat],
+                                      maxHeight: Int?) -> VideoDownloadFormat? {
+        VideoQuality.pick(from: playableVideos(videoFormats), maxHeight: maxHeight,
+                          height: { $0.height ?? 0 })
     }
 
     private static func pickBestAudio(_ audioFormats: [AudioOnlyFormat]) -> AudioOnlyFormat? {
@@ -78,7 +85,7 @@ final class YouTubeKitExtractor: MediaExtractor {
     /// downloader's Content-Range consistency check backstops that case.
     private func freshMediaRequest(videoID: String,
                                    kind: StreamKind,
-                                   quality: VideoQuality,
+                                   maxHeight: Int?,
                                    matchingLength: Int?,
                                    category: String) async throws -> URLRequest? {
         appLog("Re-resolving \(videoID) via YouTubeKit for a fresh stream URL…", category: category)
@@ -109,7 +116,7 @@ final class YouTubeKitExtractor: MediaExtractor {
 
         let streamURL: URL?
         switch kind {
-        case .video: streamURL = Self.pickBestVideo(videoFormats, quality: quality)?.url
+        case .video: streamURL = Self.pickBestVideo(videoFormats, maxHeight: maxHeight)?.url
         case .muxedSmallest: streamURL = Self.pickSmallestMuxed(videoFormats)?.url
         case .audioOnly: streamURL = Self.pickBestAudio(audioFormats)?.url
         }
@@ -167,13 +174,32 @@ final class YouTubeKitExtractor: MediaExtractor {
         let chosenKind: StreamKind
         var mergeAudioRequest: URLRequest?
         var extractAudioAfterDownload = false
+        /// The height the download settled on, so a mid-download re-resolve
+        /// selects by the same rule rather than drifting to a taller stream.
+        var videoCap: Int?
 
         if mode == .video {
             // Best MP4 with video AVFoundation can decode, honouring the
-            // quality preference. AV1/VP9 streams (which YouTube often offers)
-            // play as a blank QuickTime placeholder on iOS, so restrict to
-            // H.264/HEVC. If video-only, VideoMerger adds audio.
-            guard let video = Self.pickBestVideo(videoFormats, quality: quality), let videoURL = video.url else {
+            // quality preference — or, when the job asked to choose, the
+            // resolution picked off this list once it was known (a video-only
+            // rendition is downloaded with the best audio and merged, which is
+            // what makes the taller ones offerable at all). AV1/VP9 streams
+            // (which YouTube often offers) play as a blank QuickTime
+            // placeholder on iOS, so restrict to H.264/HEVC.
+            videoCap = await VideoQualityChooser.shared.cap(
+                for: quality, url: url, title: title,
+                renditions: Self.playableVideos(videoFormats).map {
+                    // A muxed stream lists two codecs ("avc1…, mp4a…"); a
+                    // video-only one lists a single codec, and gets the best
+                    // audio merged in. The comma is the only signal here, and
+                    // it only decides a caption, never the download.
+                    VideoRendition(id: $0.url?.absoluteString ?? UUID().uuidString,
+                                   height: $0.height ?? 0,
+                                   codec: PlayableVideoCodec.name(forMimeType: $0.mimeType),
+                                   needsMerge: !($0.mimeType ?? "").contains(","),
+                                   bytes: $0.contentLength)
+                })
+            guard let video = Self.pickBestVideo(videoFormats, maxHeight: videoCap), let videoURL = video.url else {
                 let mp4Video = videoFormats.filter { $0.url != nil && ($0.mimeType ?? "").contains("mp4") }
                 let offered = Set(mp4Video.compactMap { $0.mimeType }).sorted().joined(separator: " | ")
                 appLog("No device-playable video stream (need H.264/HEVC) — offered: \(offered.isEmpty ? "none" : offered)",
@@ -221,7 +247,7 @@ final class YouTubeKitExtractor: MediaExtractor {
             to: dest,
             category: category,
             refresh: { [self] in
-                try await freshMediaRequest(videoID: videoID, kind: chosenKind, quality: quality,
+                try await freshMediaRequest(videoID: videoID, kind: chosenKind, maxHeight: videoCap,
                                             matchingLength: expectedSize, category: category)
             },
             onProgress: onProgress
@@ -232,7 +258,7 @@ final class YouTubeKitExtractor: MediaExtractor {
             dest = try await VideoMerger.ensureAudio(
                 videoFile: dest, audioRequest: mergeAudioRequest,
                 audioRefresh: { [self] in
-                    try await freshMediaRequest(videoID: videoID, kind: .audioOnly, quality: quality,
+                    try await freshMediaRequest(videoID: videoID, kind: .audioOnly, maxHeight: nil,
                                                 matchingLength: mergeAudioLength, category: category)
                 },
                 category: category)

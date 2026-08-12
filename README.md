@@ -212,7 +212,9 @@ vertical space goes to the content instead.
    music-note and film glyphs, exactly like the search-target toggle in
    Browse's Find field (it used to be a segmented picker on a line of its own,
    which spent a row of the screen saying what two icons say) — and watch the
-   queue. Links from **any site
+   queue. A video download **asks which resolution** once it knows what the
+   source is offering (see
+   [Choosing a resolution](#choosing-a-resolution)). Links from **any site
    yt-dlp supports** work — YouTube, Vimeo, SoundCloud and ~hundreds more — not
    just YouTube — plus **Spotify** links, which take a different route (see
    **Spotify links** below). Swipe a row for **Cancel** (active/queued), **Restart**, or
@@ -1202,7 +1204,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `Models.swift` | `Track`, `Folder`, `DownloadMode`, `LibraryFilter`, `FolderSort`, paths, helpers. |
 | `LibraryStore.swift` | Persists the library to `Documents/library.json` and folders to `Documents/folders.json`; owns the local moves across the sync boundary (queueing replica ops), the importer's reconcile primitives, and the mixtape conversions. |
 | `LocalSync.swift` | `LocalSyncStore` — the sync folder's security-scoped bookmark, the stamped manifest + journaled exporter, the coordinated importer (placeholder-aware copies), kqueue monitoring, and the off-main tree scan. |
-| `DownloadManager.swift` | Download queue (two concurrent slots) + `DownloadJob` + persisted history; `enqueueAlbum`, which files a whole release into one folder in tracklist order with the catalogue's own titles/artists; `ArtworkFetcher`, the best-effort album-art fetch a finished download (or an album folder) triggers. |
+| `DownloadManager.swift` | Download queue (two concurrent slots) + `DownloadJob` + persisted history; `enqueueAlbum`, which files a whole release into one folder in tracklist order with the catalogue's own titles/artists; `ArtworkFetcher`, the best-effort album-art fetch a finished download (or an album folder) triggers; and `VideoQualityChooser`, which puts the source's real rendition list to the user mid-extraction (once per video, hand-queued downloads only). |
 | `PythonGate.swift` | App-wide async mutex serializing every embedded-Python call, so the two-slot pipeline never runs concurrent interpreter work. |
 | `YouTubeExtractor.swift` | `MediaExtractor` protocol + YoutubeDL-iOS impl + a mock. |
 | `YouTubeKitExtractor.swift` | Native-Swift (b5i/YouTubeKit) primary extractor. |
@@ -1790,6 +1792,41 @@ whose controls call `next()` / `previous()` / `skipForward()` directly.
 
   A video download also captures the source's **English subtitles**, when it
   has any — see below.
+
+### Choosing a resolution
+
+A video download **asks which resolution to take**, and it asks at the only
+moment the question can be answered honestly: **after the extraction has run**,
+with the list the source actually turned out to offer. A standing
+Best/1080p/720p preference — which is what the preview modal has — is the wrong
+shape for a download. It can only name tiers the app guessed at, while
+YouTube's real answer varies per video and per session: a 4K upload with H.264
+no higher than 720p, a video whose taller renditions are AV1-only and therefore
+undecodable here, a 360p-and-nothing-else rescue through the forced-client
+recovery. So the picker lists **streams that are really there** — height,
+codec, the size where the source declared one, and whether the stream carries
+sound or will be **downloaded alongside the best audio track and muxed into one
+file** (`VideoMerger`), which is exactly how the higher resolutions are
+possible at all. Only renditions this device can decode are listed; the codec
+ceiling described above still applies, so a video offering 2160p in AV1 only
+genuinely has 720p as its best.
+
+**It asks once, and only where asking is welcome.** One download resolves more
+than once — the default extraction, then the forced-client recovery, then any
+mid-download URL refresh — so the answer is memoized against the URL for ten
+minutes; that also means a **Restart** straight after a failure doesn't
+re-ask. And the question is raised only for a download you queued *by hand*: a
+single pasted link, a hit picked from the Download tab's search, a restart.
+Everything queued as a **batch** — playlist children, album tracks, Browse's
+bulk download, a format conversion — runs unattended on the **last resolution
+you chose** (best available until you've chosen one), because forty prompts is
+not a feature.
+
+The sheet is presented from the app's root rather than the Download tab, since
+the download that asks may have been started from Browse. Dismissing it takes
+the best available — a picker you can ignore is better than a download that
+stalls — and a prompt nobody answers falls back to that standing preference
+after two minutes, so a phone in a pocket can't hold a pipeline slot.
 
 ## Subtitles
 

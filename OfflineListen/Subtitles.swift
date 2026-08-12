@@ -247,11 +247,14 @@ enum SubtitleTextSize: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Shifted up a rung after living with them on a phone: what read as
+    /// Medium is the sensible floor, so it became Small, and Large is now
+    /// genuinely large rather than merely bigger.
     var points: CGFloat {
         switch self {
-        case .small: return 15
-        case .medium: return 19
-        case .large: return 24
+        case .small: return 19
+        case .medium: return 24
+        case .large: return 31
         }
     }
 }

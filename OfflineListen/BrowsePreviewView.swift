@@ -119,8 +119,11 @@ struct BrowsePreviewView: View {
                 // the download at the chosen resolution (bounded by what the
                 // source actually offers in a playable codec).
                 if mode == .video {
+                    // Tiers only: a preview is meant to start playing, so
+                    // "Ask" (the download tab's after-resolution question)
+                    // has no place in it.
                     Picker("Quality", selection: qualityBinding) {
-                        ForEach(VideoQuality.allCases) { q in
+                        ForEach(VideoQuality.presets) { q in
                             Text(q.displayName).tag(q)
                         }
                     }
