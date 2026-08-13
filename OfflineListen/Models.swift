@@ -756,6 +756,16 @@ struct Track: Identifiable, Codable, Hashable {
     /// True when the track carries chapter markers worth surfacing.
     var hasChapters: Bool { chapters.count > 1 }
 
+    /// The artist this track can be looked up by — its own, unless that's
+    /// blank or the "Unknown" placeholder every download starts with. It's
+    /// what decides whether a row prints an artist line and whether the
+    /// touch-and-hold menu can offer their discography.
+    var namedArtist: String? {
+        let trimmed = artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.lowercased() != "unknown" else { return nil }
+        return trimmed
+    }
+
     /// The media category autoplay keeps to when advancing through a list.
     var playbackCategory: PlaybackCategory {
         if isVideo { return .video }

@@ -295,6 +295,19 @@ final class VideoQualityChooser: ObservableObject {
             return nil
         }
 
+        // One question at a time. A second prompt used to overwrite the first's
+        // resume handler, and the download waiting on *that* continuation was
+        // never answered again: it held its pipeline slot for the rest of the
+        // session (two of them wedged the queue outright), and the runtime
+        // reported the abandoned continuation as a misuse. Both slots can be
+        // resolving hand-queued videos at once, so this is reachable — the
+        // second one takes the standing preference rather than the question.
+        guard resume == nil else {
+            appLog("Another download is already asking which quality to take — this one uses \(Self.preferredHeight.map { "\($0)p" } ?? "the best available").",
+                   level: .warning, category: "Queue")
+            return Self.preferredHeight
+        }
+
         appLog("Asking which quality to download: \(options.map(\.label).joined(separator: ", ")).",
                category: "Queue")
         let chosen = await withCheckedContinuation { (continuation: CheckedContinuation<Int?, Never>) in
@@ -633,6 +646,69 @@ final class DownloadManager: ObservableObject {
                  artworkURL: String? = nil, replacesTrackID: UUID? = nil,
                  knownTitle: String? = nil, knownArtist: String? = nil,
                  asksQuality: Bool = false) {
+        let job = makeJob(urlString: urlString, mode: mode, folderID: folderID,
+                          artworkURL: artworkURL, replacesTrackID: replacesTrackID,
+                          knownTitle: knownTitle, knownArtist: knownArtist,
+                          asksQuality: asksQuality)
+        jobs.insert(job, at: 0)
+        if case .failed = job.state {
+            appLog("Rejected invalid URL: \(job.url)", level: .error, category: "Queue")
+            return
+        }
+        appLog("Queued \(job.mode.displayName) download: \(job.url)", category: "Queue")
+        processNext()
+    }
+
+    /// One link a batch enqueue puts in the queue, with whatever the caller
+    /// already knows about it.
+    struct QueuedLink {
+        let url: String
+        var artworkURL: String? = nil
+        var knownTitle: String? = nil
+        var knownArtist: String? = nil
+    }
+
+    /// Queues a whole set of links as **one** change to the queue.
+    ///
+    /// A batch used to go in a link at a time, and every `enqueue` published
+    /// its own insert and ran its own scheduler pass: **Download Album** on a
+    /// twenty-track record put twenty separate mutations through a single
+    /// main-actor turn, on top of whatever the view that pressed the button
+    /// was changing in the same turn (its row statuses, the folder the library
+    /// just gained). That combination is precisely what the earlier
+    /// bulk-download crash came down to — the UIKit diff under a `List`
+    /// doesn't survive dozens of mutations landing in one transaction — and
+    /// the batch paths never got the treatment the bulk-select path did. One
+    /// insert, one scheduler pass, one log line.
+    ///
+    /// The batch goes in **reversed**, which is what one-at-a-time inserting
+    /// at the top amounted to: the queue lists newest-first, and the scheduler
+    /// takes the oldest queued job — so the first link handed over is still
+    /// the first one downloaded, and a record still arrives in tracklist order.
+    func enqueueBatch(_ links: [QueuedLink], mode: DownloadMode, folderID: UUID? = nil) {
+        guard !links.isEmpty else { return }
+        let built = links.map { link in
+            makeJob(urlString: link.url, mode: mode, folderID: folderID,
+                    artworkURL: link.artworkURL,
+                    knownTitle: link.knownTitle, knownArtist: link.knownArtist,
+                    asksQuality: false)
+        }
+        jobs.insert(contentsOf: built.reversed(), at: 0)
+        let rejected = built.filter { if case .failed = $0.state { return true } else { return false } }.count
+        if rejected > 0 {
+            appLog("Rejected \(rejected) invalid URL(s) in the batch.", level: .error, category: "Queue")
+        }
+        appLog("Queued \(built.count - rejected) \(mode.displayName) download(s).", category: "Queue")
+        processNext()
+    }
+
+    /// Builds one job without touching the queue — the half `enqueue` and
+    /// `enqueueBatch` share. A link that isn't a usable http(s) URL comes back
+    /// already failed, so it can still be listed as the rejection it is.
+    private func makeJob(urlString: String, mode: DownloadMode, folderID: UUID?,
+                         artworkURL: String?, replacesTrackID: UUID? = nil,
+                         knownTitle: String?, knownArtist: String?,
+                         asksQuality: Bool) -> DownloadJob {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         let job = DownloadJob(url: trimmed, mode: mode, folderID: folderID,
                               artworkURL: artworkURL, replacesTrackID: replacesTrackID,
@@ -640,13 +716,8 @@ final class DownloadManager: ObservableObject {
                               quality: Self.quality(asking: asksQuality, mode: mode))
         if URL(string: trimmed) == nil || !trimmed.lowercased().hasPrefix("http") {
             job.state = .failed(ExtractorError.invalidURL.localizedDescription)
-            jobs.insert(job, at: 0)
-            appLog("Rejected invalid URL: \(trimmed)", level: .error, category: "Queue")
-            return
         }
-        jobs.insert(job, at: 0)
-        appLog("Queued \(job.mode.displayName) download: \(trimmed)", category: "Queue")
-        processNext()
+        return job
     }
 
     /// Adds a playlist URL to the queue. The job's yt-dlp resolution is
@@ -1062,10 +1133,8 @@ final class DownloadManager: ObservableObject {
         }
 
         let folder = folder(named: playlist.title, fallback: "Playlist")
-        for entry in chosen {
-            enqueue(urlString: entry.url, mode: job.mode, folderID: folder.id,
-                    artworkURL: entry.artworkURL)
-        }
+        enqueueBatch(chosen.map { QueuedLink(url: $0.url, artworkURL: $0.artworkURL) },
+                     mode: job.mode, folderID: folder.id)
         job.state = .finished
         appLog("Playlist \"\(playlist.title)\" → queued \(chosen.count) of \(playlist.entries.count) download(s) into a folder.",
                level: .success, category: "Queue")
@@ -1142,10 +1211,8 @@ final class DownloadManager: ObservableObject {
             }
 
             let folder = folder(named: playlist.title, fallback: kind.rawValue.capitalized)
-            for entry in chosen {
-                enqueue(urlString: entry.url, mode: job.mode, folderID: folder.id,
-                        artworkURL: entry.artworkURL)
-            }
+            enqueueBatch(chosen.map { QueuedLink(url: $0.url, artworkURL: $0.artworkURL) },
+                         mode: job.mode, folderID: folder.id)
             job.state = .finished
             appLog("Spotify \(kind.rawValue) \"\(playlist.title)\" → queued \(chosen.count) of \(playlist.entries.count) download(s) into a folder.",
                    level: .success, category: "Queue")
@@ -1251,11 +1318,12 @@ final class DownloadManager: ObservableObject {
             order[track.url] = position
         }
         albumOrders[album.id] = order
-        for track in tracks {
-            enqueue(urlString: track.url, mode: mode, folderID: album.id,
-                    artworkURL: track.artworkURL ?? artworkURL,
-                    knownTitle: track.title, knownArtist: track.artist)
-        }
+        enqueueBatch(tracks.map {
+            QueuedLink(url: $0.url,
+                       artworkURL: $0.artworkURL ?? artworkURL,
+                       knownTitle: $0.title,
+                       knownArtist: $0.artist)
+        }, mode: mode, folderID: album.id)
         appLog("Queued \(tracks.count) track(s) from \"\(album.name)\" into a library folder.",
                category: "Queue")
         return album
@@ -1271,6 +1339,14 @@ final class DownloadManager: ObservableObject {
         let folder = folder(named: folderName, fallback: "Browse")
         enqueue(urlString: urlString, mode: mode, folderID: folder.id, artworkURL: artworkURL,
                 knownTitle: knownTitle, knownArtist: knownArtist)
+    }
+
+    /// The batch form of the above — a source's **Select** ▸ Download, whose
+    /// picks all file into that source's own folder.
+    func enqueueBatch(_ links: [QueuedLink], mode: DownloadMode, browseFolderNamed folderName: String) {
+        guard !links.isEmpty else { return }
+        let folder = folder(named: folderName, fallback: "Browse")
+        enqueueBatch(links, mode: mode, folderID: folder.id)
     }
 }
 

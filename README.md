@@ -118,7 +118,12 @@ vertical space goes to the content instead.
    into the same folder, and the original is replaced only once the fresh
    download has fully landed — a failed conversion costs nothing (the
    attempt shows in the Download tab like any job). Tracks with no source
-   link (local-sync imports) don't offer it. The link itself is on the menu
+   link (local-sync imports) don't offer it. A track that **names an artist**
+   offers **View Discography**, which opens that artist's live Spotify
+   catalogue in a sheet — the same browser the Every Noise map pushes, reached
+   from the song rather than from the map ("Unknown" is the placeholder a
+   download starts with, so a track wearing it doesn't offer it). The link
+   itself is on the menu
    too — **Copy URL** puts it on the clipboard (to paste into the Download
    field, or anywhere else) and **View Original** opens it in the browser;
    a track with no link offers neither. Swipe
@@ -251,6 +256,19 @@ vertical space goes to the content instead.
    [the pipeline notes](#browse-keeping-tabs-on-audio-sources) — the network
    work runs in parallel while everything touching the embedded Python
    interpreter stays serialized).
+
+   **A batch is one change to the queue.** Everything that queues several
+   links from one press — **Download Album**, a playlist or Spotify
+   collection's selection, a source's bulk **Select** — hands the whole set
+   over at once (`enqueueBatch`) rather than a link at a time. It used to be a
+   loop, and each pass published its own insert and ran its own scheduler
+   pass: twenty tracks meant twenty mutations inside a single main-actor turn,
+   on top of whatever the view that pressed the button was changing in the
+   same turn. That combination is what the earlier bulk-download crash came
+   down to — the UIKit diff under a `List` doesn't survive it — and the batch
+   paths hadn't been given the same treatment the bulk-select path was. The
+   queue still lists newest-first and still runs oldest-first, so a record
+   downloads in tracklist order exactly as before.
 
    **Search.** The same single input field doubles as a search box: type
    anything that *isn't* a link and the button flips from **Download** to
@@ -780,13 +798,24 @@ History answers "what have I already looked at?", which is the wrong question
 for something you meant to come back to — a genre you opened mid-scan, an
 artist you liked and then browsed past. **Saved for Later** is the list of
 those, behind the **bookmark button** beside the sources button in the Browse
-tab's top-right corner (filled once there's anything on it). Four ways in, all
+tab's top-right corner (filled once there's anything on it). Five ways in, all
 of them where you already are rather than a screen you have to go to:
 **swipe right** on a row in History (at either level) or in **List** mode (a
 genre, or an artist inside a genre); the **bookmark** in a tapped artist's
-action bar on the map; and the **Save for Later** button on an artist's
+action bar on the map; the **bookmark** in the toolbar of a **genre's own
+page**, which is how you keep the genre you're currently looking at (saving a
+genre used to mean finding its row somewhere else and swiping it); and the
+**Save for Later** button on an artist's
 discography page, alongside Learn More and Add as Source — the lighter half of
-that pair, since it keeps the artist without following them as a source.
+that pair, since it keeps the artist without following them as a source. The
+genre buttons are switches like the artist ones: filled while the genre is on
+the list, empty when tapped again.
+
+**Genres are first-class here.** Every genre you open is logged in History
+(from the map, from the List, from a saved row), it can be saved from any of
+those places, and a saved genre re-opens on **its own map** — the artists
+positioned in relation to one another, which is where you were when you
+decided to keep it.
 
 The list opens as a sheet, artists first, then genres, each row wearing the
 same glyph and map colour History gives it. A row leads exactly where the
@@ -1927,6 +1956,14 @@ the download that asks may have been started from Browse. Dismissing it takes
 the best available — a picker you can ignore is better than a download that
 stalls — and a prompt nobody answers falls back to that standing preference
 after two minutes, so a phone in a pocket can't hold a pipeline slot.
+
+**One question at a time.** Both pipeline slots can be resolving hand-queued
+videos at once, and a second prompt used to overwrite the first's resume
+handler: the download waiting on *that* answer was never resumed, so it held
+its slot for the rest of the session (two of them wedged the queue outright)
+and the runtime reported the abandoned continuation as a misuse. A download
+that comes up while someone is already being asked now takes the standing
+preference, and says so in the Log.
 
 ## Subtitles
 

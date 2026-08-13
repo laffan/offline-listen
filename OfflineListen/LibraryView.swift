@@ -347,6 +347,8 @@ struct LibraryView: View {
     @State private var editingTrack: Track?
     @State private var chapterContext: ChapterContext?
     @State private var splittingTrack: Track?
+    /// The artist a track's **View Discography** asked for.
+    @State private var discographyRequest: DiscographyRequest?
 
     /// What's in the search field.
     @State private var searchText = ""
@@ -485,6 +487,7 @@ struct LibraryView: View {
             .editMetadataSheet(for: $editingTrack)
             .breakChaptersConfirm(for: $splittingTrack)
             .deleteFolderConfirm(for: $deletingFolder)
+            .discographySheet(for: $discographyRequest)
         }
     }
 
@@ -909,6 +912,7 @@ struct LibraryView: View {
                 }
                 SyncToLocalButton(track: track)
                 SendToWatchButton(track: track)
+                ViewDiscographyButton(track: track, request: $discographyRequest)
                 AIOrganizeButton(track: track)
                 GetAlbumArtButton(track: track)
                 GetSubtitlesButton(track: track)
@@ -1269,10 +1273,6 @@ struct TrackRow: View {
     /// Recent folder shows when the track was played there instead.
     var trailingDetail: String? = nil
 
-    private var hasArtist: Bool {
-        !track.artist.isEmpty && track.artist.lowercased() != "unknown"
-    }
-
     private var progress: Double {
         track.duration > 0 ? min(track.lastPosition / track.duration, 1) : 0
     }
@@ -1324,8 +1324,8 @@ struct TrackRow: View {
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
                     }
-                } else if hasArtist {
-                    Text(track.artist)
+                } else if let artist = track.namedArtist {
+                    Text(artist)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -1587,6 +1587,60 @@ struct SendToWatchButton: View {
     }
 }
 
+/// An artist whose discography a screen has been asked to show, so it can be
+/// presented via `.sheet(item:)`.
+struct DiscographyRequest: Identifiable {
+    let id = UUID()
+    let artist: String
+}
+
+/// Presents the artist's catalogue for the bound request. A sheet rather than
+/// a push, because every list that offers it (the Inbox, Recent, a folder, a
+/// search) is somewhere different in the navigation stack — and looking an
+/// artist up from a song is a lookaside, not a place you were heading.
+struct DiscographySheet: ViewModifier {
+    @Binding var request: DiscographyRequest?
+
+    func body(content: Content) -> some View {
+        content.sheet(item: $request) { asked in
+            NavigationStack {
+                LibraryDiscographyView(artistName: asked.artist)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { request = nil }
+                        }
+                    }
+            }
+        }
+    }
+}
+
+extension View {
+    func discographySheet(for request: Binding<DiscographyRequest?>) -> some View {
+        modifier(DiscographySheet(request: request))
+    }
+}
+
+/// A context-menu entry that opens the track's artist's discography — the
+/// same live Spotify catalogue an album folder's Discography button opens.
+/// Shows itself only for a track that actually names an artist ("Unknown" is
+/// the placeholder a download starts with, and there's nothing to look up).
+/// Safe to drop into any track's `contextMenu`, given somewhere to present.
+struct ViewDiscographyButton: View {
+    let track: Track
+    @Binding var request: DiscographyRequest?
+
+    var body: some View {
+        if let artist = track.namedArtist {
+            Button {
+                request = DiscographyRequest(artist: artist)
+            } label: {
+                Label("View Discography", systemImage: "square.stack")
+            }
+        }
+    }
+}
+
 /// The pair of context-menu entries a track's **source link** offers: copy it
 /// (to paste into the Download field, a message, a browser) or open it. Both
 /// need a real link, so a local-sync import — which has none — shows neither.
@@ -1708,8 +1762,7 @@ struct GetAlbumArtButton: View {
     /// title, take the first hit that carries a cover, and hang it on the
     /// track through the same fetcher downloads use.
     private func fetch(with client: SpotifyClient) {
-        let hasArtist = !track.artist.isEmpty && track.artist.lowercased() != "unknown"
-        let query = hasArtist ? "\(track.artist) \(track.title)" : track.title
+        let query = track.namedArtist.map { "\($0) \(track.title)" } ?? track.title
         let trackID = track.id
         let library = library
         Task {

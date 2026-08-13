@@ -509,8 +509,14 @@ struct BrowseSourceView: View {
         withAnimation { editMode = .inactive }
         guard !picks.isEmpty else { return }
         Task { @MainActor in
-            for item in picks {
-                enqueue(item)
+            // One insert for the whole batch, not one per item — see
+            // `DownloadManager.enqueueBatch`.
+            let name = source?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let links = picks.map { DownloadManager.QueuedLink(url: $0.url) }
+            if name.isEmpty {
+                downloads.enqueueBatch(links, mode: browse.downloadMode)
+            } else {
+                downloads.enqueueBatch(links, mode: browse.downloadMode, browseFolderNamed: name)
             }
             browse.markDownloaded(picks)
         }

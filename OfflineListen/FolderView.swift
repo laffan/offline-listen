@@ -27,6 +27,8 @@ struct FolderDetailView: View {
     /// opens first.
     @State private var editingAlbumArt = false
     @State private var albumArtOptions = false
+    /// The artist a track's **View Discography** asked for.
+    @State private var discographyRequest: DiscographyRequest?
 
     private var folder: Folder? {
         library.folders.first { $0.id == folderID }
@@ -76,6 +78,7 @@ struct FolderDetailView: View {
         .editModeEnvironment($editMode)
         .editMetadataSheet(for: $editingTrack)
         .breakChaptersConfirm(for: $splittingTrack)
+        .discographySheet(for: $discographyRequest)
         .sheet(item: $chapterContext) { context in
             ChapterListView(track: context.track, queue: context.queue, onPlay: onPlay)
         }
@@ -360,6 +363,7 @@ struct FolderDetailView: View {
                 }
                 SyncToLocalButton(track: track)
                 SendToWatchButton(track: track)
+                ViewDiscographyButton(track: track, request: $discographyRequest)
                 AIOrganizeButton(track: track)
                 GetAlbumArtButton(track: track)
                 ConvertFormatButton(track: track)
@@ -447,6 +451,8 @@ struct InboxView: View {
     @State private var editingTrack: Track?
     @State private var chapterContext: ChapterContext?
     @State private var splittingTrack: Track?
+    /// The artist a track's **View Discography** asked for.
+    @State private var discographyRequest: DiscographyRequest?
 
     private var tracks: [Track] {
         library.inboxTracks
@@ -518,6 +524,7 @@ struct InboxView: View {
                                 }
                                 SyncToLocalButton(track: track)
                                 SendToWatchButton(track: track)
+                                ViewDiscographyButton(track: track, request: $discographyRequest)
                                 AIOrganizeButton(track: track)
                                 GetAlbumArtButton(track: track)
                                 ConvertFormatButton(track: track)
@@ -540,6 +547,7 @@ struct InboxView: View {
         // pushed into, and the tab bar above already names it.
         .editMetadataSheet(for: $editingTrack)
         .breakChaptersConfirm(for: $splittingTrack)
+        .discographySheet(for: $discographyRequest)
         .sheet(item: $chapterContext) { context in
             ChapterListView(track: context.track, queue: context.queue, onPlay: onPlay)
         }
@@ -572,6 +580,8 @@ struct RecentTracksView: View {
     @State private var editingTrack: Track?
     @State private var chapterContext: ChapterContext?
     @State private var confirmingClear = false
+    /// The artist a track's **View Discography** asked for.
+    @State private var discographyRequest: DiscographyRequest?
 
     private var entries: [RecentListenRow] { library.recentListenEntries }
     /// The playback queue: each track once, in the order it was last heard.
@@ -623,6 +633,7 @@ struct RecentTracksView: View {
                                     Label("Edit Metadata", systemImage: "pencil")
                                 }
                                 SendToWatchButton(track: pair.track)
+                                ViewDiscographyButton(track: pair.track, request: $discographyRequest)
                                 AIOrganizeButton(track: pair.track)
                                 GetAlbumArtButton(track: pair.track)
                                 ConvertFormatButton(track: pair.track)
@@ -636,6 +647,7 @@ struct RecentTracksView: View {
         }
         // See InboxView: a tab of the Library, so no title of its own.
         .editMetadataSheet(for: $editingTrack)
+        .discographySheet(for: $discographyRequest)
         .sheet(item: $chapterContext) { context in
             ChapterListView(track: context.track, queue: context.queue, onPlay: onPlay)
         }

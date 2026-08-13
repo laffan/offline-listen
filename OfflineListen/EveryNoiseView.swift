@@ -1244,6 +1244,7 @@ struct ENGenreView: View {
     /// environment objects, so the push inherits them.
     @EnvironmentObject private var updates: ENUpdateStore
     @EnvironmentObject private var spotifySettings: SpotifySettingsStore
+    @EnvironmentObject private var savedForLater: SavedForLaterStore
     /// The artist map ignores the bottom safe area — the mini player's height
     /// rides in as extra content inset, same as the genre map.
     @Environment(\.miniPlayerHeight) private var miniPlayerHeight
@@ -1280,6 +1281,14 @@ struct ENGenreView: View {
         shardArtists.map { updates.merged($0, genre: genre) }
     }
 
+    /// This genre as a saved row — the same shape the genre list's swipe and a
+    /// History row save, so the two can never disagree about whether it's on
+    /// the list (the store matches genres on their map key).
+    private var bookmark: SavedForLaterItem {
+        SavedForLaterItem(kind: .genre, genreKey: genre.key,
+                          name: genre.name, color: genre.color)
+    }
+
     var body: some View {
         Group {
             if let artists {
@@ -1300,8 +1309,23 @@ struct ENGenreView: View {
         .navigationTitle(genre.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            // The genre's own example preview, up beside its name.
-            ToolbarItem(placement: .navigationBarTrailing) {
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
+                // Keeping the genre you're *in* was the one place the saved
+                // list couldn't be reached from: an artist has the bookmark in
+                // their action bar, a Spotify artist has the tile on their
+                // page, and a genre had only the swipe on a row somewhere
+                // else. A switch, like both of those — filled while it's on
+                // the list, empty when tapped again.
+                Button {
+                    savedForLater.toggle(bookmark)
+                } label: {
+                    Image(systemName: savedForLater.contains(bookmark) ? "bookmark.fill" : "bookmark")
+                }
+                .accessibilityLabel(savedForLater.contains(bookmark)
+                                    ? "Remove \(genre.name) from Saved for Later"
+                                    : "Save \(genre.name) for later")
+
+                // The genre's own example preview, up beside its name.
                 Button {
                     if player.currentID == genre.key {
                         player.togglePlayPause()

@@ -189,7 +189,7 @@ struct SavedForLaterView: View {
                     ContentUnavailableViewCompat(
                         title: "Nothing saved yet",
                         systemImage: "bookmark",
-                        description: "Swipe right on a History row — or use Save for Later on an artist's page — to keep something to come back to."
+                        description: "Swipe right on a History row, tap the bookmark on a genre's or artist's page, or use Save for Later on a discography — anything you want to come back to."
                     )
                 } else {
                     list
