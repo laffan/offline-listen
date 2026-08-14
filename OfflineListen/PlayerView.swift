@@ -742,12 +742,36 @@ private struct SubtitleOverlay: View {
     /// actually delivering, the app's ticker whenever it isn't. Re-read on
     /// every redraw — and the ticker's own 2 Hz redraws are what notice a
     /// clock that has gone quiet.
+    ///
+    /// Handing over between them never runs the playhead *backwards*: the
+    /// ticker's reading can be half a second older than the fine clock's last
+    /// one, and a caption that has just ended would flicker back on. Beyond a
+    /// second's difference the ticker wins outright — that's a seek, where
+    /// going backwards is the whole point.
     private var time: Double {
-        clock.isFresh ? clock.time : progress.currentTime
+        if clock.isFresh { return clock.time }
+        let ticker = progress.currentTime
+        return (clock.time > ticker && clock.time - ticker < 1) ? clock.time : ticker
     }
 
     var body: some View {
-        Group {
+        // A `ZStack`, emphatically **not** a `Group`. A Group is transparent —
+        // modifiers on it are applied to each of its children — so with a
+        // conditional caption as the only child, the lifecycle hooks below
+        // belonged to *the caption*, not to the overlay: `onAppear` fired
+        // whenever a line came up and `onDisappear` whenever one ended, which
+        // took the clock down with it. That made an oscillator. Stopping the
+        // clock falls back to the app's 2 Hz ticker, whose reading is up to
+        // half a second older; the older time still lands inside the cue that
+        // just ended, so the caption came back, which started the clock, which
+        // jumped the time forward, which ended the caption, which stopped the
+        // clock — round and round as fast as the main thread allowed. The
+        // hundreds of "overlay up"/"clock ticking" pairs at one playhead in
+        // the log are that loop spinning. A real container owns the hooks
+        // itself: they run once when the overlay appears and once when it goes.
+        // An empty ZStack draws nothing and takes no space, exactly as the
+        // Group did.
+        ZStack {
             if let cue = cues.cue(at: time) {
                 Text(cue.text)
                     .font(.system(size: textSize, weight: .semibold))

@@ -663,12 +663,14 @@ struct LibraryView: View {
     /// The albums, as covers. One list row holding the whole grid, so the
     /// groups below it stay ordinary rows with their swipes and menus intact.
     ///
-    /// The cells **push by hand** rather than being `NavigationLink`s. A list
-    /// row is built to carry one link, and a row holding a dozen of them
-    /// activates its first as well as the one that was tapped: opening an
-    /// album from the grid put two folders on the stack, so Back landed on
-    /// whichever album happened to be first rather than on the list. A button
-    /// that appends the one route is unambiguous.
+    /// The covers open on a **tap gesture** — not a `NavigationLink`, and not
+    /// a `Button` either. A list row wires its cell's tap to the row's primary
+    /// action, and the whole grid is *one row*: with a dozen tappable things
+    /// in it, the cell elects the first and fires it alongside the one that
+    /// was actually hit. Two folders went on the stack, so Back landed on
+    /// album one instead of the list. A gesture gives the cell nothing to
+    /// elect — the same shape every track row in this app already uses inside
+    /// a `List`.
     private func albumGrid(_ albums: [Folder]) -> some View {
         LazyVGrid(
             columns: [GridItem(.adaptive(minimum: 104, maximum: 180), spacing: 12, alignment: .top)],
@@ -676,17 +678,34 @@ struct LibraryView: View {
             spacing: 14
         ) {
             ForEach(albums) { folder in
-                Button {
-                    path.append(.folder(folder.id))
-                } label: {
-                    AlbumCoverCell(folder: folder, playingHere: isPlaying(in: folder))
-                }
-                .buttonStyle(.plain)
-                .contextMenu {
-                    FolderContextMenu(folder: folder)
-                }
+                AlbumCoverCell(folder: folder, playingHere: isPlaying(in: folder))
+                    .contentShape(Rectangle())
+                    .onTapGesture { open(.folder(folder.id)) }
+                    .contextMenu {
+                        FolderContextMenu(folder: folder)
+                    }
             }
         }
+    }
+
+    /// Pushes one destination, and refuses to push what's already on top.
+    ///
+    /// The backstop for the class of bug above: a tap that arrives twice can
+    /// only ever land one screen, whatever the list underneath decides to do
+    /// with it. (`dedupedPath` catches the same thing on the way *out* of the
+    /// navigation stack; this catches it on the way in, where a hand-made push
+    /// never passes through that binding.) The line it logs names the stack's
+    /// depth, so a Back button that goes somewhere unexpected can be read off
+    /// the log rather than guessed at.
+    private func open(_ route: LibraryRoute) {
+        guard path.last != route else {
+            appLog("Library: ignored a repeat push of the same destination.",
+                   level: .debug, category: "Library")
+            return
+        }
+        path.append(route)
+        appLog("Library: pushed \(route) — the stack is now \(path.count) deep.",
+               level: .debug, category: "Library")
     }
 
     /// The **All** tab: every active track, filed or not — the full flat view

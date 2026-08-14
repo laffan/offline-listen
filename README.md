@@ -168,10 +168,13 @@ vertical space goes to the content instead.
    pinned beneath them as ever. The choice persists. Drag-to-reorder stays in
    the list: User Order is one sequence over *all* the folders, which three
    separate groups can't express, so setting it means switching back. (The
-   grid's covers push by hand rather than being navigation links: a list row
-   carries one link, and a row holding a dozen of them activates its first as
-   well as the one tapped — which put two folders on the stack, so Back landed
-   on another album instead of the list.)
+   grid's covers open on a **tap gesture** rather than a navigation link or a
+   button. A list row wires its cell's tap to the row's primary action, and
+   the whole grid is one row: with a dozen tappable things in it the cell
+   elects the first and fires it alongside the one that was hit, which put two
+   folders on the stack — so Back landed on album one instead of on the list.
+   A gesture gives the cell nothing to elect, and the push itself refuses to
+   repeat what's already on top.)
 
    **Folders nest.** A folder's own screen has the same folder-plus button to
    create a subfolder, and any subfolders list in a **Folders** section above
@@ -2014,19 +2017,33 @@ screen. Settings ▸
 **Subtitles** sets the size, colour and backdrop; the Player's **CC button**
 and the Settings toggle are the same switch.
 
+**The clock belongs to the overlay, not to the caption.** The overlay's body is
+a `ZStack`, emphatically not a `Group`, and that one word was the bug behind
+captions that stopped a minute or two in. A Group is *transparent* — modifiers
+on it are applied to each of its children — so with a conditional caption as
+its only child, the `onAppear`/`onDisappear` that start and stop the clock
+belonged to **the caption line itself**: the clock started when a line came up
+and was torn down when it ended. Which made an oscillator. Stopping the clock
+falls back to the app's ticker, whose reading is up to half a second older; the
+older time still lands inside the cue that just ended, so the caption came
+back, which started the clock, which jumped the time forward, which ended the
+caption, which stopped the clock — spinning as fast as the main thread allowed
+and leaving the playhead where it was. The Log named it exactly: hundreds of
+alternating "Subtitle overlay up…" and "Caption clock ticking at…" lines, every
+one at the same playhead. A real container owns its own lifecycle, so the hooks
+now run once each.
+
 **The fine clock is never the only clock.** The app's ticker stands in
 **whenever the 5 Hz observer isn't currently delivering** — not merely until
-its first tick, which is what the rule used to be. The difference is the whole
-of the bug where captions showed for a moment and then stopped: an observer
-that starts and later goes quiet left the overlay reading a **frozen
-playhead**, so every cue after that instant hadn't started yet as far as the
-lookup was concerned, and the only way back was turning captions off and on —
-which builds a new overlay, and with it a new clock. A tick is now trusted for
-one second; past that the overlay reads the ticker (which the scrubber proves
-is running) and the observer is **re-armed**, at most once a second and only
-while the player's rate is non-zero — a paused film is *meant* to be quiet, and
-its caption should stay put. The re-arm writes a debug line to the `Subtitles`
-log category, so a clock that keeps dying says so.
+its first tick, which is what the rule used to be. A tick is trusted for one
+second; past that the overlay reads the ticker (which the scrubber proves is
+running) and the observer is **re-armed**, at most once a second and only while
+the player's rate is non-zero — a paused film is *meant* to be quiet, and its
+caption should stay put. Handing over between the two never runs the playhead
+backwards, either: within a second the later reading wins, so a caption can't
+flicker back on at a boundary; past a second the ticker wins, because that's a
+seek. The re-arm writes a debug line to the `Subtitles` log category, so a
+clock that keeps dying says so.
 
 **Looking a cue up** is a binary search over an array already in memory: the
 last cue that has *started*, then a short walk back over any that have already
