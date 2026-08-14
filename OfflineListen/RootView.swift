@@ -46,7 +46,9 @@ struct RootView: View {
                 .tabItem { Label("Library", systemImage: "music.note.list") }
                 .tag(Tab.library)
 
-            PlayerView()
+            // Swiping the player down puts it away — back to the Library,
+            // which is where it was opened from nine times out of ten.
+            PlayerView(onSwipeDown: { selection = .library })
                 .tabItem { Label("Player", systemImage: "play.circle") }
                 .tag(Tab.player)
 

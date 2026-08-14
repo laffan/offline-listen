@@ -334,9 +334,11 @@ struct LibraryView: View {
     @State private var share: SharePayload?
     @State private var filter: LibraryFilter = .all
     @State private var path: [LibraryRoute] = []
-    /// Which section is showing. Recent leads: what you were just listening to
-    /// is the likeliest reason to open the library at all.
-    @State private var tab: LibraryTab = .recent
+    /// Which section is showing. **Folders** leads: the library's own shape is
+    /// what you come to it for — the records and mixtapes you filed — and what
+    /// you were just listening to is one tab away (and already on the mini
+    /// player).
+    @State private var tab: LibraryTab = .folders
 
     @State private var showNewFolder = false
     @State private var newFolderName = ""

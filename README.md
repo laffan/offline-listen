@@ -39,7 +39,10 @@ vertical space goes to the content instead.
 2. **Library** — downloaded tracks; tap to play. Five **tabs** across the top
    divide it — **Recent**, **Folders**, **Inbox**, **Watch**, **All** — so each
    section is one tap from the others rather than a screen you push into and
-   come back out of. **All** lists
+   come back out of. It opens on **Folders**: the library's own shape — the
+   records and mixtapes you filed — is what you come to it for, and what you
+   were just listening to is one tab away (and already on the mini player).
+   **All** lists
    **every** track — filed into a folder or not — so it's the full flat view
    of the library (folders are one way in, not the only one). A **search**
    field sits above
@@ -203,7 +206,12 @@ vertical space goes to the content instead.
    place of the gradient placeholder — on the lock screen and in the mini
    player too. **Tap anywhere on the scrub bar to jump there**; dragging
    works as before, so you never have to drag the playhead across a track
-   just to skip ahead. Beneath the transport, the **previous track** is named
+   just to skip ahead. **Swipe the player down** to put it away — it goes
+   back to the Library, which is where it was opened from nine times out of
+   ten. The swipe has to be a deliberate one, downward and longer than it is
+   wide, and anything inside that wants a drag of its own keeps it (the
+   scrubber above all); a fullscreen video opts out entirely, since there the
+   picture owns the screen. Beneath the transport, the **previous track** is named
    on the left and the **next track** on the right (labelled as such, with
    artist under title) — tap either to go straight to it. Video is
    edge-to-edge in portrait, and **tapping the picture hands it the whole

@@ -131,6 +131,11 @@ struct PlayerView: View {
     @EnvironmentObject private var library: LibraryStore
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
+    /// Called when the player is swiped down — the root takes it back to the
+    /// Library, which is where it was almost certainly opened from. Defaulted,
+    /// so the screen still stands alone in a preview.
+    var onSwipeDown: () -> Void = {}
+
     /// Whether captions are drawn over a video that has them. Shared with
     /// Settings (which styles them) through `UserDefaults`, so the CC button
     /// here and the toggle there are the same switch.
@@ -176,6 +181,15 @@ struct PlayerView: View {
             #if !os(macOS)
             .toolbar(.hidden, for: .navigationBar)
             #endif
+            // Swipe the player down to put it away, the way a now-playing card
+            // behaves everywhere else. `.gesture` rather than
+            // `.simultaneousGesture` so anything inside that wants a drag —
+            // the scrubber, most of all — keeps it; this only picks up drags
+            // nothing else claimed. Fullscreen video opts out (`.subviews`
+            // leaves the children's own gestures alone): there the picture
+            // owns the screen, and a stray downward drag shouldn't dump you
+            // out of the film.
+            .gesture(swipeDown, including: isFullscreenVideo ? .subviews : .all)
         }
         .statusBarHidden(isFullscreenVideo)
         // A fresh track starts framed normally — the old one's fullscreen
@@ -184,6 +198,19 @@ struct PlayerView: View {
         .onChange(of: playback.currentTrack?.id) { _ in
             portraitFullscreen = false
         }
+    }
+
+    /// The swipe that puts the player away: **down**, and decisively so.
+    /// The distance floor keeps a lazy thumb-drag from closing the screen, and
+    /// the width test keeps a sideways drag — the one that moves between tabs
+    /// — from reading as one.
+    private var swipeDown: some Gesture {
+        DragGesture(minimumDistance: 30, coordinateSpace: .local)
+            .onEnded { value in
+                guard value.translation.height > 90,
+                      abs(value.translation.width) < value.translation.height else { return }
+                onSwipeDown()
+            }
     }
 
     private func playerBody(_ track: Track) -> some View {
