@@ -662,6 +662,13 @@ struct LibraryView: View {
 
     /// The albums, as covers. One list row holding the whole grid, so the
     /// groups below it stay ordinary rows with their swipes and menus intact.
+    ///
+    /// The cells **push by hand** rather than being `NavigationLink`s. A list
+    /// row is built to carry one link, and a row holding a dozen of them
+    /// activates its first as well as the one that was tapped: opening an
+    /// album from the grid put two folders on the stack, so Back landed on
+    /// whichever album happened to be first rather than on the list. A button
+    /// that appends the one route is unambiguous.
     private func albumGrid(_ albums: [Folder]) -> some View {
         LazyVGrid(
             columns: [GridItem(.adaptive(minimum: 104, maximum: 180), spacing: 12, alignment: .top)],
@@ -669,7 +676,9 @@ struct LibraryView: View {
             spacing: 14
         ) {
             ForEach(albums) { folder in
-                NavigationLink(value: LibraryRoute.folder(folder.id)) {
+                Button {
+                    path.append(.folder(folder.id))
+                } label: {
                     AlbumCoverCell(folder: folder, playingHere: isPlaying(in: folder))
                 }
                 .buttonStyle(.plain)

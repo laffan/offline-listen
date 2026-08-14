@@ -167,7 +167,11 @@ vertical space goes to the content instead.
    the sort applies within each group — with the Synced and Archive rows
    pinned beneath them as ever. The choice persists. Drag-to-reorder stays in
    the list: User Order is one sequence over *all* the folders, which three
-   separate groups can't express, so setting it means switching back.
+   separate groups can't express, so setting it means switching back. (The
+   grid's covers push by hand rather than being navigation links: a list row
+   carries one link, and a row holding a dozen of them activates its first as
+   well as the one tapped — which put two folders on the stack, so Back landed
+   on another album instead of the list.)
 
    **Folders nest.** A folder's own screen has the same folder-plus button to
    create a subfolder, and any subfolders list in a **Folders** section above
@@ -2005,14 +2009,34 @@ is what makes each of those cues look different in the first place.
 sidecar file isn't part of the asset), which is also what makes it styleable.
 The overlay prefers its **own** periodic observer on the player at 5 Hz to the
 app's 2 Hz progress ticker: half a second is nothing for a scrubber and plainly
-late for a subtitle. Looking a cue up is a binary search over an array already
-in memory, and the observer only exists while a captioned video is on screen.
-It is not allowed to be a single point of failure, though: **until that
-observer has actually delivered a tick, the playhead comes from the app's own
-ticker** — the one the scrubber visibly runs on. A caption that can only appear
-if a second clock starts is a caption that silently doesn't appear. Settings ▸
+late for a subtitle. The observer only exists while a captioned video is on
+screen. Settings ▸
 **Subtitles** sets the size, colour and backdrop; the Player's **CC button**
 and the Settings toggle are the same switch.
+
+**The fine clock is never the only clock.** The app's ticker stands in
+**whenever the 5 Hz observer isn't currently delivering** — not merely until
+its first tick, which is what the rule used to be. The difference is the whole
+of the bug where captions showed for a moment and then stopped: an observer
+that starts and later goes quiet left the overlay reading a **frozen
+playhead**, so every cue after that instant hadn't started yet as far as the
+lookup was concerned, and the only way back was turning captions off and on —
+which builds a new overlay, and with it a new clock. A tick is now trusted for
+one second; past that the overlay reads the ticker (which the scrubber proves
+is running) and the observer is **re-armed**, at most once a second and only
+while the player's rate is non-zero — a paused film is *meant* to be quiet, and
+its caption should stay put. The re-arm writes a debug line to the `Subtitles`
+log category, so a clock that keeps dying says so.
+
+**Looking a cue up** is a binary search over an array already in memory: the
+last cue that has *started*, then a short walk back over any that have already
+ended. The walk is what makes it right on a file whose cues **overlap** — a
+long line with short ones inside it, which real subtitle files for films carry
+and which rolling auto-captions produce by construction. Overlap means the cues
+aren't a clean partition of the timeline, and the plain "is the time inside
+this one?" search lands in a hole and answers nothing across stretches where a
+caption should be up. The walk is bounded, so a genuine gap between cues still
+costs a fixed handful of comparisons.
 
 **Getting them for a video you already have.** Touch and hold any video track
 for **Get Subtitles** (**Refresh Subtitles** once it has some): the same

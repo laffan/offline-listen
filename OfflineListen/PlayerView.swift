@@ -704,11 +704,16 @@ private struct CurrentChapterLabel: View {
 /// nothing (the cue lookup is a binary search over an array already in memory)
 /// and the observer only exists while a captioned video is on screen.
 ///
-/// It is not, however, allowed to be a *single point of failure*: until that
-/// observer has actually produced a tick, the playhead comes from the app's
-/// own ticker — the one the scrubber runs on, which is visibly working
-/// whenever anything is playing. A caption that can only appear if a second
-/// clock starts is a caption that silently doesn't appear.
+/// It is not, however, allowed to be a *single point of failure*. The app's own
+/// ticker — the one the scrubber runs on, which is visibly working whenever
+/// anything is playing — stands in **whenever the fine clock isn't currently
+/// delivering**, not merely until its first tick. That distinction is the fix
+/// for captions that showed for a moment and then stopped: an observer that
+/// starts and later goes quiet left the overlay reading a frozen playhead for
+/// good, so every cue after that moment "wasn't playing yet", and only turning
+/// captions off and on — which builds a new overlay, and with it a new clock —
+/// brought them back. Now a clock that goes quiet is simply ignored (and
+/// re-armed), and the captions keep running off the ticker meanwhile.
 private struct SubtitleOverlay: View {
     let player: AVPlayer
     /// The app's own playhead, as the floor under the finer clock below.
@@ -733,10 +738,12 @@ private struct SubtitleOverlay: View {
         (SubtitleBackdrop(rawValue: backdrop) ?? .dim).opacity
     }
 
-    /// The playhead the cue is looked up against: the fine clock once it's
-    /// running, the app's ticker until then.
+    /// The playhead the cue is looked up against: the fine clock while it's
+    /// actually delivering, the app's ticker whenever it isn't. Re-read on
+    /// every redraw — and the ticker's own 2 Hz redraws are what notice a
+    /// clock that has gone quiet.
     private var time: Double {
-        clock.ticking ? clock.time : progress.currentTime
+        clock.isFresh ? clock.time : progress.currentTime
     }
 
     var body: some View {
@@ -766,6 +773,12 @@ private struct SubtitleOverlay: View {
             appLog("Subtitle overlay up: \(cues.count) cue(s), first at \(cueRange). Playhead \(progress.currentTime.asPlaybackTime).",
                    level: .debug, category: SubtitleFetcher.category)
         }
+        // The app's ticker doubles as the fine clock's watchdog: every half
+        // second it both redraws this line (so a stalled clock is noticed and
+        // stepped around) and gives the observer a chance to be re-armed.
+        .onChange(of: progress.currentTime) { _ in
+            clock.reviveIfStalled(player)
+        }
         .onDisappear { clock.stop() }
     }
 
@@ -781,9 +794,24 @@ private struct SubtitleOverlay: View {
 @MainActor
 private final class SubtitleClock: ObservableObject {
     @Published var time: Double = 0
-    /// True once the observer has actually delivered a tick — until then the
-    /// overlay reads the app's own ticker instead of trusting this one.
-    @Published private(set) var ticking = false
+    /// When the observer last delivered a tick. The overlay reads *this*
+    /// rather than a "has it ever ticked" flag: an observer that starts and
+    /// later stops is the failure that leaves a caption line frozen, and a
+    /// one-way flag can't tell that apart from a healthy clock.
+    private var lastTick = Date.distantPast
+    /// When the observer was last re-armed, so a player that will never tick
+    /// (paused, or between items) is retried about once a second rather than
+    /// on every redraw.
+    private var lastRevival = Date.distantPast
+
+    /// How recent a tick has to be to be worth reading. The observer runs at
+    /// 5 Hz, so most of a second without one means it has stopped.
+    private static let freshness: TimeInterval = 1
+
+    /// True while the fine clock is actually delivering. False before its
+    /// first tick, and false again if it goes quiet — both cases the overlay
+    /// answers by reading the app's own ticker instead.
+    var isFresh: Bool { Date().timeIntervalSince(lastTick) < Self.freshness }
 
     private var observer: Any?
     private weak var player: AVPlayer?
@@ -806,19 +834,37 @@ private final class SubtitleClock: ObservableObject {
     }
 
     private func tick(_ seconds: Double) {
-        if !ticking {
-            ticking = true
+        if !isFresh {
             appLog("Caption clock ticking at \(seconds.asPlaybackTime).",
                    level: .debug, category: SubtitleFetcher.category)
         }
+        lastTick = Date()
         time = seconds
+    }
+
+    /// Puts a stalled observer back. Called off the app's own ticker, which
+    /// keeps going whenever the film does — so a clock that quietly stopped
+    /// (the reason captions used to need turning off and on again) recovers
+    /// its 5 Hz on its own, and the captions read the 2 Hz ticker in the
+    /// meantime rather than a frozen number.
+    func reviveIfStalled(_ player: AVPlayer) {
+        // A paused player is *meant* to be quiet, and so is the ticker the
+        // fallback reads — the caption simply stays where it is. Only a clock
+        // that has stopped while the film is running is a fault.
+        guard player.rate != 0, observer != nil, !isFresh,
+              Date().timeIntervalSince(lastRevival) >= Self.freshness else { return }
+        lastRevival = Date()
+        appLog("Caption clock has gone quiet — re-arming its observer (captions are running off the app's ticker meanwhile).",
+               level: .debug, category: SubtitleFetcher.category)
+        stop()
+        follow(player)
     }
 
     func stop() {
         if let observer { player?.removeTimeObserver(observer) }
         observer = nil
         player = nil
-        ticking = false
+        lastTick = .distantPast
     }
 }
 

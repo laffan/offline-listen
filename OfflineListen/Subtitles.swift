@@ -24,19 +24,37 @@ extension Array where Element == SubtitleCue {
     /// The cue covering `time`, or nil in the gap between two of them. Cues are
     /// kept sorted by start, so this is a binary search — it runs several times
     /// a second while a video plays.
+    ///
+    /// The search finds the **last cue that has started**, then walks back over
+    /// any that have already ended. The walk is what makes it right on a file
+    /// whose cues *overlap* — a long line (a song lyric, a scene caption) with
+    /// short ones inside it, which real subtitle files for films carry and
+    /// which YouTube's rolling auto-captions produce by construction. Overlap
+    /// means the cues aren't a clean partition of the timeline, and a plain
+    /// "is the time inside this one?" search lands in a hole and answers
+    /// nothing for stretches where a caption should be on screen. Bounded, so
+    /// a gap between cues still costs a fixed handful of comparisons.
     func cue(at time: Double) -> SubtitleCue? {
+        guard !isEmpty else { return nil }
         var low = 0
         var high = count - 1
+        var started = -1
         while low <= high {
             let mid = (low + high) / 2
-            let cue = self[mid]
-            if time < cue.start {
-                high = mid - 1
-            } else if time >= cue.end {
+            if self[mid].start <= time {
+                started = mid
                 low = mid + 1
             } else {
-                return cue
+                high = mid - 1
             }
+        }
+        guard started >= 0 else { return nil }
+        var index = started
+        var steps = 0
+        while index >= 0, steps < 16 {
+            if time < self[index].end { return self[index] }
+            index -= 1
+            steps += 1
         }
         return nil
     }
