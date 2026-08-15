@@ -1269,11 +1269,21 @@ final class DownloadManager: ObservableObject {
         return library.createFolder(named: wanted) ?? Folder(name: wanted)
     }
 
-    /// The album equivalent, matched on **name *and* parent**: two artists can
-    /// both have a "Greatest Hits", and each belongs under its own artist
-    /// folder — the plain name lookup above would hand the second one the
-    /// first one's folder.
-    private func albumFolder(named name: String, fallback: String, parent parentID: UUID?) -> Folder {
+    /// The folder a release belongs in: the one the library already has for it,
+    /// or a new one.
+    ///
+    /// Matching used to be name **plus parent**, because two artists can both
+    /// have a "Greatest Hits" and each belongs under its own artist folder. But
+    /// the same record legitimately arrives from two places — Every Noise files
+    /// albums at the top level, a Browse source nests them inside the source's
+    /// own folder — so the strict test made a second copy of a record the
+    /// library already had, which is exactly the wrong answer when a download
+    /// is being *resumed* after a crash. A same-named album anywhere in the
+    /// library now counts too, provided its tracks agree on the artist this
+    /// release names: that's the check the parent was standing in for, and it
+    /// answers the "Greatest Hits" case directly rather than by proxy.
+    private func albumFolder(named name: String, fallback: String,
+                             artist: String?, parent parentID: UUID?) -> Folder {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let wanted = trimmed.isEmpty ? fallback : trimmed
         if let existing = library.folders.first(where: {
@@ -1281,6 +1291,16 @@ final class DownloadManager: ObservableObject {
                 && $0.name.localizedCaseInsensitiveCompare(wanted) == .orderedSame
         }) {
             return existing
+        }
+        let named = artist?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !named.isEmpty, let elsewhere = library.folders.first(where: {
+            !$0.isArchived
+                && $0.name.localizedCaseInsensitiveCompare(wanted) == .orderedSame
+                && library.folderArtist(of: $0.id)?.localizedCaseInsensitiveCompare(named) == .orderedSame
+        }) {
+            appLog("\"\(wanted)\" is already in the library — filing into that folder rather than making a second one.",
+                   category: "Queue")
+            return elsewhere
         }
         return library.createFolder(named: wanted, parent: parentID)
             ?? Folder(name: wanted, parentID: parentID)
@@ -1303,28 +1323,58 @@ final class DownloadManager: ObservableObject {
         guard !tracks.isEmpty else { return nil }
         let parentTrimmed = (parentName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let parent = parentTrimmed.isEmpty ? nil : folder(named: parentTrimmed, fallback: "Browse")
-        let album = albumFolder(named: albumName, fallback: "Album", parent: parent?.id)
+        let album = albumFolder(named: albumName, fallback: "Album",
+                                artist: tracks.compactMap(\.artist).first, parent: parent?.id)
         // A release filed whole is an album whether or not a cover comes with
         // it — one that doesn't (the AI catalogue carries no art) wears a
         // colour until the user gives it one.
         library.convertToAlbum(album)
         ArtworkFetcher.attach(artworkURL, toFolder: album.id, library: library)
         // Recorded before anything is queued, so the first track to land
-        // already has somewhere to be. Merged into any order already there,
-        // never replacing it: filling in a couple of tracks that failed the
-        // first time must not move the ones that landed.
+        // already has somewhere to be — and recorded for the **whole**
+        // tracklist, including songs already in the folder, since that's what
+        // lets a late arrival be slotted between two of them. Merged into any
+        // order already there, never replacing it: filling in a couple of
+        // tracks that failed the first time must not move the ones that
+        // landed.
         var order = albumOrders[album.id] ?? [:]
         for (position, track) in tracks.enumerated() {
             order[track.url] = position
         }
         albumOrders[album.id] = order
-        enqueueBatch(tracks.map {
+
+        // What the folder is still missing. Pressing Download Album on a
+        // record that half-landed — the ordinary way back after a crash mid-
+        // album — now finishes it rather than fetching everything again. A
+        // song counts as present by its **link or its title**: the YouTube
+        // match for a given track can settle on a different video from one
+        // session to the next, and re-downloading a song under a second name
+        // is the thing to avoid.
+        // Only tracks of the *requested* kind count as present: pulling a
+        // record down again as video, having had it as audio, is a deliberate
+        // thing to ask for and must not be read as "already have it".
+        let already = library.tracks(in: album.id).filter { $0.isVideo == (mode == .video) }
+        let haveURLs = Set(already.map(\.sourceURL))
+        let haveTitles = Set(already.map { $0.title.lowercased() })
+        let missing = tracks.filter { track in
+            if haveURLs.contains(track.url) { return false }
+            let title = (track.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return title.isEmpty || !haveTitles.contains(title)
+        }
+        guard !missing.isEmpty else {
+            appLog("\"\(album.name)\" is already complete in the library (\(already.count) track(s)) — nothing to queue.",
+                   level: .success, category: "Queue")
+            return album
+        }
+
+        enqueueBatch(missing.map {
             QueuedLink(url: $0.url,
                        artworkURL: $0.artworkURL ?? artworkURL,
                        knownTitle: $0.title,
                        knownArtist: $0.artist)
         }, mode: mode, folderID: album.id)
-        appLog("Queued \(tracks.count) track(s) from \"\(album.name)\" into a library folder.",
+        let skipped = tracks.count - missing.count
+        appLog("Queued \(missing.count) track(s) from \"\(album.name)\" into a library folder\(skipped > 0 ? " — \(skipped) already there" : "").",
                category: "Queue")
         return album
     }

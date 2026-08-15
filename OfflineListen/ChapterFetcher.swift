@@ -53,14 +53,19 @@ enum ChapterFetcher {
                 // `import yt_dlp` resolves even when this download went through the
                 // native extractor.
                 _ = YoutubeDL()
-                let ytdlpModule = Python.import("yt_dlp")
+                let ytdlpModule = try PythonBridge.Memory.module("yt_dlp")
                 let options: PythonObject = [
                     "quiet": true,
                     "noplaylist": true,
                     "skip_download": true,
                     "nocheckcertificate": true,
                 ]
-                let ytdlp = ytdlpModule.YoutubeDL(options)
+                let ytdlp = try PythonBridge.Memory.call(ytdlpModule.YoutubeDL, [options])
+                // Chapter capture runs once per finished track, so on an album
+                // it is a dozen `YoutubeDL` instances and a dozen info dicts —
+                // none of which the interpreter frees on its own (see
+                // `PythonBridge.Memory`).
+                defer { PythonBridge.Memory.release(ytdlp: ytdlp) }
                 let info = try ytdlp.extract_info.throwing.dynamicallyCall(withKeywordArguments: [
                     "": url.absoluteString, "download": false, "process": false,
                 ])

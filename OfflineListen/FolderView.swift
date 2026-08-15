@@ -453,6 +453,10 @@ struct InboxView: View {
     @State private var splittingTrack: Track?
     /// The artist a track's **View Discography** asked for.
     @State private var discographyRequest: DiscographyRequest?
+    /// Multi-select, the same shape the **All** tab has: an inbox filled by a
+    /// batch download is cleared in batches too.
+    @State private var editMode: EditMode = .inactive
+    @State private var selection = Set<Track.ID>()
 
     private var tracks: [Track] {
         library.inboxTracks
@@ -467,18 +471,14 @@ struct InboxView: View {
                     description: "New downloads land here until you listen to them."
                 )
             } else {
-                List {
+                List(selection: $selection) {
                     ForEach(tracks) { track in
-                        TrackRow(
+                        let row = TrackRow(
                             track: track,
                             isCurrent: playback.currentTrack?.id == track.id,
                             onShowChapters: { chapterContext = ChapterContext(track: track, queue: tracks) }
                         )
                             .contentShape(Rectangle())
-                            .onTapGesture {
-                                playback.play(track, in: tracks)
-                                onPlay()
-                            }
                             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                 Button(role: .destructive) {
                                     library.delete(track)
@@ -537,6 +537,16 @@ struct InboxView: View {
                                 }
                                 TrackSourceButtons(track: track)
                             }
+                        // Selecting is a mode you're in *instead* of playing:
+                        // a tap ticks the row rather than starting the track.
+                        if editMode.isEditing {
+                            row
+                        } else {
+                            row.onTapGesture {
+                                playback.play(track, in: tracks)
+                                onPlay()
+                            }
+                        }
                     }
                 }
                 .listStyle(.plain)
@@ -545,21 +555,126 @@ struct InboxView: View {
         }
         // No title of its own — it's a tab of the Library, not a screen you
         // pushed into, and the tab bar above already names it.
+        .editModeEnvironment($editMode)
         .editMetadataSheet(for: $editingTrack)
         .breakChaptersConfirm(for: $splittingTrack)
         .discographySheet(for: $discographyRequest)
         .sheet(item: $chapterContext) { context in
             ChapterListView(track: context.track, queue: context.queue, onPlay: onPlay)
         }
-        .toolbar {
-            if !tracks.isEmpty {
-                ToolbarItem(placement: .navigationBarTrailing) {
+        // Emptying the Inbox from under an open selection would leave a Done
+        // button over nothing.
+        .onChange(of: tracks.isEmpty) { empty in
+            if empty, editMode.isEditing { endEditing() }
+        }
+        .toolbar { toolbarContent }
+    }
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        if editMode.isEditing {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Menu {
+                    Button {
+                        shareSelected()
+                    } label: {
+                        Label("Share", systemImage: "square.and.arrow.up")
+                    }
+                    if !library.activeFolders.isEmpty {
+                        Menu {
+                            ForEach(library.activeFolders) { folder in
+                                Button(folder.name) { moveSelected(to: folder.id) }
+                            }
+                        } label: {
+                            Label("Move to Folder", systemImage: "folder")
+                        }
+                    }
+                    Button {
+                        markSelectedPlayed()
+                    } label: {
+                        Label("Mark Played", systemImage: "checkmark.circle")
+                    }
+                    Button(role: .destructive) {
+                        deleteSelected()
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                } label: {
+                    Label("Actions", systemImage: "ellipsis.circle")
+                }
+                .disabled(selection.isEmpty)
+            }
+        }
+        if !tracks.isEmpty {
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
+                if !editMode.isEditing {
                     Button("Mark All Played") {
                         library.markAllPlayed()
                     }
                 }
+                Button(editMode.isEditing ? "Done" : "Select") {
+                    withAnimation {
+                        if editMode.isEditing {
+                            editMode = .inactive
+                            selection.removeAll()
+                        } else {
+                            editMode = .active
+                        }
+                    }
+                }
             }
         }
+    }
+
+    private func selectedTracks() -> [Track] {
+        tracks.filter { selection.contains($0.id) }
+    }
+
+    /// Every bulk action follows the same order the Browse bulk download
+    /// learned the hard way: leave select mode **first**, in its own
+    /// transaction, and do the work on the next main-actor turn. A dozen row
+    /// changes landing in the same update as the animated edit-mode teardown
+    /// is what the `List` underneath doesn't survive.
+    private func applyToSelection(_ work: @escaping @MainActor ([Track]) -> Void) {
+        let picks = selectedTracks()
+        endEditing()
+        guard !picks.isEmpty else { return }
+        Task { @MainActor in work(picks) }
+    }
+
+    private func shareSelected() {
+        let picks = selectedTracks()
+        endEditing()
+        guard !picks.isEmpty else { return }
+        Task { @MainActor in share = SharePayload(urls: picks.map(\.fileURL)) }
+    }
+
+    private func moveSelected(to folderID: UUID) {
+        applyToSelection { picks in
+            for track in picks {
+                // Filing a track is deciding about it, so it leaves the Inbox
+                // — the same rule the single-track menu follows.
+                library.setFolder(track, folderID)
+                library.markPlayed(track.id)
+            }
+        }
+    }
+
+    private func markSelectedPlayed() {
+        applyToSelection { picks in
+            for track in picks { library.markPlayed(track.id) }
+        }
+    }
+
+    private func deleteSelected() {
+        applyToSelection { picks in
+            for track in picks { library.delete(track) }
+        }
+    }
+
+    private func endEditing() {
+        selection.removeAll()
+        withAnimation { editMode = .inactive }
     }
 }
 

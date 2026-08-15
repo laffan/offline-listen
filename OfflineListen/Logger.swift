@@ -49,8 +49,18 @@ final class LogStore: ObservableObject {
         _ = DiagnosticLogFile.shared
     }
 
+    /// How much of one line is kept. yt-dlp's diagnostics are not always
+    /// *lines*: a failed extraction's exception text can carry the whole info
+    /// dict — every format, every thumbnail, the heatmap — which is megabytes.
+    /// Two thousand of those in the in-memory ring, each also written to disk,
+    /// is memory the interpreter next door is about to need (an album download
+    /// ends in Python's own `MemoryError` when it doesn't get it). The head of
+    /// such a line says what happened; the rest is the dump.
+    private static let maxMessageLength = 2000
+
     nonisolated func log(_ message: String, level: LogLevel = .info, category: String = "App") {
         let date = Date()
+        let message = Self.clipped(message)
         let entry = LogEntry(date: date, level: level, category: category, message: message)
         #if DEBUG
         print("[\(category)] \(level.rawValue.uppercased()): \(message)")
@@ -67,6 +77,14 @@ final class LogStore: ObservableObject {
                 self.entries.removeFirst(self.entries.count - self.maxEntries)
             }
         }
+    }
+
+    /// One line, cut to `maxMessageLength` with a note of what was dropped —
+    /// so a truncated line still says it was truncated, and by how much.
+    nonisolated private static func clipped(_ message: String) -> String {
+        guard message.count > maxMessageLength else { return message }
+        return String(message.prefix(maxMessageLength))
+            + "… [\(message.count - maxMessageLength) more characters]"
     }
 
     /// On-disk diagnostics for sharing: the current session's log and, if it

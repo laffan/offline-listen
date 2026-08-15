@@ -37,6 +37,71 @@ import PythonSupport
 ///    reload, since the Python-API path (unlike the CLI) never sets
 ///    `plugin_dirs` from options.
 enum PythonBridge {
+    /// Hands the interpreter's memory back after one extraction, and imports
+    /// modules without a trapdoor.
+    ///
+    /// An `extract_info` leaves a great deal behind. The `YoutubeDL` object
+    /// holds a request director, a cookie jar, per-site extractor instances and
+    /// several caches, all of it wired into reference **cycles** — so dropping
+    /// the last Swift reference doesn't free any of it; only Python's cyclic
+    /// collector can, and it only runs when asked or when its own thresholds
+    /// trip (which they don't, for a handful of very large objects). The info
+    /// dict it returns is megabytes on its own: every format, every thumbnail,
+    /// the heatmap. Downloading an album runs this once per track, and several
+    /// times per track when YouTube is answering 403 and the client roulette
+    /// starts. That is the crash: the interpreter runs out of memory and raises
+    /// `MemoryError` — inside PythonKit, where an unguarded `try!` turns it
+    /// into a hard fault no Swift code can catch.
+    ///
+    /// So every attempt gives its memory back explicitly, and every call that
+    /// *can* raise goes through the throwing forms below rather than
+    /// PythonKit's trapping conveniences.
+    enum Memory {
+        #if canImport(PythonKit)
+        /// Closes a `YoutubeDL` instance, empties a capture logger's line
+        /// buffer, and runs a cyclic GC pass. Every step is best-effort: this
+        /// is cleanup, and a failure to tidy up must never fail the download
+        /// that just succeeded.
+        static func release(ytdlp: PythonObject? = nil, logger: PythonObject? = nil) {
+            if let logger {
+                // `.clear()` rather than assigning a fresh list: it frees the
+                // captured lines without allocating anything, which is the
+                // right shape for a routine that runs *because* memory is
+                // tight.
+                _ = try? logger.lines.clear.throwing.dynamicallyCall(withArguments: [])
+            }
+            if let ytdlp {
+                _ = try? ytdlp.close.throwing.dynamicallyCall(withArguments: [])
+            }
+            collect()
+        }
+
+        /// One cyclic-collector pass. Cheap next to an extraction, and the only
+        /// thing that actually frees a `YoutubeDL`.
+        static func collect() {
+            guard let gc = try? Python.attemptImport("gc") else { return }
+            _ = try? gc.collect.throwing.dynamicallyCall(withArguments: [])
+        }
+
+        /// `import`, as an error rather than a trap. `Python.import` is `try!`
+        /// underneath — the very line the album crash died on — so nothing on
+        /// the download path may use it.
+        static func module(_ name: String) throws -> PythonObject {
+            try Python.attemptImport(name)
+        }
+
+        /// Calls a Python callable the throwing way, so an exception (a
+        /// `MemoryError` above all) arrives as a Swift error.
+        static func call(_ callable: PythonObject, _ arguments: [PythonConvertible] = []) throws -> PythonObject {
+            try callable.throwing.dynamicallyCall(withArguments: arguments)
+        }
+        #else
+        /// Without PythonKit there's no interpreter to sweep — the Mac build
+        /// shells out to a real yt-dlp binary — so this compiles to nothing.
+        static func collect() {}
+        #endif
+    }
+
     private(set) static var isConfigured = false
 
     /// Whether we've started the embedded Python interpreter ourselves.
@@ -174,9 +239,9 @@ enum PythonBridge {
                 raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), cmd)
         subprocess.Popen = _OLFakePopen
         """
-        let builtins = Python.import("builtins")
-        let namespace = builtins.dict()
-        builtins.exec(PythonObject(code), namespace)
+        guard let builtins = try? Memory.module("builtins"),
+              let namespace = try? Memory.call(builtins.dict) else { return }
+        _ = try? Memory.call(builtins.exec, [PythonObject(code), namespace])
         #endif
     }
 
@@ -215,7 +280,7 @@ enum PythonBridge {
     }
 
     private static func installBridgeCallables() throws {
-        let builtins = Python.import("builtins")
+        let builtins = try Memory.module("builtins")
 
         // JS-challenge solve: (dataJSON) -> resultJSON. The ejs `data` payload
         // comes from the Python provider; JavaScriptCore holds the lib/core
@@ -274,10 +339,10 @@ enum PythonBridge {
         // Make sure the plugin specs (extractor/postprocessor) are registered by
         // importing the packages, then repoint plugin_dirs and reload.
         appLog("Plugin: importing yt_dlp.extractor…", level: .debug, category: category)
-        _ = Python.import("yt_dlp.extractor")
-        _ = Python.import("yt_dlp.postprocessor")
-        let globals = Python.import("yt_dlp.globals")
-        let plugins = Python.import("yt_dlp.plugins")
+        _ = try Memory.module("yt_dlp.extractor")
+        _ = try Memory.module("yt_dlp.postprocessor")
+        let globals = try Memory.module("yt_dlp.globals")
+        let plugins = try Memory.module("yt_dlp.plugins")
         globals.plugin_dirs.value = PythonObject(["default", pluginDir])
         globals.all_plugins_loaded.value = false
         appLog("Plugin: running load_all_plugins…", level: .debug, category: category)

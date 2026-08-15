@@ -106,7 +106,11 @@ vertical space goes to the content instead.
    — **Inbox** (every track you haven't listened to yet; starting playback — or
    a **Mark Played** swipe — clears it from the Inbox), **Recent** and
    **Watch** — are tabs now; the **Archive** is still pinned to
-   the bottom. Create folders with the Folders tab's folder button; move tracks in
+   the bottom. The Inbox has a **Select** button of its own beside Mark All
+   Played: tick several tracks and the corner menu will **Move to Folder**,
+   **Mark Played**, **Share** or **Delete** the lot. An inbox is filled by
+   batch downloads, so it's cleared in batches too — and while selecting, a tap
+   ticks a row rather than starting it. Create folders with the Folders tab's folder button; move tracks in
    via touch-and-hold → **Move to Folder** (or the bulk Select menu). The Inbox
    is itself a move target — moving a track there returns it to unlistened.
    Touch-and-hold also offers **Edit Metadata**, a modal for hand-editing the
@@ -957,6 +961,21 @@ in the Library's **All** tab (and the Inbox) rather than an album folder.
 **Download Album** is the opposite case and files the whole record into a
 folder of its own, cover art and all.
 
+**It resumes rather than restarts.** Before queueing anything it looks for the
+record *in the library*: the folder it would file into, and — since the same
+album legitimately arrives from two places, top-level from Every Noise or
+nested inside a Browse source's folder — a same-named album anywhere else whose
+tracks agree on this release's artist. Finding one, it files into that folder
+instead of making a second copy of the record. Then it queues only what's
+**missing**: a song already there (matched by its link *or* its title, since
+the YouTube match for a track can settle on a different video from one session
+to the next) is left alone, and the log says how many were skipped. So pressing
+Download Album on a record that half-landed — the ordinary way back after a
+download was interrupted — finishes it, in tracklist order, rather than
+fetching the whole thing again. Only tracks of the **kind being asked for**
+count as present, so pulling a record down as video having had it as audio is
+still a full download rather than a no-op.
+
 **Finding one song you can name** is the question an album-first catalogue is
 the wrong shape for — answering it means twirling records open until you spot
 it — so the toolbar's **magnifier**, beside the refresh, searches every song in
@@ -1172,6 +1191,49 @@ zombie to settle instead of crashing into it (a stronger guarantee than the
 old wait-briefly-then-proceed heuristic). In practice: two native-extraction
 downloads overlap fully; when both jobs need yt-dlp, their resolutions take
 turns while their downloads still overlap.
+
+### Giving the interpreter its memory back
+
+Serializing the interpreter is not the same as bounding it, and an album
+download is where the difference shows: the app would run for a dozen tracks
+and then die on `Fatal error: 'try!' expression unexpectedly raised an error:
+Python exception: <class 'MemoryError'>`, raised inside PythonKit where no
+Swift code can catch it.
+
+Every `extract_info` leaves a great deal behind. The `YoutubeDL` object holds a
+request director, a cookie jar, per-site extractor instances and several
+caches, all of it in reference **cycles** — so dropping the last Swift
+reference frees none of it; only Python's cyclic collector can, and it doesn't
+run for a handful of very large objects. The info dict is megabytes on its own
+(every format, every thumbnail, the heatmap). And these run *per track*, not
+per download: chapter capture, subtitle capture, and — when YouTube answers
+403, which it does in waves — the whole forced-client roulette, one full
+extraction per client. Three changes:
+
+- **Every attempt hands its memory back before the gate moves on**: the
+  `YoutubeDL` is closed, the capture logger's line buffer is cleared, and a
+  cyclic-GC pass runs (`PythonBridge.Memory`). This covers the forced-client
+  resolves, the diagnostic probe, chapter and subtitle capture, playlist
+  resolution, and the wrapper's own default extraction — which builds the
+  biggest dict of all.
+- **Nothing on the download path uses PythonKit's trapping conveniences.**
+  `Python.import` is `try!` underneath — it was the line the crash died on —
+  so imports go through `attemptImport` and calls through `.throwing`. Under
+  memory pressure the failure is now a job that fails, not a process that dies.
+- **The log can't be a second memory bomb.** yt-dlp's diagnostics aren't
+  always *lines*: a failed extraction's exception text can carry the whole info
+  dict. Each entry is clipped to 2,000 characters (saying how much it dropped),
+  which bounds both the in-memory ring and the disk mirror.
+
+**`ios` is last in the client order now**, and that's part of the same fix
+rather than a preference. YouTube gated it: every ios resolve on device now
+logs "ios client https formats require a GVS PO Token which was not provided",
+then "Only images are available", then fails. The app can mint PO tokens, but
+BotGuard mints the **web** family's — an ios token isn't something it can
+produce. So an ios attempt was a guaranteed failure that still cost a full
+extraction, and it used to lead for audio: a wasted `YoutubeDL` and info dict
+on every track of every album. It stays in the list, last, where it costs
+nothing until everything else has failed and is ready if the gating changes.
 
 ## Local sync: a folder that mirrors part of the library
 

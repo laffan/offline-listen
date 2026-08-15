@@ -443,7 +443,16 @@ final class YoutubeDLExtractor: MediaExtractor {
         defer { heartbeat.cancel() }
 
         let extraction = Task { () async throws -> ([Format], Info) in
-            defer { PythonGate.shared.release() }
+            defer {
+                // The wrapper's own extraction builds the biggest info dict of
+                // the lot — every format, thumbnail and heatmap point of the
+                // video — and, like every other one, it sits in reference
+                // cycles the interpreter won't collect unasked. Sweep before
+                // the gate moves on, while this slot still owns the
+                // interpreter (see `PythonBridge.Memory`).
+                PythonBridge.Memory.collect()
+                PythonGate.shared.release()
+            }
             return try await youtubeDL.extractInfo(url: url)
         }
 
@@ -845,10 +854,10 @@ final class YoutubeDLExtractor: MediaExtractor {
             + "    def error(self, m):\n"
             + "        self.lines.append(('error', str(m)))\n"
         do {
-            let builtins = Python.import("builtins")
-            let namespace = builtins.dict()
+            let builtins = try PythonBridge.Memory.module("builtins")
+            let namespace = try PythonBridge.Memory.call(builtins.dict)
             _ = try builtins.exec.throwing.dynamicallyCall(withArguments: [code.pythonObject, namespace])
-            return namespace["_OLLogger"]()
+            return try PythonBridge.Memory.call(namespace["_OLLogger"])
         } catch {
             appLog("yt-dlp log capture unavailable: \(error.localizedDescription)", level: .debug, category: "yt-dlp")
             return nil
@@ -952,13 +961,23 @@ final class YoutubeDLExtractor: MediaExtractor {
         // and get a minted PO token, instead of failing.
         try? await PythonGate.shared.run { PythonBridge.configureIfNeeded() }
 
-        // The client order still leads with the pre-signed no-token clients
-        // (`tv` for video quality, `ios` for audio); the web-family clients —
-        // now resolvable thanks to on-device nsig solving + PO tokens — are the
-        // fallback tier.
+        // **`ios` is last now, and that's a fix rather than a preference.** It
+        // used to lead for audio, on the strength of being pre-signed and
+        // untokened. YouTube has since gated it: yt-dlp's own line for every
+        // ios resolve on device now reads "ios client https formats require a
+        // GVS PO Token which was not provided. They will be skipped", followed
+        // by "Only images are available" and a "Requested format is not
+        // available" error. The app *can* mint PO tokens, but BotGuard mints
+        // the **web** family's — nothing here can produce an ios one. So an
+        // ios attempt is a guaranteed failure that still costs a full
+        // `extract_info`: a `YoutubeDL`, a complete info dict, and the
+        // interpreter memory both hold. Leading with it burned that on every
+        // track of every album. It stays in the list — last, where it costs
+        // nothing until everything else has failed, and where it's ready if
+        // YouTube's gating changes again.
         let clientSets: [[String]] = mode == .video
-            ? [["tv"], ["android_vr"], ["ios"], ["android"], ["web_safari"], ["mweb"], ["web"]]
-            : [["ios"], ["android_vr"], ["android"], ["tv"], ["web_safari"], ["mweb"], ["web"]]
+            ? [["tv"], ["android_vr"], ["android"], ["web_safari"], ["mweb"], ["web"], ["ios"]]
+            : [["android_vr"], ["android"], ["tv"], ["web_safari"], ["mweb"], ["web"], ["ios"]]
 
         for clients in clientSets {
             let label = clients.joined(separator: ",")
@@ -1049,15 +1068,18 @@ final class YoutubeDLExtractor: MediaExtractor {
             try await withTimeout("Diagnostic probe", category: category, seconds: 60) {
                 try await PythonGate.shared.run { [self] in
                     let logger = makeCaptureLogger()
+                    var instance: PythonObject?
+                    defer { PythonBridge.Memory.release(ytdlp: instance, logger: logger) }
                     do {
-                        let ytdlpModule = Python.import("yt_dlp")
+                        let ytdlpModule = try PythonBridge.Memory.module("yt_dlp")
                         let options: PythonObject = [
                             "quiet": true,
                             "noplaylist": true,
                             "nocheckcertificate": true,
                             "logger": logger ?? Python.None,
                         ]
-                        let ytdlp = ytdlpModule.YoutubeDL(options)
+                        let ytdlp = try PythonBridge.Memory.call(ytdlpModule.YoutubeDL, [options])
+                        instance = ytdlp
                         appLog("Running metadata-only extract_info…", level: .debug, category: category)
                         let info = try ytdlp.extract_info.throwing.dynamicallyCall(withKeywordArguments: [
                             "": url.absoluteString, "download": false, "process": false,
@@ -1111,9 +1133,16 @@ final class YoutubeDLExtractor: MediaExtractor {
                 // abandoned by the timeout above.
                 try await PythonGate.shared.run { [self] in
                     let logger = makeCaptureLogger()
+                    // Whatever happens below, this attempt's interpreter memory
+                    // goes back before the gate is handed on: the `YoutubeDL`
+                    // and the info dict it built are cyclic and megabytes
+                    // apiece, and an album's worth of them is what exhausts the
+                    // interpreter (see `PythonBridge.Memory`).
+                    var instance: PythonObject?
+                    defer { PythonBridge.Memory.release(ytdlp: instance, logger: logger) }
                     do {
                         appLog("Importing yt_dlp module (client \(label))…", level: .debug, category: category)
-                        let ytdlpModule = Python.import("yt_dlp")
+                        let ytdlpModule = try PythonBridge.Memory.module("yt_dlp")
                         // A `None` logger is what yt-dlp falls back to anyway, so this
                         // is a no-op when capture couldn't be installed.
                         let options: PythonObject = [
@@ -1123,7 +1152,8 @@ final class YoutubeDLExtractor: MediaExtractor {
                             "extractor_args": ["youtube": ["player_client": PythonObject(clients)]],
                             "logger": logger ?? Python.None,
                         ]
-                        let ytdlp = ytdlpModule.YoutubeDL(options)
+                        let ytdlp = try PythonBridge.Memory.call(ytdlpModule.YoutubeDL, [options])
+                        instance = ytdlp
                         appLog("Running extract_info (client \(label))…", level: .debug, category: category)
                         let result = try ytdlp.extract_info.throwing.dynamicallyCall(withKeywordArguments: [
                             "": url.absoluteString, "download": false, "process": true,

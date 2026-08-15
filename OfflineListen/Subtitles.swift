@@ -454,14 +454,16 @@ enum SubtitleFetcher {
             return try await PythonGate.shared.run { () throws -> String? in
                 guard PythonBridge.ensurePythonRunning() else { return nil }
                 _ = YoutubeDL()
-                let module = Python.import("yt_dlp")
+                let module = try PythonBridge.Memory.module("yt_dlp")
                 let options: PythonObject = [
                     "quiet": true,
                     "noplaylist": true,
                     "skip_download": true,
                     "nocheckcertificate": true,
                 ]
-                let ytdlp = module.YoutubeDL(options)
+                let ytdlp = try PythonBridge.Memory.call(module.YoutubeDL, [options])
+                // Per video, like chapter capture — and just as cyclic.
+                defer { PythonBridge.Memory.release(ytdlp: ytdlp) }
                 let info = try ytdlp.extract_info.throwing.dynamicallyCall(withKeywordArguments: [
                     "": url.absoluteString, "download": false, "process": false,
                 ])

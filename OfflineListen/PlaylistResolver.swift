@@ -99,7 +99,7 @@ enum PlaylistResolver {
                 // Instantiating YoutubeDL configures the wrapper's own state so
                 // `import yt_dlp` resolves (mirrors ChapterFetcher).
                 _ = YoutubeDL()
-                let ytdlpModule = Python.import("yt_dlp")
+                let ytdlpModule = try PythonBridge.Memory.module("yt_dlp")
                 let options: PythonObject = [
                     "quiet": true,
                     // List entries without resolving each video — fast, no nsig work.
@@ -108,7 +108,10 @@ enum PlaylistResolver {
                     "ignoreerrors": true,
                     "nocheckcertificate": true,
                 ]
-                let ytdlp = ytdlpModule.YoutubeDL(options)
+                let ytdlp = try PythonBridge.Memory.call(ytdlpModule.YoutubeDL, [options])
+                // A playlist's flat entry list is small, but the instance that
+                // built it isn't, and nothing frees it on its own.
+                defer { PythonBridge.Memory.release(ytdlp: ytdlp) }
                 let info = try ytdlp.extract_info.throwing.dynamicallyCall(withKeywordArguments: [
                     "": url.absoluteString, "download": false, "process": false,
                 ])
