@@ -39,9 +39,10 @@ struct OfflineListenApp: App {
         _aiSettings = StateObject(wrappedValue: aiSettings)
         _aiOrganizer = StateObject(wrappedValue: aiOrganizer)
         _spotifySettings = StateObject(wrappedValue: spotifySettings)
-        _downloads = StateObject(wrappedValue: DownloadManager(library: library,
-                                                              aiOrganizer: aiOrganizer,
-                                                              spotifySettings: spotifySettings))
+        let downloads = DownloadManager(library: library,
+                                        aiOrganizer: aiOrganizer,
+                                        spotifySettings: spotifySettings)
+        _downloads = StateObject(wrappedValue: downloads)
         _browse = StateObject(wrappedValue: BrowseStore(aiSettings: aiSettings))
         _everyNoiseUpdates = StateObject(wrappedValue: ENUpdateStore())
         let playback = PlaybackManager(library: library)
@@ -72,6 +73,14 @@ struct OfflineListenApp: App {
         }
         // Best-effort immediate push (no-ops until the session activates).
         library.syncWatch()
+
+        // The queue's background handler has to be registered before launch
+        // finishes — this is the last moment that counts as "before". Through
+        // the local instance, not the `@StateObject`: reading a state object's
+        // wrapped value from an initializer builds a second one.
+        #if os(iOS)
+        downloads.registerBackgroundProcessing()
+        #endif
     }
 
     var body: some Scene {
@@ -105,6 +114,10 @@ struct OfflineListenApp: App {
                 }
                 #endif
                 .task { playback.restoreLastSession() }
+                // Whatever the queue still had when the app last quit. Done
+                // here rather than in `init` so a launch draws its first
+                // screen before it starts resolving videos.
+                .task { downloads.resumeUnfinished() }
                 // The copy of the harvest's records in its chosen folder,
                 // brought up to date at launch (it may have been collecting on
                 // another device, or the folder may have been offline last
@@ -141,9 +154,14 @@ struct OfflineListenApp: App {
                         everyNoiseUpdates.writeToDataFolder()
                     } else {
                         playback.saveState()
-                        // Snapshot the download history so completed rows (with
-                        // any AI-cleaned titles) survive being backgrounded/killed.
+                        // Snapshot the queue — finished rows with their
+                        // AI-cleaned titles, and anything still waiting — so
+                        // being backgrounded or killed costs progress at most.
                         downloads.persistHistory()
+                        // And ask iOS for time to carry on with what's left.
+                        #if os(iOS)
+                        downloads.scheduleBackgroundProcessing()
+                        #endif
                     }
                 }
         }

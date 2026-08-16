@@ -719,7 +719,10 @@ struct RecentTracksView: View {
                             onShowChapters: {
                                 chapterContext = ChapterContext(track: pair.track, queue: queue)
                             },
-                            trailingDetail: relativeDate(pair.entry.date)
+                            trailingDetail: relativeDate(pair.entry.date),
+                            // A list of things you've heard: the sleeve is the
+                            // quickest way to recognise one.
+                            showsArtwork: true
                         )
                             .contentShape(Rectangle())
                             .onTapGesture {

@@ -82,6 +82,9 @@ final class LibraryStore: ObservableObject {
     private var cachedFolderArtists: [UUID: String]?
     private var cachedSearchKeys: [UUID: String]?
     private var cachedTrackIDsBySource: [String: UUID]?
+    /// The Recently Played folder order, and the log state it was built from.
+    private var cachedLastPlayed: [UUID: Date]?
+    private var cachedLastPlayedStamp: String?
 
     private func invalidateTrackDerived() {
         cachedActiveTracks = nil
@@ -91,6 +94,8 @@ final class LibraryStore: ObservableObject {
         cachedFolderArtists = nil
         cachedSearchKeys = nil
         cachedTrackIDsBySource = nil
+        // A track moving folders changes which folder a logged play belongs to.
+        cachedLastPlayed = nil
     }
 
     private func invalidateFolderDerived() {
@@ -245,7 +250,38 @@ final class LibraryStore: ObservableObject {
             return list
         case .name:
             return list.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        case .recentlyPlayed:
+            let played = lastPlayedByFolder
+            return list.sorted { a, b in
+                switch (played[a.id], played[b.id]) {
+                case let (dateA?, dateB?): return dateA > dateB
+                // Anything that has been played outranks everything that
+                // hasn't; the unplayed tail keeps to name order so it doesn't
+                // look shuffled.
+                case (_?, nil): return true
+                case (nil, _?): return false
+                default: return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+                }
+            }
         }
+    }
+
+    /// Folder id → when something was last played out of it, walked once over
+    /// the listening log rather than once per folder. Memoized against the
+    /// log's own length and newest entry, since that's all that can change it.
+    private var lastPlayedByFolder: [UUID: Date] {
+        let stamp = "\(recentListens.count)|\(recentListens.first?.id.uuidString ?? "")"
+        if let cached = cachedLastPlayed, cachedLastPlayedStamp == stamp { return cached }
+        var result: [UUID: Date] = [:]
+        // Newest first, so the first sighting of a folder is its latest play.
+        for entry in recentListens {
+            guard let folderID = track(withID: entry.trackID)?.folderID,
+                  result[folderID] == nil else { continue }
+            result[folderID] = entry.date
+        }
+        cachedLastPlayed = result
+        cachedLastPlayedStamp = stamp
+        return result
     }
 
     var activeTracks: [Track] {

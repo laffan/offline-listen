@@ -624,55 +624,81 @@ struct LibraryView: View {
     /// Drag-to-reorder isn't offered here: User Order is one sequence over all
     /// the folders, and three separate groups can't express a move between
     /// them. Switch back to the list to set the order.
+    ///
+    /// It is a **`ScrollView`, not a `List`**, and that's what makes the grid
+    /// behave. A list's unit of interaction is the *row*: it elects one primary
+    /// action per row and owns the long press. A dozen covers inside one row
+    /// therefore behaved as one thing — a tap could fire the elected cell as
+    /// well as the one you hit (Back landed on album one), and a long press
+    /// highlighted the whole row and offered no menu at all. Outside a list,
+    /// each cover is its own control again, with its own tap and its own
+    /// touch-and-hold menu. The cost is swipe actions, which are a list's to
+    /// give — so the rows here carry Rename, Archive and Delete **in the menu**
+    /// instead, and nothing is out of reach.
     private func folderCoverList(showsSynced: Bool, showsArchive: Bool) -> some View {
         let folders = library.displayedFolders
         let albums = folders.filter { library.isAlbumFolder($0) }
         let mixtapes = folders.filter { $0.isMixtape }
         let plain = folders.filter { !$0.isMixtape && !library.isAlbumFolder($0) }
-        return List {
-            if !albums.isEmpty {
-                Section("Albums") {
-                    albumGrid(albums)
-                        .listRowInsets(EdgeInsets(top: 10, leading: 14, bottom: 14, trailing: 14))
-                        .listRowSeparator(.hidden)
+        return ScrollView {
+            LazyVStack(alignment: .leading, spacing: 20) {
+                if !albums.isEmpty {
+                    coverSection("Albums") { albumGrid(albums) }
                 }
-            }
-            if !mixtapes.isEmpty {
-                Section("Mixtapes") {
-                    ForEach(mixtapes) { folder in
-                        folderRow(folder)
+                if !mixtapes.isEmpty {
+                    coverSection("Mixtapes") {
+                        VStack(spacing: 4) {
+                            ForEach(mixtapes) { folder in
+                                coverFolderRow(folder)
+                            }
+                        }
+                    }
+                }
+                if !plain.isEmpty {
+                    coverSection("Folders") {
+                        VStack(spacing: 0) {
+                            ForEach(plain) { folder in
+                                coverFolderRow(folder)
+                            }
+                        }
+                    }
+                }
+                if showsSynced || showsArchive {
+                    VStack(spacing: 0) {
+                        if showsSynced {
+                            coverPinnedRow(icon: "arrow.triangle.2.circlepath",
+                                           title: "Synced",
+                                           count: library.syncedRootFolders.count,
+                                           route: .synced)
+                        }
+                        if showsArchive {
+                            coverPinnedRow(icon: "archivebox.fill",
+                                           title: "Archive",
+                                           count: library.archivedTracks.count + library.archivedFolders.count,
+                                           route: .archived)
+                        }
                     }
                 }
             }
-            if !plain.isEmpty {
-                Section("Folders") {
-                    ForEach(plain) { folder in
-                        folderRow(folder)
-                    }
-                }
-            }
-            if showsSynced {
-                syncedRow
-            }
-            if showsArchive {
-                archiveRow
-            }
+            .padding(.horizontal, 14)
+            .padding(.top, 6)
+            .padding(.bottom, 12)
         }
-        .listStyle(.plain)
         .miniPlayerClearance()
     }
 
-    /// The albums, as covers. One list row holding the whole grid, so the
-    /// groups below it stay ordinary rows with their swipes and menus intact.
-    ///
-    /// The covers open on a **tap gesture** — not a `NavigationLink`, and not
-    /// a `Button` either. A list row wires its cell's tap to the row's primary
-    /// action, and the whole grid is *one row*: with a dozen tappable things
-    /// in it, the cell elects the first and fires it alongside the one that
-    /// was actually hit. Two folders went on the stack, so Back landed on
-    /// album one instead of the list. A gesture gives the cell nothing to
-    /// elect — the same shape every track row in this app already uses inside
-    /// a `List`.
+    /// One titled group of the cover view.
+    private func coverSection<Content: View>(_ title: String,
+                                             @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+            content()
+        }
+    }
+
+    /// The albums, as covers — each its own button, with its own menu.
     private func albumGrid(_ albums: [Folder]) -> some View {
         LazyVGrid(
             columns: [GridItem(.adaptive(minimum: 104, maximum: 180), spacing: 12, alignment: .top)],
@@ -680,14 +706,87 @@ struct LibraryView: View {
             spacing: 14
         ) {
             ForEach(albums) { folder in
-                AlbumCoverCell(folder: folder, playingHere: isPlaying(in: folder))
-                    .contentShape(Rectangle())
-                    .onTapGesture { open(.folder(folder.id)) }
-                    .contextMenu {
-                        FolderContextMenu(folder: folder)
-                    }
+                Button {
+                    open(.folder(folder.id))
+                } label: {
+                    AlbumCoverCell(folder: folder, playingHere: isPlaying(in: folder))
+                }
+                .buttonStyle(.plain)
+                .contextMenu {
+                    FolderContextMenu(folder: folder, rowActions: rowActions(for: folder))
+                }
             }
         }
+    }
+
+    /// A mixtape or plain folder in the cover view: the same label the list
+    /// draws, as a button, with the swipe actions folded into its menu.
+    private func coverFolderRow(_ folder: Folder) -> some View {
+        VStack(spacing: 0) {
+            Button {
+                open(.folder(folder.id))
+            } label: {
+                HStack(spacing: 8) {
+                    FolderRowLabel(folder: folder,
+                                   count: library.trackCount(in: folder.id),
+                                   playingHere: isPlaying(in: folder))
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .contextMenu {
+                FolderContextMenu(folder: folder, rowActions: rowActions(for: folder))
+            }
+            if !folder.isMixtape {
+                Divider()
+            }
+        }
+    }
+
+    /// The Synced / Archive rows at the foot of the cover view — the same two
+    /// the list pins beneath its folders.
+    private func coverPinnedRow(icon: String, title: String,
+                                count: Int, route: LibraryRoute) -> some View {
+        VStack(spacing: 0) {
+            Divider()
+            Button {
+                open(route)
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: icon)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 24)
+                    Text(title)
+                        .font(.body)
+                    Spacer()
+                    Text("\(count)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    /// What a swipe would have offered, for the views that have no swipe.
+    private func rowActions(for folder: Folder) -> FolderRowActions {
+        FolderRowActions(
+            rename: {
+                renameText = folder.name
+                renamingFolder = folder
+            },
+            archive: { library.setFolderArchived(folder, true) },
+            delete: { deletingFolder = folder }
+        )
     }
 
     /// Pushes one destination, and refuses to push what's already on top.
@@ -757,19 +856,24 @@ struct LibraryView: View {
         .padding(.vertical, 4)
     }
 
-    /// List or covers, as two glyphs in the top-left corner: the Folders tab's
-    /// own view switch, opposite the sort and New Folder buttons it shares the
-    /// bar with.
-    private var folderViewPicker: some View {
-        Picker("Folder View", selection: $library.folderViewMode) {
-            ForEach(FolderViewMode.allCases) { mode in
-                Image(systemName: mode.icon)
-                    .accessibilityLabel(mode.displayName)
-                    .tag(mode)
+    /// List or covers: the Folders tab's own view switch, in the top-left
+    /// corner opposite the sort and New Folder buttons.
+    ///
+    /// A **menu**, like the sort control it faces — not the segmented picker it
+    /// started as. A picker brings its own background, and a toolbar wraps its
+    /// item in a button of its own, so the two chromes stacked and the corner
+    /// showed a control inside a control. One glyph, one border, and the mode
+    /// you're in is the one wearing a checkmark.
+    private var folderViewMenu: some View {
+        Menu {
+            Picker("Folder View", selection: $library.folderViewMode) {
+                ForEach(FolderViewMode.allCases) { mode in
+                    Label(mode.displayName, systemImage: mode.icon).tag(mode)
+                }
             }
+        } label: {
+            Image(systemName: library.folderViewMode.icon)
         }
-        .pickerStyle(.segmented)
-        .frame(width: 96)
         .accessibilityLabel("Folder view — \(library.folderViewMode.displayName)")
     }
 
@@ -1012,7 +1116,7 @@ struct LibraryView: View {
         // actions. Nothing to switch between on an empty library.
         if tab == .folders && !isEmptyLibrary && !isSearching && !editMode.isEditing {
             ToolbarItem(placement: .navigationBarLeading) {
-                folderViewPicker
+                folderViewMenu
             }
         }
 
@@ -1302,6 +1406,11 @@ struct TrackRow: View {
     /// Replaces the trailing duration with something list-specific — the
     /// Recent folder shows when the track was played there instead.
     var trailingDetail: String? = nil
+    /// Draws the track's **album art** in the glyph's place when it has any.
+    /// Opt-in rather than everywhere: a list you're scanning for one title
+    /// reads fastest as text, while **Recent** is a list of things you've
+    /// *heard*, where the sleeve is the fastest way to recognise one.
+    var showsArtwork: Bool = false
 
     private var progress: Double {
         track.duration > 0 ? min(track.lastPosition / track.duration, 1) : 0
@@ -1327,9 +1436,7 @@ struct TrackRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: iconName)
-                .foregroundStyle(iconColor)
-                .frame(width: 24)
+            leading
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 5) {
@@ -1380,6 +1487,35 @@ struct TrackRow: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    /// The row's leading mark: the cover, where one is asked for and there is
+    /// one, otherwise the media glyph. The artwork takes the same slot at a
+    /// size that reads as a sleeve, and the playing/unplayed colours the glyph
+    /// carries move to a small dot on its corner, so nothing is lost by
+    /// showing a picture instead.
+    @ViewBuilder
+    private var leading: some View {
+        if showsArtwork, let cover = TrackArtwork.image(for: track) {
+            Image(platformImage: cover)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 38, height: 38)
+                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .overlay(alignment: .bottomTrailing) {
+                    if isCurrent || !track.hasBeenPlayed {
+                        Circle()
+                            .fill(iconColor)
+                            .frame(width: 9, height: 9)
+                            .overlay(Circle().strokeBorder(.background, lineWidth: 1.5))
+                            .offset(x: 3, y: 3)
+                    }
+                }
+        } else {
+            Image(systemName: iconName)
+                .foregroundStyle(iconColor)
+                .frame(width: showsArtwork ? 38 : 24)
+        }
     }
 
     /// The chapter-list affordance: a chevron set off by a left border so it
@@ -1493,6 +1629,16 @@ struct ChapterContext: Identifiable {
     let queue: [Track]
 }
 
+/// The three things a folder row offers by **swiping** in a list. A grid has
+/// no swipe and neither does the cover view's stack of rows, so those hand
+/// them to the touch-and-hold menu instead; the lists pass nothing and keep
+/// the menu they always had.
+struct FolderRowActions {
+    var rename: () -> Void
+    var archive: () -> Void
+    var delete: () -> Void
+}
+
 /// The shared touch-and-hold menu for a folder row: Send to Watch, Sync to
 /// Local (when a sync folder is configured), and the conversions — a folder is
 /// either plain, a **mixtape** or an **album**, so it offers the two it isn't
@@ -1502,6 +1648,8 @@ struct FolderContextMenu: View {
     @EnvironmentObject private var localSync: LocalSyncStore
 
     let folder: Folder
+    /// Supplied by a view with nowhere to swipe (see `FolderRowActions`).
+    var rowActions: FolderRowActions? = nil
 
     var body: some View {
         Button {
@@ -1541,6 +1689,24 @@ struct FolderContextMenu: View {
                 library.convertToAlbum(folder)
             } label: {
                 Label("Convert to Album", systemImage: "square.stack")
+            }
+        }
+        if let rowActions {
+            Divider()
+            Button {
+                rowActions.rename()
+            } label: {
+                Label("Rename", systemImage: "pencil")
+            }
+            Button {
+                rowActions.archive()
+            } label: {
+                Label("Archive", systemImage: "archivebox")
+            }
+            Button(role: .destructive) {
+                rowActions.delete()
+            } label: {
+                Label("Delete", systemImage: "trash")
             }
         }
     }

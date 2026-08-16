@@ -1,4 +1,7 @@
 import Foundation
+#if os(iOS)
+import BackgroundTasks
+#endif
 
 /// One item in the download queue. An `ObservableObject` so each row updates
 /// independently as its state/progress changes.
@@ -144,6 +147,20 @@ struct PendingPlaylist: Identifiable {
     let entries: [PlaylistEntry]
     let mode: DownloadMode
     let decide: ([PlaylistEntry]?) -> Void
+}
+
+/// "Only the first caller wins" — for the pairs where two things race to
+/// finish one job exactly once (a background window draining or expiring).
+final class OneShotFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed = false
+
+    func claim() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard !claimed else { return false }
+        claimed = true
+        return true
+    }
 }
 
 /// Thread-safe one-shot bridge between the playlist popup and the suspended
@@ -376,10 +393,17 @@ private struct PreviewWork {
     let continuation: CheckedContinuation<ExtractedMedia, Error>
 }
 
-/// A persisted snapshot of a completed (finished/failed/cancelled) download, so
-/// the Download tab's history survives relaunches. In-flight jobs aren't saved
-/// — they didn't finish — so a quit clears only the running queue, never the
-/// record of what was downloaded.
+/// A persisted snapshot of one download — a completed one, so the Download
+/// tab's history survives relaunches, **or an unfinished one**, so a queue
+/// survives them too.
+///
+/// Unfinished jobs used to be dropped on quit, which made a long queue a thing
+/// you had to babysit: anything the app didn't get through before it was
+/// backgrounded, killed or crashed was simply gone, and a twenty-track album
+/// had to be started again from the beginning. They're saved as `pending` now
+/// and re-queued at launch. A job that was mid-*download* is saved the same
+/// way and starts over: the partial file lives in a scratch directory that
+/// doesn't survive, and half a track is worth nothing.
 private struct DownloadRecord: Codable {
     var url: String
     var modeRaw: String
@@ -389,9 +413,26 @@ private struct DownloadRecord: Codable {
     var title: String
     var artist: String?
     var trackID: UUID?
-    /// "finished" | "cancelled" | "failed".
+    /// "finished" | "cancelled" | "failed" | "pending".
     var stateRaw: String
     var failureMessage: String?
+    /// The catalogue's own title and artist, when the job carried them (an
+    /// album track). Without these a resumed job would land wearing the
+    /// YouTube video's name while its siblings wear the record's.
+    var knownTitle: String?
+    var knownArtist: String?
+}
+
+/// What `downloads.json` actually holds: the rows above plus the tracklist
+/// orders the unfinished ones need. An album's jobs each know their place in
+/// the record (`albumOrders`), and that map is what puts a track back in the
+/// right slot however the queue happens to finish — so it has to outlive the
+/// session just as the jobs do.
+private struct DownloadArchive: Codable {
+    var records: [DownloadRecord]
+    /// Album folder id (as a string, since JSON keys are strings) → source URL
+    /// → position in the tracklist.
+    var albumOrders: [String: [String: Int]]
 }
 
 /// Owns the download queue and runs up to `maxConcurrent` jobs at once:
@@ -485,28 +526,67 @@ final class DownloadManager: ObservableObject {
     /// bounded so the file (and launch decode) can't grow without limit.
     private static let historyLimit = 500
 
-    /// Rebuilds the finished/failed/cancelled jobs from `downloads.json` as
-    /// display-only history rows (they're terminal, so `processNext` never
-    /// touches them). In-flight jobs were never saved, so nothing resumes.
+    /// Rebuilds the queue from `downloads.json`: the finished/failed/cancelled
+    /// rows as display-only history (terminal, so `processNext` never touches
+    /// them) and any **pending** rows as queued jobs, ready for
+    /// `resumeUnfinished()` to start. Reads the older bare-array format too, so
+    /// an install that pre-dates the queue's persistence still finds its
+    /// history.
     private func loadHistory() {
-        guard let data = try? Data(contentsOf: AppPaths.downloadsHistory),
-              let records = try? JSONDecoder().decode([DownloadRecord].self, from: data) else { return }
+        guard let data = try? Data(contentsOf: AppPaths.downloadsHistory) else { return }
+        let decoder = JSONDecoder()
+        let records: [DownloadRecord]
+        if let archive = try? decoder.decode(DownloadArchive.self, from: data) {
+            records = archive.records
+            albumOrders = archive.albumOrders.reduce(into: [:]) { result, entry in
+                guard let id = UUID(uuidString: entry.key) else { return }
+                result[id] = entry.value
+            }
+        } else if let legacy = try? decoder.decode([DownloadRecord].self, from: data) {
+            records = legacy
+        } else {
+            return
+        }
         jobs = records.map { record in
             let job = DownloadJob(url: record.url,
                                   mode: DownloadMode(rawValue: record.modeRaw) ?? .audio,
                                   isPlaylist: record.isPlaylist,
                                   folderID: record.folderID,
-                                  artworkURL: record.artworkURL)
+                                  artworkURL: record.artworkURL,
+                                  knownTitle: record.knownTitle,
+                                  knownArtist: record.knownArtist,
+                                  // Never `.ask` on a resumed job: nobody is
+                                  // watching a queue that restarted itself.
+                                  quality: Self.quality(asking: false,
+                                                        mode: DownloadMode(rawValue: record.modeRaw) ?? .audio))
             job.title = record.title
             job.artist = record.artist
             job.trackID = record.trackID
             switch record.stateRaw {
             case "failed": job.state = .failed(record.failureMessage ?? "Failed")
             case "cancelled": job.state = .cancelled
+            case "pending": job.state = .queued
             default: job.state = .finished
             }
             return job
         }
+    }
+
+    /// Starts whatever the queue still had when the app last quit — called once
+    /// the app is up rather than from `init`, so a launch isn't spent resolving
+    /// videos before the first screen has drawn.
+    func resumeUnfinished() {
+        let pending = jobs.filter { $0.state == .queued }.count
+        guard pending > 0 else { return }
+        appLog("Resuming \(pending) unfinished download(s) from the last session.",
+               level: .warning, category: "Queue")
+        processNext()
+    }
+
+    /// True while anything is queued or running — what decides whether the app
+    /// asks iOS for background time on its way out.
+    var hasUnfinishedWork: Bool {
+        jobs.contains { $0.state == .queued || $0.state.isActive }
     }
 
     /// Writes the finished/failed/cancelled jobs to disk (newest first, capped).
@@ -521,7 +601,11 @@ final class DownloadManager: ObservableObject {
             case .finished: stateRaw = "finished"
             case .cancelled: stateRaw = "cancelled"
             case .failed(let message): stateRaw = "failed"; failure = message
-            default: return nil   // in-flight — not persisted
+            // Queued and in-flight alike are saved as work still to do. A
+            // download interrupted halfway starts again — its partial file was
+            // in a scratch directory — but it isn't *lost*, which is the whole
+            // point of writing it down.
+            default: stateRaw = "pending"
             }
             let track = job.trackID.flatMap { id in library.tracks.first { $0.id == id } }
             let artist: String?
@@ -539,14 +623,28 @@ final class DownloadManager: ObservableObject {
                                   artist: artist,
                                   trackID: job.trackID,
                                   stateRaw: stateRaw,
-                                  failureMessage: failure)
+                                  failureMessage: failure,
+                                  knownTitle: job.knownTitle,
+                                  knownArtist: job.knownArtist)
         }
-        let trimmed = Array(records.prefix(Self.historyLimit))
+        // The cap is on *history*: unfinished work is never dropped to make
+        // room for a record of finished work.
+        let pending = records.filter { $0.stateRaw == "pending" }
+        let history = records.filter { $0.stateRaw != "pending" }.prefix(Self.historyLimit)
+        // Only the orders of albums that still have jobs waiting are worth
+        // keeping — the rest are a record of downloads that are already filed.
+        let liveFolders = Set(pending.compactMap(\.folderID))
+        let orders = albumOrders
+            .filter { liveFolders.contains($0.key) }
+            .reduce(into: [String: [String: Int]]()) { result, entry in
+                result[entry.key.uuidString] = entry.value
+            }
+        let archive = DownloadArchive(records: pending + Array(history), albumOrders: orders)
         do {
-            let data = try JSONEncoder().encode(trimmed)
+            let data = try JSONEncoder().encode(archive)
             try data.write(to: AppPaths.downloadsHistory, options: .atomic)
         } catch {
-            appLog("Couldn't save download history: \(error.localizedDescription)",
+            appLog("Couldn't save the download queue: \(error.localizedDescription)",
                    level: .warning, category: "Queue")
         }
     }
@@ -653,9 +751,14 @@ final class DownloadManager: ObservableObject {
         jobs.insert(job, at: 0)
         if case .failed = job.state {
             appLog("Rejected invalid URL: \(job.url)", level: .error, category: "Queue")
+            persistHistory()
             return
         }
         appLog("Queued \(job.mode.displayName) download: \(job.url)", category: "Queue")
+        // Written down as soon as it's queued, not when it finishes: a queue
+        // that only exists in memory is a queue that a crash or a kill takes
+        // with it.
+        persistHistory()
         processNext()
     }
 
@@ -699,6 +802,7 @@ final class DownloadManager: ObservableObject {
             appLog("Rejected \(rejected) invalid URL(s) in the batch.", level: .error, category: "Queue")
         }
         appLog("Queued \(built.count - rejected) \(mode.displayName) download(s).", category: "Queue")
+        persistHistory()
         processNext()
     }
 
@@ -830,16 +934,116 @@ final class DownloadManager: ObservableObject {
     /// refills. (The dictionary insert below runs before the task body can —
     /// both are on the main actor — so the scheduler never double-books.)
     private func startSlot(id: UUID, work: @escaping () async -> Void) {
+        holdBackgroundTime()
         let task = Task {
             await work()
             self.activeTasks[id] = nil
             self.activeJobIDs.remove(id)
             self.activeCount = self.activeTasks.count
             self.processNext()
+            self.releaseBackgroundTimeIfIdle()
         }
         activeTasks[id] = task
         activeCount = activeTasks.count
     }
+
+    // MARK: - Keeping going when the screen goes off
+
+    /// The assertion that keeps the queue running after the app leaves the
+    /// foreground. Held for as long as anything is downloading, rather than
+    /// for one gap in the audio the way `BackgroundActivity` is used in the
+    /// player.
+    private var queueActivity: BackgroundActivity?
+
+    /// Asks iOS to keep the app running while the queue works. A screen lock
+    /// used to stop a long queue where it stood — the app was suspended
+    /// between one track and the next, and nothing moved again until it was
+    /// reopened. This is what carries it through.
+    ///
+    /// It is not unlimited, and no API makes it so: iOS grants a background
+    /// app a bounded window (tens of seconds, more while audio is actually
+    /// playing) and then suspends it regardless. The other two halves of the
+    /// answer are the **background processing task** below, which asks the
+    /// system for a fresh window later, and the **persisted queue**, which
+    /// means being suspended costs progress rather than work.
+    private func holdBackgroundTime() {
+        guard queueActivity == nil else { return }
+        queueActivity = BackgroundActivity("Download queue")
+    }
+
+    /// Hands the assertion back once nothing is left — holding one past the
+    /// work is how an app gets killed for it.
+    private func releaseBackgroundTimeIfIdle() {
+        guard activeTasks.isEmpty, previewQueue.isEmpty else { return }
+        queueActivity?.end()
+        queueActivity = nil
+    }
+
+    #if os(iOS)
+    /// The background processing task the queue asks for on its way out. Must
+    /// match `BGTaskSchedulerPermittedIdentifiers` in Info.plist — registering
+    /// an identifier that isn't listed there is a launch-time crash.
+    static let backgroundTaskIdentifier = "com.offlinelisten.app.download-queue"
+
+    /// Registers the handler. **Must run before the app finishes launching**,
+    /// which is why it's called from the app's `init` rather than from a view.
+    func registerBackgroundProcessing() {
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: Self.backgroundTaskIdentifier,
+                                        using: nil) { task in
+            Task { @MainActor in self.runBackgroundProcessing(task) }
+        }
+    }
+
+    /// Asks for a window in which to carry on. Called as the app goes to the
+    /// background with work outstanding; the system decides when (and whether)
+    /// to grant it — typically on power and Wi-Fi, which is exactly when
+    /// finishing a queue of albums is welcome.
+    func scheduleBackgroundProcessing() {
+        guard hasUnfinishedWork else { return }
+        let request = BGProcessingTaskRequest(identifier: Self.backgroundTaskIdentifier)
+        request.requiresNetworkConnectivity = true
+        // Downloading doesn't need power, and demanding it would mean a queue
+        // that only ever runs overnight on a charger.
+        request.requiresExternalPower = false
+        do {
+            try BGTaskScheduler.shared.submit(request)
+            appLog("Asked iOS for background time to finish the queue.", level: .debug, category: "Queue")
+        } catch {
+            // Simulator refuses these outright, and the system caps how many a
+            // process may have pending — neither is worth more than a line.
+            appLog("Couldn't schedule background downloading: \(error.localizedDescription)",
+                   level: .debug, category: "Queue")
+        }
+    }
+
+    /// One granted window: restart the queue, keep the task alive while it
+    /// drains, and hand it back the moment iOS asks for it — having already
+    /// queued a request for the next window, since a long queue rarely
+    /// finishes inside one.
+    private func runBackgroundProcessing(_ task: BGTask) {
+        appLog("Background window opened — resuming the download queue.", category: "Queue")
+        scheduleBackgroundProcessing()
+
+        // Whichever finishes first — the queue draining or iOS calling time —
+        // completes the task; the other must not touch it again.
+        let finished = OneShotFlag()
+        task.expirationHandler = {
+            guard finished.claim() else { return }
+            appLog("Background window closed with work outstanding — the queue picks up where it left off.",
+                   level: .warning, category: "Queue")
+            task.setTaskCompleted(success: false)
+        }
+        processNext()
+        Task { @MainActor in
+            while hasUnfinishedWork {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+            }
+            guard finished.claim() else { return }
+            appLog("Queue finished inside its background window.", level: .success, category: "Queue")
+            task.setTaskCompleted(success: true)
+        }
+    }
+    #endif
 
     // MARK: - Browse previews
 

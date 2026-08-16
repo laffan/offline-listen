@@ -267,17 +267,23 @@ enum LibraryFilter: String, CaseIterable, Identifiable {
     }
 }
 
-/// How the folder list is ordered: the user's hand-set drag order, or
-/// alphabetically by name.
+/// How the folder list is ordered: the user's hand-set drag order,
+/// alphabetically by name, or by what's been listened to most recently.
 enum FolderSort: String, CaseIterable, Identifiable {
     case userOrder
     case name
+    /// Newest listen first, taken from the same log the **Recent** tab draws:
+    /// a folder is as recent as the last track played out of it. Folders
+    /// nothing has been played from keep to the back, in name order, so the
+    /// list still has a shape before anything has been listened to.
+    case recentlyPlayed
 
     var id: String { rawValue }
     var displayName: String {
         switch self {
         case .userOrder: return "User Order"
         case .name: return "Name"
+        case .recentlyPlayed: return "Recently Played"
         }
     }
 }

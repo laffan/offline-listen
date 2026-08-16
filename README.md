@@ -75,7 +75,12 @@ vertical space goes to the content instead.
    regardless of type — tap any track and the whole folder plays in sequence.
 
    **Recent.** A tab of its own — the mirror image of the Inbox — listing what
-   you've **played**, most recent first, with each row showing when. A track
+   you've **played**, most recent first, with each row showing when and, where
+   the track has one, its **album cover** in place of the media glyph (the
+   playing/unplayed colour moves to a dot on the sleeve's corner, so nothing is
+   lost by showing a picture). It's the one list that earns the artwork: a list
+   you scan for a title reads fastest as text, but a list of things you've
+   *heard* is recognised fastest by its sleeves. A track
    joins it the moment playback *starts*; it doesn't have to finish. It's a
    **log, not a set**: the same track appears once per listen, so a track you
    keep coming back to shows up repeatedly — only *consecutive* repeats are
@@ -159,14 +164,17 @@ vertical space goes to the content instead.
    the rows keep the same swipe actions and touch-and-hold menu — so it can be
    turned on and off at any point with no effect on the sync setup.
 
-   The folder list itself sorts two ways, chosen from the **sort** button in the
-   Folders tab's toolbar: **Name** (alphabetical) or **User Order**. In User
-   Order you set the sequence by hand — **touch and hold a folder and drag** it
-   into place; the order persists to `folders.json`. Folders persist to
-   `Documents/folders.json`.
+   The folder list itself sorts three ways, chosen from the **sort** button in
+   the Folders tab's toolbar: **Name** (alphabetical), **User Order**, or
+   **Recently Played** — newest listen first, read from the same log the
+   Recent tab draws, where a folder is as recent as the last track played out
+   of it (folders nothing has been played from keep to the back, in name
+   order). In User Order you set the sequence by hand — **touch and hold a
+   folder and drag** it into place; the order persists to `folders.json`.
+   Folders persist to `Documents/folders.json`.
 
-   **Two ways to look at them.** A pair of glyphs in the Folders tab's
-   **top-left corner** — opposite the sort and folder buttons — switches
+   **Two ways to look at them.** A **view button** in the Folders tab's
+   top-left corner — a menu, like the sort control it faces — switches
    between the **list** (everything in one column, as above) and **covers**:
    three groups stacked down the screen, **albums** as a grid of their
    sleeves, then the **mixtapes** in their banner rows, then the plain
@@ -174,14 +182,18 @@ vertical space goes to the content instead.
    the sort applies within each group — with the Synced and Archive rows
    pinned beneath them as ever. The choice persists. Drag-to-reorder stays in
    the list: User Order is one sequence over *all* the folders, which three
-   separate groups can't express, so setting it means switching back. (The
-   grid's covers open on a **tap gesture** rather than a navigation link or a
-   button. A list row wires its cell's tap to the row's primary action, and
-   the whole grid is one row: with a dozen tappable things in it the cell
-   elects the first and fires it alongside the one that was hit, which put two
-   folders on the stack — so Back landed on album one instead of on the list.
-   A gesture gives the cell nothing to elect, and the push itself refuses to
-   repeat what's already on top.)
+   separate groups can't express, so setting it means switching back.
+
+   The cover view is a **scroll view, not a list**, and that's what makes a
+   grid behave. A list's unit of interaction is the *row*: it elects one
+   primary action per row and owns the long press. A dozen covers inside one
+   row therefore behaved as a single thing — a tap could fire the elected cell
+   as well as the one you hit (Back landed on album one), and a long press
+   highlighted the whole row and offered no menu at all. Outside a list each
+   cover is its own control again, with its own tap and its own touch-and-hold
+   menu. The cost is swipe actions, which are a list's to give — so the covers
+   and rows here carry **Rename**, **Archive** and **Delete** in the menu
+   instead, and nothing is out of reach.
 
    **Folders nest.** A folder's own screen has the same folder-plus button to
    create a subfolder, and any subfolders list in a **Folders** section above
@@ -275,6 +287,34 @@ vertical space goes to the content instead.
    [the pipeline notes](#browse-keeping-tabs-on-audio-sources) — the network
    work runs in parallel while everything touching the embedded Python
    interpreter stays serialized).
+
+   **The queue outlives the session, and keeps going with the screen off.**
+   Three things, which are only useful together:
+
+   - **It's written down as soon as it's queued**, not when it finishes.
+     `downloads.json` holds the unfinished jobs beside the history — with the
+     album orders they need to file themselves — so a queue survives being
+     backgrounded, killed, or crashing. At the next launch the pending rows
+     come back as queued work and start again once the first screen is up. A
+     job interrupted mid-*download* restarts rather than resuming: its partial
+     file was in a scratch directory that doesn't survive, and half a track is
+     worth nothing.
+   - **A background assertion is held while the queue works**, so locking the
+     phone doesn't stop it where it stands (which is what used to happen: the
+     app was suspended between one track and the next and nothing moved again
+     until it was reopened).
+   - **A background processing task** is scheduled on the way out when work is
+     outstanding, so iOS can grant a fresh window later — typically on Wi-Fi,
+     which is exactly when finishing a queue of albums is welcome. Each window
+     restarts the queue, asks for the next one, and hands itself back the
+     moment the system calls time.
+
+   None of this makes the window unlimited — no API does. iOS gives a
+   backgrounded app a bounded stretch and then suspends it whatever it's doing
+   (longer while audio is actually playing, which is why a queue running under
+   music tends to get further). The persistence is what makes that cost
+   *progress* rather than work: reopen the app, or wait for the system to grant
+   a window, and it carries on from where it stopped.
 
    **A batch is one change to the queue.** Everything that queues several
    links from one press — **Download Album**, a playlist or Spotify
