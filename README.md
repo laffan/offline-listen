@@ -266,12 +266,16 @@ vertical space goes to the content instead.
    pad themselves by it, since the maps run edge to edge under the tab bar.
 4. **Download** — paste one or more URLs (whitespace/line-break separated; any
    http(s) link is queued and the rest of a pasted blob is skipped), choose
-   **Audio** or **Video** (default Audio) from the **toggle inside the input
-   field** — two small icons after the paste button, the Library's own
-   music-note and film glyphs, exactly like the search-target toggle in
-   Browse's Find field (it used to be a segmented picker on a line of its own,
-   which spent a row of the screen saying what two icons say) — and watch the
-   queue. A video download **asks which resolution** once it knows what the
+   **Audio** or **Video** (default Audio) from the **toggle beside the input
+   field** — the Library's own music-note and film glyphs — and watch the
+   queue. **Paste** leads the field rather than trailing it: it's what you
+   reach for before typing anything, and it becomes the clear button once
+   there's something to clear. The mode toggle has gone through three shapes:
+   a segmented picker on its own line (a row of the screen to say what two
+   icons say), then two small icons squeezed inside the field's trailing edge,
+   and now a control of its own next to it — compact, but with glyphs big
+   enough to read at a glance, which is what the one control deciding *what a
+   download is* deserves. A video download **asks which resolution** once it knows what the
    source is offering (see
    [Choosing a resolution](#choosing-a-resolution)). Links from **any site
    yt-dlp supports** work — YouTube, Vimeo, SoundCloud and ~hundreds more — not

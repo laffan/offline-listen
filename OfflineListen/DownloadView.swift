@@ -93,39 +93,44 @@ struct DownloadView: View {
 
     private var inputCard: some View {
         VStack(spacing: 12) {
-            HStack {
-                TextField("Paste a URL or search YouTube", text: $urlText)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .keyboardType(.webSearch)
-                    .focused($urlFieldFocused)
-                    .submitLabel(isSearch ? .search : .go)
-                    .onSubmit(submit)
-
-                if urlText.isEmpty {
-                    Button {
-                        if let pasted = Pasteboard.string {
-                            urlText = pasted
+            HStack(spacing: 10) {
+                HStack(spacing: 10) {
+                    // Paste leads the field rather than trailing it: it's what
+                    // you reach for *before* typing anything, and the left edge
+                    // is where a hand goes first.
+                    if urlText.isEmpty {
+                        Button {
+                            if let pasted = Pasteboard.string {
+                                urlText = pasted
+                            }
+                        } label: {
+                            Image(systemName: "doc.on.clipboard")
+                                .foregroundStyle(.secondary)
                         }
-                    } label: {
-                        Image(systemName: "doc.on.clipboard")
-                            .foregroundStyle(.secondary)
+                        .accessibilityLabel("Paste")
+                    } else {
+                        Button {
+                            urlText = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .accessibilityLabel("Clear")
                     }
-                    .accessibilityLabel("Paste")
-                } else {
-                    Button {
-                        urlText = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                    }
-                    .accessibilityLabel("Clear")
+
+                    TextField("Paste a URL or search YouTube", text: $urlText)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.webSearch)
+                        .focused($urlFieldFocused)
+                        .submitLabel(isSearch ? .search : .go)
+                        .onSubmit(submit)
                 }
+                .padding(12)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
 
                 modeToggle
             }
-            .padding(12)
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
 
             Button(action: submit) {
                 if searching {
@@ -145,11 +150,15 @@ struct DownloadView: View {
         .padding(.horizontal)
     }
 
-    /// The Audio/Video toggle, riding inside the field's trailing edge after
-    /// the paste button — the same shape (and the same behaviour) the Browse
-    /// field's search-target toggle has, wearing the Library's own music/film
-    /// glyphs. It used to be a segmented picker in the row below, which spent a
-    /// line of the screen saying what two small icons say here.
+    /// The Audio/Video toggle — a control of its **own, beside the field**
+    /// rather than riding inside it, wearing the Library's music/film glyphs.
+    ///
+    /// It began as a segmented picker on its own line, which spent a row of the
+    /// screen saying what two icons say; then it moved inside the field, where
+    /// it fitted but had to shrink to caption-sized glyphs squeezed between the
+    /// text and the field's edge. Out here it keeps the compactness and gets
+    /// icons you can actually see — and read at a glance, which matters for the
+    /// one control that decides what a download *is*.
     private var modeToggle: some View {
         HStack(spacing: 4) {
             ForEach(DownloadMode.allCases) { candidate in
@@ -157,16 +166,18 @@ struct DownloadView: View {
                     mode = candidate
                 } label: {
                     Image(systemName: candidate.icon)
-                        .font(.caption.weight(.semibold))
+                        .font(.body.weight(.semibold))
                         .foregroundStyle(mode == candidate ? Color.white : Color.secondary)
-                        .frame(width: 28, height: 22)
+                        .frame(width: 40, height: 34)
                         .background(mode == candidate ? Color.accentColor : Color.clear,
-                                    in: RoundedRectangle(cornerRadius: 6))
+                                    in: RoundedRectangle(cornerRadius: 8))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Download as \(candidate.displayName)")
             }
         }
+        .padding(4)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
     }
 
     /// URLs download; anything else searches YouTube.
