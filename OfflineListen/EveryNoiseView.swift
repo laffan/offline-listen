@@ -626,12 +626,13 @@ struct ENModeBar: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    if let findMode {
-                        findModeToggle(findMode)
-                    }
                 }
                 .padding(8)
                 .background(Color.appSecondaryBackground, in: RoundedRectangle(cornerRadius: 10))
+
+                if let findMode {
+                    findModeToggle(findMode)
+                }
 
                 if mode == .list, let sort {
                     Menu {
@@ -653,8 +654,13 @@ struct ENModeBar: View {
         .padding(.bottom, 8)
     }
 
-    /// The genre/artist toggle riding inside the field's trailing edge: two
-    /// small icons, the active one filled with the accent color.
+    /// What Find is pointed at — genre, artist, or Spotify — as a control of
+    /// its **own beside the field**, the shape the Download tab's Audio/Video
+    /// toggle settled on. Inside the field these were caption-sized icons
+    /// squeezed between the text and the edge, and there are three of them
+    /// here; out here they're readable, and the field keeps its whole width for
+    /// what's being typed. Same material and corner radius as the field, so
+    /// the row reads as one control with a switch on the end.
     private func findModeToggle(_ binding: Binding<ENFindMode>) -> some View {
         HStack(spacing: 4) {
             ForEach(findModes) { target in
@@ -662,17 +668,19 @@ struct ENModeBar: View {
                     binding.wrappedValue = target
                 } label: {
                     Image(systemName: target.icon)
-                        .font(.caption.weight(.semibold))
+                        .font(.body.weight(.semibold))
                         .foregroundStyle(binding.wrappedValue == target ? Color.white : Color.secondary)
-                        .frame(width: 28, height: 22)
+                        .frame(width: 38, height: 32)
                         .background(
                             binding.wrappedValue == target ? Color.accentColor : Color.clear,
-                            in: RoundedRectangle(cornerRadius: 6))
+                            in: RoundedRectangle(cornerRadius: 8))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(target.placeholder)
             }
         }
+        .padding(4)
+        .background(Color.appSecondaryBackground, in: RoundedRectangle(cornerRadius: 10))
     }
 }
 

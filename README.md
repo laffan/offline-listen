@@ -819,8 +819,12 @@ a **Find** field — at both levels:
   so the "+" resolves the name through Spotify's catalogue and only appears
   with credentials saved.
 - **Find** filters: in list mode it narrows the list; over a map it drops down
-  the matches and tapping one flies the map there. At the root the field has a
-  **target toggle** inside its trailing edge, and the placeholder follows it:
+  the matches and tapping one flies the map there. At the root a **target
+  toggle sits beside the field** — the shape the Download tab's Audio/Video
+  switch settled on, in the field's own material and corner radius so the two
+  read as one control with a switch on the end. (Inside the field, as it used
+  to be, three targets meant three caption-sized icons squeezed between the
+  text and the edge.) The placeholder follows the target:
   - **Find Genre** — the genre index.
   - **Find Artist** — **every artist in the dataset** (~470k unique names),
     most popular matches first, each with its home genre beneath; tapping one
