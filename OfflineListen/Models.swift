@@ -44,6 +44,13 @@ enum AppPaths {
         documents.appendingPathComponent("recents.json")
     }
 
+    /// The tracks kept in the **Pinned** folder at the top of the Recent tab.
+    /// Separate from the log for the same reason the log is separate from the
+    /// library: it records what you decided about a listen, not what's on disk.
+    static var recentPins: URL {
+        documents.appendingPathComponent("recent-pins.json")
+    }
+
     /// The user-chosen sync folders, resolved from their security-scoped
     /// bookmarks by `LocalSyncStore` at launch, keyed by each root's id.
     /// These are *replicas*: the app never plays from them — synced files are

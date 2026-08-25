@@ -56,7 +56,8 @@ vertical space goes to the content instead.
    A **filter** (All / Music /
    Podcasts / Video) sits at the top of the **All** tab. Swipe **left**
    for Delete/Share/Archive (and bulk versions via **Select**); swipe **right**
-   on an audio track to classify it **Song** or **Podcast**. Songs start from the
+   on an audio track to classify it **Song** or **Podcast** (in **Recent** that
+   swipe pins the track to the top instead — see below). Songs start from the
    beginning; podcasts (mic icon) and videos (film icon) resume where you left
    off and show a progress bar. A track you haven't listened to yet shows a
    **green** icon. Video tracks play with picture on the Player screen. Archived
@@ -88,6 +89,20 @@ vertical space goes to the content instead.
    Nothing lives there (the tracks stay wherever they are), so removing a row —
    or **Clear** — only forgets the listen. The log keeps the last 200 plays in
    `Documents/recents.json`.
+
+   **The pinned folder.** A log scrolls, which is exactly wrong for the one
+   track you keep going back to. **Swipe a row right** to **Pin** it and it
+   joins a **Pinned** folder at the top of the tab — a folder row like any
+   other (pin glyph, its count, tap to twirl it open and shut, and it stays put
+   at the head of the list while the log scrolls past under it). Newest pin
+   first; pinning the same track twice lifts it rather than listing it again,
+   since this one *is* a set. Tapping a pinned track plays **through the pinned
+   folder**, the way any curated folder plays. Swipe right again — or use **Pin
+   to Top** / **Unpin** in the touch-and-hold menu — to let it go. Like
+   everything else on this screen it's a reference, not a filing: nothing moves
+   on disk, a pinned track keeps whatever folder it actually lives in, and
+   **Clear** empties the log and leaves the pins alone. They persist to
+   `Documents/recent-pins.json`, and whether the folder is open persists too.
 
    **Chapters.** Tracks that carry YouTube chapter markers show an **arrow**
    after the title, set off by a left border so it reads as a button distinct

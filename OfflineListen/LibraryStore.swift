@@ -15,6 +15,10 @@ final class LibraryStore: ObservableObject {
     /// separately from the library (`recents.json`) — it's a record of
     /// behaviour, not of what's on disk.
     @Published private(set) var recentListens: [RecentListen] = []
+    /// The tracks in the **Pinned** folder at the top of the Recent tab, newest
+    /// pin first (`recent-pins.json`). Unlike the log this is a *set*: a track
+    /// is pinned or it isn't, however many times you've played it.
+    @Published private(set) var pinnedRecentIDs: [UUID] = []
     /// Bumped whenever a mixtape cover image is (re)written, so views that
     /// render covers from disk know to reload even when the style is unchanged.
     @Published private(set) var coverRevision = 0
@@ -320,6 +324,15 @@ final class LibraryStore: ObservableObject {
         return recentListenEntries.compactMap { seen.insert($0.track.id).inserted ? $0.track : nil }
     }
 
+    /// The **Pinned** folder at the top of the Recent tab, newest pin first,
+    /// resolved against the live library — so a pinned track that's since been
+    /// deleted simply drops out, exactly as it does from the log. It doubles as
+    /// that folder's playback queue: tap a row and the pinned set plays on in
+    /// list order, the way any curated folder does.
+    var pinnedRecentTracks: [Track] {
+        pinnedRecentIDs.compactMap { track(withID: $0) }
+    }
+
     // MARK: - Search
 
     /// Normalizes text for matching: case- and diacritic-insensitive, so
@@ -435,6 +448,7 @@ final class LibraryStore: ObservableObject {
 
     func load() {
         loadRecents()
+        loadRecentPins()
         defer {
             loadFolders()
             // Not in `loadRecents`: the log is only ids, and resolving them
@@ -505,12 +519,68 @@ final class LibraryStore: ObservableObject {
     }
 
     /// Empties the listening log. Deletes nothing — Recent is a view of what
-    /// you played, not a place tracks live.
+    /// you played, not a place tracks live — and leaves the pinned folder
+    /// alone: what you pinned is what you meant to keep hold of.
     func clearRecentListens() {
         guard !recentListens.isEmpty else { return }
         recentListens.removeAll()
         saveRecents()
         appLog("Cleared the Recent listening log.", category: "Library")
+    }
+
+    // MARK: - The Recent tab's pinned folder
+
+    /// How many tracks the pinned folder holds. Hand-curated a swipe at a time,
+    /// so it's a bound on the file rather than a limit anyone should meet.
+    private static let pinnedRecentLimit = 200
+
+    private func loadRecentPins() {
+        guard let data = try? Data(contentsOf: AppPaths.recentPins) else { return }
+        do {
+            pinnedRecentIDs = try JSONDecoder().decode([UUID].self, from: data)
+        } catch {
+            print("[LibraryStore] failed to decode recent pins: \(error)")
+            pinnedRecentIDs = []
+        }
+    }
+
+    private func saveRecentPins() {
+        do {
+            let data = try JSONEncoder().encode(pinnedRecentIDs)
+            try data.write(to: AppPaths.recentPins, options: .atomic)
+        } catch {
+            print("[LibraryStore] failed to save recent pins: \(error)")
+        }
+    }
+
+    func isPinnedInRecent(_ trackID: UUID) -> Bool {
+        pinnedRecentIDs.contains(trackID)
+    }
+
+    /// Puts a track in the pinned folder, newest first. A track already there
+    /// is lifted back to the top rather than listed twice — it's a set, and the
+    /// same track played again is the same pin.
+    func pinInRecent(_ trackID: UUID) {
+        pinnedRecentIDs.removeAll { $0 == trackID }
+        pinnedRecentIDs.insert(trackID, at: 0)
+        if pinnedRecentIDs.count > Self.pinnedRecentLimit {
+            pinnedRecentIDs.removeLast(pinnedRecentIDs.count - Self.pinnedRecentLimit)
+        }
+        saveRecentPins()
+    }
+
+    /// Takes a track back out of the pinned folder. Nothing is moved or
+    /// deleted: the track stays wherever it lives, as it does for every other
+    /// action on this screen.
+    func unpinFromRecent(_ trackID: UUID) {
+        guard pinnedRecentIDs.contains(trackID) else { return }
+        pinnedRecentIDs.removeAll { $0 == trackID }
+        saveRecentPins()
+    }
+
+    /// What the swipe action does: one gesture, either way.
+    func toggleRecentPin(_ trackID: UUID) {
+        isPinnedInRecent(trackID) ? unpinFromRecent(trackID) : pinInRecent(trackID)
     }
 
     private func loadFolders() {

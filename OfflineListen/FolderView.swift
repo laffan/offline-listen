@@ -685,6 +685,12 @@ struct InboxView: View {
 /// consecutive repeats collapsed), which is why rows are keyed by the *entry*
 /// and not by the track. Playback continues through the distinct tracks in the
 /// list, so a repeat doesn't send `next` backwards.
+///
+/// Above the log sits the **Pinned** folder: swipe a row right and the track is
+/// kept there, at the head of the tab, where the log can't scroll it away. Like
+/// everything else on this screen that's a *reference*, not a filing — nothing
+/// moves on disk and a pinned track keeps whatever folder it actually lives in
+/// — so pinning and unpinning are as free as removing a listen.
 struct RecentTracksView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var playback: PlaybackManager
@@ -697,70 +703,28 @@ struct RecentTracksView: View {
     @State private var confirmingClear = false
     /// The artist a track's **View Discography** asked for.
     @State private var discographyRequest: DiscographyRequest?
+    /// Whether the pinned folder is twirled open. Persisted like the Library's
+    /// other display choices, so the tab looks the way you left it.
+    @AppStorage("recentPinsExpanded") private var pinsExpanded = true
 
     private var entries: [RecentListenRow] { library.recentListenEntries }
-    /// The playback queue: each track once, in the order it was last heard.
+    /// The playback queue for the log: each track once, in the order it was
+    /// last heard.
     private var queue: [Track] { library.recentTracks }
+    /// What's in the pinned folder — and its own queue, so playing from it
+    /// carries on through the folder rather than off into the log.
+    private var pinned: [Track] { library.pinnedRecentTracks }
 
     var body: some View {
         Group {
-            if entries.isEmpty {
+            if entries.isEmpty && pinned.isEmpty {
                 ContentUnavailableViewCompat(
                     title: "Nothing played yet",
                     systemImage: "clock.arrow.circlepath",
-                    description: "Tracks appear here as you play them — most recent first."
+                    description: "Tracks appear here as you play them — most recent first. Swipe one right to pin it to the top."
                 )
             } else {
-                List {
-                    ForEach(entries) { pair in
-                        TrackRow(
-                            track: pair.track,
-                            isCurrent: playback.currentTrack?.id == pair.track.id,
-                            onShowChapters: {
-                                chapterContext = ChapterContext(track: pair.track, queue: queue)
-                            },
-                            trailingDetail: relativeDate(pair.entry.date),
-                            // A list of things you've heard: the sleeve is the
-                            // quickest way to recognise one.
-                            showsArtwork: true
-                        )
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                playback.play(pair.track, in: queue)
-                                onPlay()
-                            }
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                // Removes the log entry only — the track itself
-                                // is untouched, wherever it lives.
-                                Button(role: .destructive) {
-                                    library.removeRecentListen(pair.entry.id)
-                                } label: {
-                                    Label("Remove", systemImage: "clock.badge.xmark")
-                                }
-                                Button {
-                                    share = SharePayload(urls: [pair.track.fileURL])
-                                } label: {
-                                    Label("Share", systemImage: "square.and.arrow.up")
-                                }
-                                .tint(.blue)
-                            }
-                            .contextMenu {
-                                Button {
-                                    editingTrack = pair.track
-                                } label: {
-                                    Label("Edit Metadata", systemImage: "pencil")
-                                }
-                                SendToWatchButton(track: pair.track)
-                                ViewDiscographyButton(track: pair.track, request: $discographyRequest)
-                                AIOrganizeButton(track: pair.track)
-                                GetAlbumArtButton(track: pair.track)
-                                ConvertFormatButton(track: pair.track)
-                                TrackSourceButtons(track: pair.track)
-                            }
-                    }
-                }
-                .listStyle(.plain)
-                .miniPlayerClearance()
+                list
             }
         }
         // See InboxView: a tab of the Library, so no title of its own.
@@ -782,8 +746,149 @@ struct RecentTracksView: View {
             Button("Clear", role: .destructive) { library.clearRecentListens() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This only empties the list of what you've played. No tracks are deleted.")
+            Text("This only empties the list of what you've played. No tracks are deleted, and the pinned folder stays as it is.")
         }
+    }
+
+    /// The pinned folder, then the log.
+    private var list: some View {
+        // Resolved once per render pass rather than once per row: each row is
+        // handed its whole list as the playback queue, so reading the computed
+        // property inside the loop would rebuild it for every row it built.
+        let pins = pinned
+        let log = entries
+        let logQueue = queue
+        return List {
+            if !pins.isEmpty {
+                Section {
+                    if pinsExpanded {
+                        ForEach(pins) { track in
+                            row(track, in: pins)
+                        }
+                    }
+                } header: {
+                    pinnedFolderRow(count: pins.count)
+                }
+            }
+            Section {
+                ForEach(log) { pair in
+                    row(pair.track, in: logQueue,
+                        detail: relativeDate(pair.entry.date), entry: pair.entry)
+                }
+            }
+        }
+        .listStyle(.plain)
+        .miniPlayerClearance()
+    }
+
+    /// The pinned folder itself: one row at the head of the list, wearing its
+    /// count the way a folder row does, that twirls its tracks open and shut.
+    /// It's a `Section` **header** rather than an ordinary row so it stays put
+    /// at the top while the log scrolls past beneath it — which is most of the
+    /// point of pinning something.
+    private func pinnedFolderRow(count: Int) -> some View {
+        Button {
+            withAnimation { pinsExpanded.toggle() }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "pin.fill")
+                    .foregroundStyle(.orange)
+                    .frame(width: 24)
+                Text("Pinned")
+                    .font(.body)
+                    .foregroundStyle(.primary)
+                Spacer()
+                Text("\(count)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .rotationEffect(.degrees(pinsExpanded ? 90 : 0))
+            }
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        // A section header upper-cases its text; this one is a folder row, not
+        // a caption.
+        .textCase(nil)
+    }
+
+    /// One row of either list. They differ in three things: which queue a tap
+    /// plays within, whether the trailing edge has a *listen* to forget (only
+    /// the log does), and which way round the pin swipe reads.
+    private func row(_ track: Track, in queue: [Track],
+                     detail: String? = nil, entry: RecentListen? = nil) -> some View {
+        TrackRow(
+            track: track,
+            isCurrent: playback.currentTrack?.id == track.id,
+            onShowChapters: {
+                chapterContext = ChapterContext(track: track, queue: queue)
+            },
+            trailingDetail: detail,
+            // A list of things you've heard: the sleeve is the quickest way to
+            // recognise one.
+            showsArtwork: true
+        )
+            .contentShape(Rectangle())
+            .onTapGesture {
+                playback.play(track, in: queue)
+                onPlay()
+            }
+            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                // Keeps the track at the top of the tab (or lets it go again).
+                // Both directions are the same gesture, so the row you just
+                // pinned undoes itself the way you pinned it.
+                let isPinned = library.isPinnedInRecent(track.id)
+                Button {
+                    withAnimation { library.toggleRecentPin(track.id) }
+                } label: {
+                    Label(isPinned ? "Unpin" : "Pin",
+                          systemImage: isPinned ? "pin.slash" : "pin")
+                }
+                .tint(isPinned ? .gray : .orange)
+            }
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                if let entry {
+                    // Removes the log entry only — the track itself is
+                    // untouched, wherever it lives, and a pin of it stays.
+                    Button(role: .destructive) {
+                        library.removeRecentListen(entry.id)
+                    } label: {
+                        Label("Remove", systemImage: "clock.badge.xmark")
+                    }
+                }
+                Button {
+                    share = SharePayload(urls: [track.fileURL])
+                } label: {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+                .tint(.blue)
+            }
+            .contextMenu {
+                Button {
+                    editingTrack = track
+                } label: {
+                    Label("Edit Metadata", systemImage: "pencil")
+                }
+                // The swipe's twin, for the times a menu is already open (and
+                // for the Mac, where a swipe is the less obvious gesture).
+                let isPinned = library.isPinnedInRecent(track.id)
+                Button {
+                    withAnimation { library.toggleRecentPin(track.id) }
+                } label: {
+                    Label(isPinned ? "Unpin" : "Pin to Top",
+                          systemImage: isPinned ? "pin.slash" : "pin")
+                }
+                SendToWatchButton(track: track)
+                ViewDiscographyButton(track: track, request: $discographyRequest)
+                AIOrganizeButton(track: track)
+                GetAlbumArtButton(track: track)
+                ConvertFormatButton(track: track)
+                TrackSourceButtons(track: track)
+            }
     }
 
     /// "2h ago" / "yesterday" — when this listen happened, on the row's
