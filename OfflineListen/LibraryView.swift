@@ -734,6 +734,15 @@ struct LibraryView: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.tertiary)
                 }
+                // A `List` insets its own rows; a `VStack` of rows inside a
+                // `ScrollView` insets nothing, so a plain folder row stood at
+                // just the 4 points its label carries — squeezed between its
+                // dividers, while the albums and mixtapes either side of it
+                // bring their own height. This is what the Synced and Archive
+                // rows below already stand at (their 10, less the label's 4),
+                // so all three read as the same row. A mixtape's banner sets
+                // its own height and takes none of it.
+                .padding(.vertical, folder.isMixtape ? 0 : 6)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
