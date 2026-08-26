@@ -3,30 +3,60 @@ import AVFoundation
 import AVKit
 
 /// Loads a track's saved album art off disk, memoized so the player and mini
-/// player don't re-decode a JPEG on every render (NSCache is thread-safe and
-/// sheds under memory pressure). Keyed by file name — one artwork file per
-/// track id — so an entry only goes stale when that file is *re*-written
-/// (Get Album Art over an existing cover), which is what `invalidate` is for.
+/// player don't re-decode a JPEG on every render. Keyed by file name — one
+/// artwork file per track id — so an entry only goes stale when that file is
+/// *re*-written (Get Album Art over an existing cover), which is what
+/// `invalidate` is for.
+///
+/// Two caches, because there are two jobs. The **full** decode is what the
+/// player screen and the lock screen need, and there is only ever one or two of
+/// those alive; the **thumbnail** is what a list row needs, and a list can ask
+/// for hundreds. Serving rows from the full decode is what made the Recent tab
+/// — the one list that draws a cover on every row — able to pile up hundreds of
+/// megabytes of bitmaps just by being scrolled: covers are stored at the size
+/// they arrived (640² from Spotify, 1000² from the Album Art sheet) and were
+/// decoded at that size to be drawn 38 points wide. Both caches are bounded
+/// (see `ImageCache`), so neither can grow without limit even if every entry is
+/// asked for.
 enum TrackArtwork {
-    private static let cache = NSCache<NSString, PlatformImage>()
+    /// Big enough for the player, the lock screen and a folder cover at once.
+    private static let full = ImageCache(countLimit: 8, megabytes: 48)
+    /// Row-sized covers: many, each tiny.
+    private static let thumbnails = ImageCache(countLimit: 400, megabytes: 24)
+
+    /// The longest side a row's cover is decoded to. The largest place one is
+    /// drawn is the mini player's 40 points, so this covers a 3× screen with
+    /// room to spare.
+    private static let thumbnailPixels = 160
 
     static func image(for track: Track) -> PlatformImage? {
         track.artworkFileName.flatMap(image(named:))
     }
 
     static func image(named name: String) -> PlatformImage? {
-        if let hit = cache.object(forKey: name as NSString) { return hit }
-        guard let image = PlatformImage(contentsOfFile: AppPaths.artwork.appendingPathComponent(name).path) else {
-            return nil
+        full.image(forKey: name) {
+            PlatformImage(contentsOfFile: AppPaths.artwork.appendingPathComponent(name).path)
         }
-        cache.setObject(image, forKey: name as NSString)
-        return image
     }
 
-    /// Drops the memoized image for `fileName` so the next read re-decodes
+    /// The cover at list-row size. Everything that draws art smaller than the
+    /// player screen should ask for this rather than `image(for:)`.
+    static func thumbnail(for track: Track) -> PlatformImage? {
+        track.artworkFileName.flatMap(thumbnail(named:))
+    }
+
+    static func thumbnail(named name: String) -> PlatformImage? {
+        thumbnails.image(forKey: name) {
+            ImageDecoding.thumbnail(at: AppPaths.artwork.appendingPathComponent(name),
+                                    maxPixel: thumbnailPixels)
+        }
+    }
+
+    /// Drops the memoized images for `fileName` so the next read re-decodes
     /// the file — called when artwork is re-fetched over the same name.
     static func invalidate(fileName: String) {
-        cache.removeObject(forKey: fileName as NSString)
+        full.remove(fileName)
+        thumbnails.remove(fileName)
     }
 }
 
@@ -37,20 +67,33 @@ enum TrackArtwork {
 /// over the downloaded one (see `Folder.coverArtworkFileName`), which is what
 /// leaves the downloaded file intact for **Reset Album Art** to return to.
 enum FolderArtwork {
-    private static let cache = NSCache<NSString, PlatformImage>()
+    /// Split the same way `TrackArtwork` is: the folder screen's 220-point
+    /// sleeve wants the real thing, while the folder *list* and the cover grid
+    /// draw dozens of these at 38 and 110 points and want the thumbnail.
+    private static let full = ImageCache(countLimit: 8, megabytes: 48)
+    private static let thumbnails = ImageCache(countLimit: 200, megabytes: 24)
+    /// A grid cell is about 110 points wide, so this covers a 3× screen.
+    private static let thumbnailPixels = 360
 
     static func image(for folder: Folder) -> PlatformImage? {
         guard let name = folder.coverArtworkFileName else { return nil }
-        if let hit = cache.object(forKey: name as NSString) { return hit }
-        guard let image = PlatformImage(contentsOfFile: AppPaths.folderArtwork.appendingPathComponent(name).path) else {
-            return nil
+        return full.image(forKey: name) {
+            PlatformImage(contentsOfFile: AppPaths.folderArtwork.appendingPathComponent(name).path)
         }
-        cache.setObject(image, forKey: name as NSString)
-        return image
+    }
+
+    /// The cover at row/grid size — see `TrackArtwork.thumbnail(for:)`.
+    static func thumbnail(for folder: Folder) -> PlatformImage? {
+        guard let name = folder.coverArtworkFileName else { return nil }
+        return thumbnails.image(forKey: name) {
+            ImageDecoding.thumbnail(at: AppPaths.folderArtwork.appendingPathComponent(name),
+                                    maxPixel: thumbnailPixels)
+        }
     }
 
     static func invalidate(fileName: String) {
-        cache.removeObject(forKey: fileName as NSString)
+        full.remove(fileName)
+        thumbnails.remove(fileName)
     }
 }
 
@@ -88,6 +131,14 @@ enum FolderCover {
         if let own = FolderArtwork.image(for: folder) { return own }
         guard let shared = sharedArtworkName(of: folder.id, tracks: tracks) else { return nil }
         return TrackArtwork.image(named: shared)
+    }
+
+    /// The same cover at row/grid size. The verdict (which file, if any, the
+    /// folder's tracks share) is the same either way — only the decode differs.
+    static func thumbnail(for folder: Folder, tracks: [Track]) -> PlatformImage? {
+        if let own = FolderArtwork.thumbnail(for: folder) { return own }
+        guard let shared = sharedArtworkName(of: folder.id, tracks: tracks) else { return nil }
+        return TrackArtwork.thumbnail(named: shared)
     }
 
     /// Nothing this big is an album, and reading every cover in a folder of
@@ -957,7 +1008,7 @@ struct MiniPlayerBar: View {
                             // A tiny cover when the track has art (checked
                             // against the library's live copy — art can land
                             // after playback started); the kind icon otherwise.
-                            if let image = TrackArtwork.image(for: library.track(withID: track.id) ?? track) {
+                            if let image = TrackArtwork.thumbnail(for: library.track(withID: track.id) ?? track) {
                                 Image(platformImage: image)
                                     .resizable()
                                     .scaledToFill()

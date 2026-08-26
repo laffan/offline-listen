@@ -317,7 +317,15 @@ vertical space goes to the content instead.
      come back as queued work and start again once the first screen is up. A
      job interrupted mid-*download* restarts rather than resuming: its partial
      file was in a scratch directory that doesn't survive, and half a track is
-     worth nothing.
+     worth nothing. **A job that never finishes gets three of those goes and
+     then stops asking.** Restarting a pending job at every launch is what
+     makes a crash cost progress rather than work — and, for a job that is
+     itself what took the app down, it is also a loop the app can't be opened
+     long enough to break out of. So each start is counted (and written down
+     *before* the work begins, since a crash records nothing afterwards) and
+     cleared the moment the job reaches a verdict; the fourth start doesn't
+     happen. The row goes to **Failed** saying so, and Retry is one tap away
+     whenever you want it.
    - **A background assertion is held while the queue works**, so locking the
      phone doesn't stop it where it stands (which is what used to happen: the
      app was suspended between one track and the next and nothing moved again
@@ -500,6 +508,19 @@ result appeared. Three things keep it quick, and they're worth preserving:
   each row recompute the entire search. `searchList` / `libraryList` bind it to
   a local first. Typing is debounced by 150 ms on top, so a burst of keystrokes
   rebuilds the list once rather than once per letter.
+- **A cover drawn small is decoded small, into a cache with a ceiling.** Album
+  art is kept at the size it arrived — 640² from Spotify, 1000² from the Album
+  Art sheet, up to 1600 on a mixtape banner — which is four to ten megabytes
+  apiece once decoded. **Recent** draws a cover on *every* row, and the Folders
+  tab's list and cover grid do too, so serving those 38- and 110-point slots
+  from the full decode meant a scroll could quietly pile up hundreds of
+  megabytes of bitmaps in a cache with no limit set on it. `ImageCache` bounds
+  every one of them (a count *and* a byte ceiling), and the small slots go
+  through `TrackArtwork.thumbnail` / `FolderArtwork.thumbnail`, which decode
+  through ImageIO straight to row size and never materialize the full bitmap at
+  all. It matters most exactly when it's least visible: a library screen and a
+  queue of album downloads are competing for the same memory, and the embedded
+  Python interpreter next door is the one that gets told no.
 
 ### Album art
 
@@ -1496,7 +1517,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `EveryNoiseData/` | Bundled (folder reference): `genres.json` index + per-genre artist shards from the one-time `tools/everynoise/scrape.py`, plus the derived `artists.idx.z` from `build_artist_index.py`. |
 | `BrowseSourceView.swift` | One source's items with per-row Download/Preview/Discard, plus a **Select** mode for bulk download; also `BrowseTrackStatusButton`, the green play button every browse list shows once a download is in the library. |
 | `BrowsePreviewView.swift` | The preview modal: pipeline download, mini player with prev/play-pause/next over the queue it was opened with (auto-advancing at the end of each track — off its own frozen-playhead watchdog, not just the end notification — phone locked or not), the lock-screen metadata it borrows while it plays, Save/Discard. |
-| `*View.swift` | The five SwiftUI screens, in tab order (Browse, Library, Player, Download, Settings — which embeds the Log); none of them sets a navigation title. `LibraryView.swift` also holds `LibraryTab`, the Recent/Folders/Inbox/Watch/All strip, and the Folders tab's two shapes (the list, and the cover view's album grid). `PlayerView.swift` also holds the tap-to-seek scrubber, the caption overlay (and its own 5 Hz playhead clock) and the `MiniPlayerBar` the other tabs inset above the tab bar. |
+| `*View.swift` | The five SwiftUI screens, in tab order (Browse, Library, Player, Download, Settings — which embeds the Log); none of them sets a navigation title. `LibraryView.swift` also holds `LibraryTab`, the Recent/Folders/Inbox/Watch/All strip, and the Folders tab's two shapes (the list, and the cover view's album grid). `PlayerView.swift` also holds the tap-to-seek scrubber, the caption overlay (and its own 5 Hz playhead clock), the `MiniPlayerBar` the other tabs inset above the tab bar, and the album-art loaders (`TrackArtwork`, `FolderArtwork`, `FolderCover`) — each a bounded `ImageCache` with a full decode for the big slots and an ImageIO thumbnail for the row-sized ones. |
 | `FolderView.swift` | Folder detail (tap-to-play, reorder, subfolders, mixtape header/Edit Cover, the album sleeve that opens its art options and the Discography row beneath its tracks), the discography push a library album makes, plus the Library's Inbox and Recent tabs. |
 | `MixtapeViews.swift` | Mixtape banner rendering (non-destructive crop), the shared folder-row label, and the Edit Cover sheet (PhotosPicker + drag/pinch + font picker). |
 | `AlbumViews.swift` | The album side of a folder: the stand-in colour palette, the square sleeve (cover or colour) the folder screen and the cover grid draw, the grid's own cell, and the Album Art sheet — PhotosPicker, square framing, and the crop that turns the framing into the JPEG copied onto every song. |

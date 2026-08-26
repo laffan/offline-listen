@@ -49,16 +49,21 @@ extension MixtapeStyle {
 /// includes the file's modification date, so a replaced cover is picked up on
 /// the next render without manual invalidation.
 enum MixtapeCoverLoader {
-    private static let cache = NSCache<NSString, PlatformImage>()
+    /// Bounded, and deliberately shallow. A mixtape cover is saved at up to
+    /// 1600 points on its longest side — around ten megabytes once decoded —
+    /// and the key carries the file's modification date, so re-framing a cover
+    /// mints a *new* entry rather than replacing the old one. Unbounded, that
+    /// combination holds every version of every banner the session has drawn
+    /// until the system is already short of memory.
+    private static let cache = ImageCache(countLimit: 12, megabytes: 48)
 
     static func image(for folder: Folder) -> PlatformImage? {
         guard let url = folder.coverURL else { return nil }
         let modified = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
-        let key = "\(url.path)#\(modified?.timeIntervalSince1970 ?? 0)" as NSString
-        if let hit = cache.object(forKey: key) { return hit }
-        guard let image = PlatformImage(contentsOfFile: url.path) else { return nil }
-        cache.setObject(image, forKey: key)
-        return image
+        let key = "\(url.path)#\(modified?.timeIntervalSince1970 ?? 0)"
+        return cache.image(forKey: key) {
+            PlatformImage(contentsOfFile: url.path)
+        }
     }
 }
 
@@ -269,7 +274,7 @@ struct FolderRowLabel: View {
     /// untouched.
     @ViewBuilder
     private var leadingIcon: some View {
-        if let image = FolderArtwork.image(for: folder) {
+        if let image = FolderArtwork.thumbnail(for: folder) {
             cover { Image(platformImage: image).resizable().scaledToFill() }
         } else if library.isAlbumFolder(folder) {
             cover { AlbumColor.color(for: folder) }

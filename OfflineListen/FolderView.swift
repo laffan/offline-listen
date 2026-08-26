@@ -763,7 +763,7 @@ struct RecentTracksView: View {
                 Section {
                     if pinsExpanded {
                         ForEach(pins) { track in
-                            row(track, in: pins)
+                            row(track, in: pins, playsAsFolder: true)
                         }
                     }
                 } header: {
@@ -816,10 +816,20 @@ struct RecentTracksView: View {
         .textCase(nil)
     }
 
-    /// One row of either list. They differ in three things: which queue a tap
-    /// plays within, whether the trailing edge has a *listen* to forget (only
-    /// the log does), and which way round the pin swipe reads.
+    /// One row of either list. They differ in four things: which queue a tap
+    /// plays within, whether that queue is a *curated* one (only the pinned
+    /// folder is), whether the trailing edge has a *listen* to forget (only the
+    /// log does), and which way round the pin swipe reads.
+    ///
+    /// `playsAsFolder` is the pinned folder's half of the Library's autoplay
+    /// rule: an **auto-aggregated** list mixes media types together, so
+    /// playback stays within the type you started, while a **curated** list —
+    /// which the pinned folder is, a track at a time, by hand — plays straight
+    /// through in list order whatever the types. Without it a pinned song
+    /// followed by a pinned podcast quietly dropped the podcast from the queue,
+    /// so the folder ended early and not where the list does.
     private func row(_ track: Track, in queue: [Track],
+                     playsAsFolder: Bool = false,
                      detail: String? = nil, entry: RecentListen? = nil) -> some View {
         TrackRow(
             track: track,
@@ -834,7 +844,7 @@ struct RecentTracksView: View {
         )
             .contentShape(Rectangle())
             .onTapGesture {
-                playback.play(track, in: queue)
+                playback.play(track, in: queue, restrictToCategory: !playsAsFolder)
                 onPlay()
             }
             .swipeActions(edge: .leading, allowsFullSwipe: true) {
@@ -843,7 +853,7 @@ struct RecentTracksView: View {
                 // pinned undoes itself the way you pinned it.
                 let isPinned = library.isPinnedInRecent(track.id)
                 Button {
-                    withAnimation { library.toggleRecentPin(track.id) }
+                    togglePin(track.id)
                 } label: {
                     Label(isPinned ? "Unpin" : "Pin",
                           systemImage: isPinned ? "pin.slash" : "pin")
@@ -877,7 +887,7 @@ struct RecentTracksView: View {
                 // for the Mac, where a swipe is the less obvious gesture).
                 let isPinned = library.isPinnedInRecent(track.id)
                 Button {
-                    withAnimation { library.toggleRecentPin(track.id) }
+                    togglePin(track.id)
                 } label: {
                     Label(isPinned ? "Unpin" : "Pin to Top",
                           systemImage: isPinned ? "pin.slash" : "pin")
@@ -889,6 +899,22 @@ struct RecentTracksView: View {
                 ConvertFormatButton(track: track)
                 TrackSourceButtons(track: track)
             }
+    }
+
+    /// Pins or unpins, on the **next** main-actor turn.
+    ///
+    /// The same order `InboxView`'s bulk actions follow, and for the same
+    /// reason. A pin moves a row between the two sections of this list, and at
+    /// the edges it moves a whole *section*: pinning the first track inserts the
+    /// Pinned section (header and all), unpinning the last one removes it.
+    /// Landing that in the update the swipe is already animating — the gesture's
+    /// own commit — is what the `List` underneath doesn't survive. Doing it a
+    /// turn later costs a frame nobody can see and leaves the table one change
+    /// to apply at a time.
+    private func togglePin(_ trackID: UUID) {
+        Task { @MainActor in
+            withAnimation { library.toggleRecentPin(trackID) }
+        }
     }
 
     /// "2h ago" / "yesterday" — when this listen happened, on the row's

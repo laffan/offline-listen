@@ -537,7 +537,14 @@ final class LibraryStore: ObservableObject {
     private func loadRecentPins() {
         guard let data = try? Data(contentsOf: AppPaths.recentPins) else { return }
         do {
+            // Deduped on the way in, not merely on the way out. The pinned
+            // folder is a *set*, and `pinnedRecentTracks` resolves each id to a
+            // `Track` — so a file that somehow carried an id twice would hand
+            // `ForEach` two rows claiming the same identity, which is a `List`
+            // that cannot diff itself. Cheap to make impossible here.
+            var seen = Set<UUID>()
             pinnedRecentIDs = try JSONDecoder().decode([UUID].self, from: data)
+                .filter { seen.insert($0).inserted }
         } catch {
             print("[LibraryStore] failed to decode recent pins: \(error)")
             pinnedRecentIDs = []
@@ -1892,6 +1899,11 @@ final class LibraryStore: ObservableObject {
             exportOp(.removeRemote(rel: current.fileName), rootID: current.syncRootID)
         }
         tracks.removeAll { $0.id == track.id }
+        // The pinned folder holds ids, and `pinnedRecentTracks` already drops
+        // one it can't resolve — but leaving it in the file means the id
+        // outlives the track for good, and a fresh track can never reuse it to
+        // reappear pinned out of nowhere. Deleting the track deletes the pin.
+        unpinFromRecent(current.id)
         save()
         if current.sentToWatch { syncWatch() }
     }

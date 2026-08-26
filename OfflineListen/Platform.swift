@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import ImageIO
 
 #if canImport(UIKit)
 import UIKit
@@ -86,6 +87,92 @@ extension PlatformImage {
         draw(in: CGRect(origin: .zero, size: target))
         output.unlockFocus()
         return output
+        #endif
+    }
+}
+
+// MARK: - Image caches
+
+/// A memoized image store with a **ceiling**.
+///
+/// `NSCache` does shed under memory pressure, but only once the system is
+/// already in trouble, and by default it weighs nothing — so an unbounded one
+/// happily holds every cover a long list has ever drawn. Album art is kept at
+/// the size it arrived (a Spotify cover is 640² — 1.6 MB decoded; one framed by
+/// hand in the Album Art sheet is 1000² — 4 MB), and the one list that draws a
+/// cover on *every* row is Recent. A few dozen of those held alongside an album
+/// download's embedded-Python working set is how the app gets killed for memory
+/// rather than crashed, which from outside looks the same and leaves no Swift
+/// stack behind. Both limits are set at the call site so the ceiling is a
+/// decision rather than an accident.
+///
+/// `@unchecked Sendable` because `NSCache` is documented thread-safe and this
+/// adds no state of its own — the same footing the bare `NSCache` statics these
+/// replace already stood on.
+final class ImageCache: @unchecked Sendable {
+    private let cache = NSCache<NSString, PlatformImage>()
+
+    init(countLimit: Int, megabytes: Int) {
+        cache.countLimit = countLimit
+        cache.totalCostLimit = megabytes * 1024 * 1024
+    }
+
+    /// The memoized image for `key`, decoded with `load` on a miss.
+    func image(forKey key: String, load: () -> PlatformImage?) -> PlatformImage? {
+        if let hit = cache.object(forKey: key as NSString) { return hit }
+        guard let image = load() else { return nil }
+        cache.setObject(image, forKey: key as NSString, cost: image.decodedByteCost)
+        return image
+    }
+
+    func remove(_ key: String) {
+        cache.removeObject(forKey: key as NSString)
+    }
+
+    func removeAll() {
+        cache.removeAllObjects()
+    }
+}
+
+extension PlatformImage {
+    /// Roughly what this image costs once it is drawn: four bytes a pixel.
+    /// `NSCache` weighs entries against `totalCostLimit` in whatever unit the
+    /// caller picks, and for images the only unit that means anything is bytes.
+    var decodedByteCost: Int {
+        #if canImport(UIKit)
+        let pixels = size.width * scale * size.height * scale
+        #else
+        let pixels = size.width * size.height
+        #endif
+        guard pixels.isFinite, pixels > 0 else { return 1 }
+        return max(1, Int(pixels * 4))
+    }
+}
+
+enum ImageDecoding {
+    /// Decodes `url` capped at `maxPixel` on its longest side.
+    ///
+    /// Straight through ImageIO rather than "load it, then shrink it": a 1000²
+    /// cover drawn into a 38-point row still costs four megabytes if it is
+    /// decoded whole first, and the shrink then throws that away. This never
+    /// materializes the full bitmap at all, which is the point — the spike is
+    /// the problem, not the steady state.
+    static func thumbnail(at url: URL, maxPixel: Int) -> PlatformImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return nil
+        }
+        #if canImport(UIKit)
+        return UIImage(cgImage: cgImage)
+        #else
+        return NSImage(cgImage: cgImage,
+                       size: CGSize(width: cgImage.width, height: cgImage.height))
         #endif
     }
 }

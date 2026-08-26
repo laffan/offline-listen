@@ -87,7 +87,7 @@ struct AlbumCoverCell: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             AlbumCoverArt(folder: folder,
-                          image: FolderCover.image(for: folder, tracks: library.tracks(in: folder.id)))
+                          image: FolderCover.thumbnail(for: folder, tracks: library.tracks(in: folder.id)))
                 .overlay(alignment: .topTrailing) { badges }
                 .shadow(radius: 3, y: 2)
 

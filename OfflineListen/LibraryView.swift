@@ -1418,7 +1418,9 @@ struct TrackRow: View {
     /// Draws the track's **album art** in the glyph's place when it has any.
     /// Opt-in rather than everywhere: a list you're scanning for one title
     /// reads fastest as text, while **Recent** is a list of things you've
-    /// *heard*, where the sleeve is the fastest way to recognise one.
+    /// *heard*, where the sleeve is the fastest way to recognise one. Drawn
+    /// from `TrackArtwork.thumbnail`, never the full decode — a cover is stored
+    /// at the size it arrived and this slot is 38 points wide.
     var showsArtwork: Bool = false
 
     private var progress: Double {
@@ -1505,7 +1507,7 @@ struct TrackRow: View {
     /// showing a picture instead.
     @ViewBuilder
     private var leading: some View {
-        if showsArtwork, let cover = TrackArtwork.image(for: track) {
+        if showsArtwork, let cover = TrackArtwork.thumbnail(for: track) {
             Image(platformImage: cover)
                 .resizable()
                 .scaledToFill()

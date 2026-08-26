@@ -55,6 +55,11 @@ final class DownloadJob: ObservableObject, Identifiable {
     @Published var progress: Double = 0
     /// The library track produced by this job, once finished (for tap-to-play).
     @Published var trackID: UUID?
+    /// How many times this job has been *started* without ever reaching a
+    /// verdict, carried across launches in `downloads.json`. Reset the moment
+    /// the job finishes, fails or is cancelled — so it only ever counts starts
+    /// that went nowhere. See `DownloadManager.maxStartAttempts`.
+    var startAttempts = 0
 
     init(url: String, mode: DownloadMode, isPlaylist: Bool = false,
          spotifyRef: SpotifyRef? = nil, folderID: UUID? = nil,
@@ -421,6 +426,9 @@ private struct DownloadRecord: Codable {
     /// YouTube video's name while its siblings wear the record's.
     var knownTitle: String?
     var knownArtist: String?
+    /// Starts this job has had with no verdict (see `DownloadJob.startAttempts`).
+    /// Optional so a file written by an older build still decodes.
+    var startAttempts: Int?
 }
 
 /// What `downloads.json` actually holds: the rows above plus the tracklist
@@ -562,6 +570,7 @@ final class DownloadManager: ObservableObject {
             job.title = record.title
             job.artist = record.artist
             job.trackID = record.trackID
+            job.startAttempts = record.startAttempts ?? 0
             switch record.stateRaw {
             case "failed": job.state = .failed(record.failureMessage ?? "Failed")
             case "cancelled": job.state = .cancelled
@@ -572,15 +581,50 @@ final class DownloadManager: ObservableObject {
         }
     }
 
+    /// How many times the queue may start one job that never reaches a verdict
+    /// before it stops starting it on its own.
+    ///
+    /// A pending job is written to `downloads.json` and started again at the
+    /// next launch — which is what makes being suspended cost progress rather
+    /// than work, and which is also what makes a job that takes the *process*
+    /// down with it unrecoverable: the app relaunches, `resumeUnfinished()`
+    /// restarts the same job, and it dies again before anyone can reach the
+    /// Download tab to cancel it. That is not hypothetical here — extraction
+    /// runs an embedded Python interpreter this project has already watched
+    /// fault hard (`docs/JS-RUNTIME-PLAN.md`) and run out of memory on album
+    /// downloads, and `enqueueAlbum` is written around "a crash mid-album".
+    /// After this many starts with no verdict the job is parked as failed
+    /// instead: still in the list, still one tap from Retry, but no longer able
+    /// to hold the app hostage at launch.
+    private static let maxStartAttempts = 3
+
     /// Starts whatever the queue still had when the app last quit — called once
     /// the app is up rather than from `init`, so a launch isn't spent resolving
     /// videos before the first screen has drawn.
     func resumeUnfinished() {
+        parkJobsThatNeverFinish()
         let pending = jobs.filter { $0.state == .queued }.count
         guard pending > 0 else { return }
         appLog("Resuming \(pending) unfinished download(s) from the last session.",
                level: .warning, category: "Queue")
         processNext()
+    }
+
+    /// Takes any job that has been started `maxStartAttempts` times without
+    /// ever reaching a verdict out of the queue, before the queue is started.
+    /// This is the loop's only exit: everything else about a resumed job is
+    /// identical to the run that didn't come back.
+    private func parkJobsThatNeverFinish() {
+        var parked = 0
+        for job in jobs where job.state == .queued && job.startAttempts >= Self.maxStartAttempts {
+            appLog("Not resuming \"\(job.title)\": started \(job.startAttempts) times without ever finishing. Retry it by hand from the Download tab.",
+                   level: .error, category: "Queue")
+            job.state = .failed("Stopped after \(job.startAttempts) attempts that never finished — retry it when you're ready.")
+            job.startAttempts = 0
+            parked += 1
+        }
+        guard parked > 0 else { return }
+        persistHistory()
     }
 
     /// True while anything is queued or running — what decides whether the app
@@ -625,7 +669,8 @@ final class DownloadManager: ObservableObject {
                                   stateRaw: stateRaw,
                                   failureMessage: failure,
                                   knownTitle: job.knownTitle,
-                                  knownArtist: job.knownArtist)
+                                  knownArtist: job.knownArtist,
+                                  startAttempts: job.startAttempts)
         }
         // The cap is on *history*: unfinished work is never dropped to make
         // room for a record of finished work.
@@ -1136,6 +1181,20 @@ final class DownloadManager: ObservableObject {
     }
 
     private func run(_ job: DownloadJob) async {
+        // Counted before a single byte of work, and written to disk here rather
+        // than at the end, because the case this exists for is the app not
+        // coming back at all: a crash records nothing, so an attempt that isn't
+        // banked up front is an attempt that never happened. Cleared again the
+        // moment the job reaches a verdict — see `maxStartAttempts`.
+        job.startAttempts += 1
+        persistHistory()
+        defer {
+            if job.state.isFinishedOrStopped, job.startAttempts != 0 {
+                job.startAttempts = 0
+                persistHistory()
+            }
+        }
+
         // A Spotify job's URL may be a `spotify:` URI, which isn't a URL we can
         // hand to anything else — resolve it before the URL check below.
         if let ref = job.spotifyRef {
