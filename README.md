@@ -2461,7 +2461,11 @@ outcomes the Log already shows and answers three questions with them:
   downloads whose default-path stream URL was rejected on its opening chunk,
   the default resolve is a few seconds spent to arrive at a URL that can't be
   downloaded. The job then steps over it and goes straight to the player
-  clients that have been working. This is the most conservative of the three:
+  clients that have been working — and steps over the *setup* for it too: the
+  `YoutubeDL()` instance costs about a second under the Python gate and is only
+  ever read by the resolve being skipped, so the check sits above it rather
+  than after it (taken only once `PythonBridge.isConfigured` confirms an
+  earlier job already wired the runtime). This is the most conservative of the three:
   it only ever fires when a client has genuinely *worked*, and it re-probes the
   default path every eighth job — that path stays the better route when it
   works (a dedicated audio-only stream, no extraction step), so a session whose

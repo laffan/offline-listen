@@ -1562,6 +1562,45 @@ final class YoutubeDLExtractor: MediaExtractor {
                 }
             }
 
+            // When this session has already learned that the default client's
+            // stream URLs come back gated — rejected on their opening chunk,
+            // twice running — the default route is several seconds spent to
+            // arrive at a URL that cannot be downloaded. Step over it and go
+            // straight to the player clients that have been serving files.
+            //
+            // This sits **above** the setup below deliberately: none of it is
+            // needed on this path. `YoutubeDL()` costs about a second under
+            // the Python gate and is only ever read by the default resolve we
+            // are skipping, and the runtime wiring has already been done by
+            // the job that taught us to skip — which is what
+            // `PythonBridge.isConfigured` confirms before we take the
+            // shortcut. Constructing them anyway was the largest fixed cost
+            // left on a learned track.
+            //
+            // Only ever taken when a client has actually *worked*, and only
+            // for a bounded run of jobs before the default path is probed
+            // again: it remains the better route when it works (a dedicated
+            // audio-only stream, no extraction step), so a session whose
+            // gating lifts finds its way back on its own. Python is
+            // bootstrapped by definition here — `pythonBootstrapped` is set by
+            // the first `extractInfo` of the session, and the forced clients
+            // drive the interpreter directly.
+            #if canImport(PythonKit)
+            if Self.isYouTubeURL(url), Self.pythonBootstrapped, PythonBridge.isConfigured,
+               orphanedDefaultExtraction == nil,
+               ExtractionMemory.shared.shouldSkipDefaultPath(mode: mode) {
+                appLog("Skipping the default extraction — its stream URLs have been rejected at the first byte this session (\(ExtractionMemory.shared.summary(mode: mode))). Going straight to the player clients that worked…",
+                       category: category)
+                if let media = try await extractViaForcedClients(
+                    url: url, mode: mode, quality: quality, category: category,
+                    onDownloadStart: onDownloadStart, onProgress: onProgress) {
+                    return media
+                }
+                appLog("No player client produced a file — falling back to the default extraction after all.",
+                       level: .warning, category: category)
+            }
+            #endif
+
             appLog("Initializing yt-dlp…", level: .debug, category: category)
             // Instance creation configures library-side state (PYTHONHOME,
             // module search path) — gated so it can't overlap the other slot's
@@ -1589,35 +1628,6 @@ final class YoutubeDLExtractor: MediaExtractor {
             }
             #endif
             await wireJSRuntimeIfSafe(category: category)
-
-            // When this session has already learned that the default client's
-            // stream URLs come back gated — rejected on their opening chunk,
-            // twice running — the default route is several seconds spent to
-            // arrive at a URL that cannot be downloaded. Step over it and go
-            // straight to the player clients that have been serving files.
-            //
-            // Only ever taken when a client has actually *worked*, and only
-            // for a bounded run of jobs before the default path is probed
-            // again: it remains the better route when it works (a dedicated
-            // audio-only stream, no extraction step), so a session whose
-            // gating lifts finds its way back on its own. Python is
-            // bootstrapped by definition here — `pythonBootstrapped` is set by
-            // the first `extractInfo` of the session, and the forced clients
-            // drive the interpreter directly.
-            #if canImport(PythonKit)
-            if Self.isYouTubeURL(url), Self.pythonBootstrapped, orphanedDefaultExtraction == nil,
-               ExtractionMemory.shared.shouldSkipDefaultPath(mode: mode) {
-                appLog("Skipping the default extraction — its stream URLs have been rejected at the first byte this session (\(ExtractionMemory.shared.summary(mode: mode))). Going straight to the player clients that worked…",
-                       category: category)
-                if let media = try await extractViaForcedClients(
-                    url: url, mode: mode, quality: quality, category: category,
-                    onDownloadStart: onDownloadStart, onProgress: onProgress) {
-                    return media
-                }
-                appLog("No player client produced a file — falling back to the default extraction after all.",
-                       level: .warning, category: category)
-            }
-            #endif
 
             // The default web-client extraction (`extractInfo`) must run first: it
             // is the call that bootstraps the embedded Python runtime (PYTHONHOME,
