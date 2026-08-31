@@ -2546,6 +2546,21 @@ as possible rather than collapsing to one opaque line:
   engine, network) to a `Hint:` line suggesting the likely cause and next step.
   It returns nothing when it doesn't recognise the error — it never invents a
   diagnosis.
+- **A Python failure never leaves the interpreter's gate.** `PythonError` is a
+  `PythonObject` in a trench coat: it holds the live exception, and asking it
+  for its description — which every catch site does, to get the real yt-dlp
+  message out of the opaque "PythonError error 0" — calls *back into* the
+  interpreter. Off the gate, with the other pipeline slot mid-`extract_info`,
+  that's a concurrent access and the process dies inside `_Py_MakeRecCheck`.
+  Merely releasing the error is an interpreter operation too, so it can't be
+  carried out and dropped either. `PythonGate.run` therefore flattens whatever
+  a gated section throws into an `InterpreterError` — summary and detail as
+  plain strings, taken while the gate is still held — and only the text
+  travels. Cancellation is passed through untouched, because every retry and
+  fallback layer classifies *that* by type rather than by text. The rule the
+  success path already had ("nothing downstream may keep a `PythonObject`") is
+  now the failure path's too, structurally, rather than something each catch
+  site has to remember.
 - **The log survives a crash.** The in-memory log is published on the main
   actor, so a hard native fault (most plausibly a PythonKit crash inside a
   forced-client `extract_info`) would take its buffered tail down with it — the

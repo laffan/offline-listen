@@ -506,7 +506,15 @@ final class YoutubeDLExtractor: MediaExtractor {
                 PythonBridge.Memory.collect()
                 PythonGate.shared.release()
             }
-            return try await youtubeDL.extractInfo(url: url)
+            do {
+                return try await youtubeDL.extractInfo(url: url)
+            } catch {
+                // Same rule as `PythonGate.run`, which this path can't use
+                // because it hands the gate to the extraction task: whatever
+                // comes out of the interpreter is flattened before the `defer`
+                // above lets another slot in. See `InterpreterError`.
+                throw InterpreterError.flattening(error)
+            }
         }
 
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<([Format], Info), Error>) in

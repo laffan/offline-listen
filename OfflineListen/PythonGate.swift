@@ -20,6 +20,38 @@ import Foundation
 /// the interpreter actually returns, and the next Python call waits instead of
 /// crashing into it. That's a strictly stronger guarantee than the previous
 /// wait-5s-then-proceed-anyway heuristic.
+/// A failure from a Python section, flattened to plain text **before the gate
+/// that produced it was released**.
+///
+/// This exists because `PythonError` is a `PythonObject` in a trench coat: it
+/// holds the live exception, and asking it for its description — which every
+/// catch site here does, to get the real yt-dlp message out of the opaque
+/// "PythonError error 0" — calls back into the interpreter. Off the gate, with
+/// the other pipeline slot mid-`extract_info`, that is a concurrent access and
+/// the process dies inside `_Py_MakeRecCheck`. Even *releasing* the error is an
+/// interpreter operation, so it can't simply be carried out and dropped.
+///
+/// So the text is taken while the gate is still held and only the text travels.
+/// `description` returns the detailed form, which is what the diagnostic logs
+/// print via `String(describing:)`, so nothing downstream reads differently
+/// than it did when a raw `PythonError` reached it.
+struct InterpreterError: LocalizedError, CustomStringConvertible {
+    let summary: String
+    let detail: String
+    var errorDescription: String? { summary }
+    var description: String { detail }
+
+    /// Flattens `error`, except for the Swift-native signals the pipeline
+    /// classifies **by type** rather than by text — cancellation above all,
+    /// which every retry and fallback layer tests for and must keep seeing.
+    static func flattening(_ error: Error) -> Error {
+        if error is CancellationError { return error }
+        if error is URLError { return error }
+        return InterpreterError(summary: error.localizedDescription,
+                                detail: String(describing: error))
+    }
+}
+
 final class PythonGate: @unchecked Sendable {
     static let shared = PythonGate()
 
@@ -86,11 +118,18 @@ final class PythonGate: @unchecked Sendable {
     /// *caller* is abandoned by a timeout wrapper mid-await, the gate is held
     /// until the Python work truly finishes, never released out from under a
     /// still-running interpreter call.
+    /// A thrown error is flattened to `InterpreterError` *here*, inside the
+    /// gated closure, so no `PythonObject` — and no Python refcount — outlives
+    /// the gate. See `InterpreterError`.
     func run<T>(_ body: @escaping () throws -> T) async throws -> T {
         try await acquire()
         let task = Task.detached(priority: .userInitiated) { [self] () throws -> T in
             defer { release() }
-            return try body()
+            do {
+                return try body()
+            } catch {
+                throw InterpreterError.flattening(error)
+            }
         }
         return try await task.value
     }

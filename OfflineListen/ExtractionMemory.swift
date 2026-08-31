@@ -230,9 +230,13 @@ final class ExtractionMemory: @unchecked Sendable {
     /// known about — in their hand-tuned order — then the ones whose URLs were
     /// rejected at the first byte. A three-way partition, so the opening order
     /// still decides everything the memory has no opinion about.
-    /// `probingForDirectAudio` inverts the first two bands for one job (see
-    /// `claimDirectAudioProbe`): the untried clients get first refusal, with
-    /// the proven ones still behind them as the guaranteed fallback.
+    /// `probingForDirectAudio` hoists **one** untried client ahead of the
+    /// proven ones for a single job (see `claimDirectAudioProbe`). One, not
+    /// all of them: the point is to spend a single resolve finding out whether
+    /// something cheaper exists, and a client that has never answered is as
+    /// likely to be gated as to be the answer — leading with the whole
+    /// untried tail would put five doomed resolves in front of the client
+    /// that works.
     func ordered(_ sets: [[String]], mode: DownloadMode,
                  probingForDirectAudio: Bool = false) -> [[String]] {
         lock.lock()
@@ -250,7 +254,7 @@ final class ExtractionMemory: @unchecked Sendable {
         let untried = remaining.filter { !rejected.contains(label($0)) }
         let sunk = remaining.filter { rejected.contains(label($0)) }
         return probingForDirectAudio
-            ? untried + leaders + sunk
+            ? Array(untried.prefix(1)) + leaders + Array(untried.dropFirst()) + sunk
             : leaders + untried + sunk
     }
 
