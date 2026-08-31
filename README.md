@@ -1475,6 +1475,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `LocalSync.swift` | `LocalSyncStore` — the sync folder's security-scoped bookmark, the stamped manifest + journaled exporter, the coordinated importer (placeholder-aware copies), kqueue monitoring, and the off-main tree scan. |
 | `DownloadManager.swift` | Download queue (two concurrent slots) + `DownloadJob` + persisted history; `enqueueAlbum`, which files a whole release into one folder in tracklist order with the catalogue's own titles/artists; `ArtworkFetcher`, the best-effort album-art fetch a finished download (or an album folder) triggers; and `VideoQualityChooser`, which puts the source's real rendition list to the user mid-extraction (once per video, hand-queued downloads only). |
 | `PythonGate.swift` | App-wide async mutex serializing every embedded-Python call, so the two-slot pipeline never runs concurrent interpreter work. |
+| `ExtractionMemory.swift` | What the pipeline learned *this session* about which route actually produces a file — the native extractor's rest, the default path's skip, and the player-client order the forced sweep leads with (see [What the pipeline remembers](#what-the-pipeline-remembers)). |
 | `YouTubeExtractor.swift` | `MediaExtractor` protocol + YoutubeDL-iOS impl + a mock. |
 | `YouTubeKitExtractor.swift` | Native-Swift (b5i/YouTubeKit) primary extractor. |
 | `VimeoExtractor.swift` | Native-Swift Vimeo extractor: finds the (signed) player config for the title, progressive MP4s and HLS playlist — no Python. |
@@ -2294,7 +2295,9 @@ knows it:
    SoundCloud, …) have no such fast fallback and can legitimately be slow, so
    they keep the full 90s timeout and only **retry with the forced clients** if
    the default extraction stalls or fails. This forced-client recovery handles
-   **both audio and video** downloads (see below).
+   **both audio and video** downloads (see below). That order is the *opening*
+   one: within a session it is re-sorted by what has actually been working —
+   see [What the pipeline remembers](#what-the-pipeline-remembers).
 
 If a video exposes **no dedicated audio-only stream**, both extractors fall back
 to downloading the smallest muxed (video+audio) **MP4** and extracting its audio
@@ -2323,6 +2326,18 @@ YouTube's token checks shift mid-download:
   afterwards means a different rendition was served and aborts the download
   rather than corrupting the file, and a mid-file HTTP 200 (Range ignored)
   rewinds and rewrites the file rather than appending foreign bytes.
+- **A rejection on the *opening* chunk gets one refresh, not three.** The
+  refresh budget is for a URL that goes bad mid-flight — that's what resuming
+  is for. A 403 before a single byte has landed is a different animal: nothing
+  expired in the eighty milliseconds since it was resolved, the URL was
+  *minted* rejected because the player client that produced it is gated for
+  this video. Asking that same client for that same rendition returns the same
+  rejection, and the old budget spent three re-resolves (~4s) discovering that,
+  then the forced-client recovery spent three more. One refresh still covers a
+  genuinely stale URL; past that the download fails immediately with
+  `streamRejectedAtStart`, which is what hands the job to the next player
+  client — the one thing that *can* help — seconds sooner. Mid-download
+  rejections and transport stalls keep the full budget.
 - **No silent truncation.** An empty or short body before the advertised size
   is a stall to retry, *not* an end-of-stream; if the remaining bytes can't be
   fetched the download **fails** — a truncated file is never saved as a
@@ -2403,6 +2418,50 @@ package dependency on the **OfflineListen** target in
 without it the recovery compiles out — an AV1-only video then fails with the
 clear `unplayableVideoCodec` message, and a timed-out extraction with the
 timeout error.
+
+### What the pipeline remembers
+
+Every strategy above is tried in a fixed order, and each one that fails costs
+real seconds before the next gets its turn. That order is the right *opening*
+guess and it is only ever a guess: which routes work is decided by YouTube's
+current gating for this device, IP and session — and once a route is failing
+for that reason it will keep failing for every track in the queue. An album of
+thirty tracks used to pay the same dead prefix thirty times.
+
+`ExtractionMemory` is the session-scoped note that stops that. It records the
+outcomes the Log already shows and answers three questions with them:
+
+- **Is the native extractor worth trying?** A YouTubeKit resolve that comes
+  back listing formats with **no stream URL on any of them** (`url=false` down
+  the whole list) says YouTube isn't serving this client playable links at all
+  — a property of the session, not of the video, and the same answer waits for
+  the next track. Three of those in a row and YouTubeKit is **rested for ten
+  minutes**: the composite logs why and goes straight to yt-dlp, saving the
+  ~1.5s resolve per track. Every other outcome — a video with only webm audio,
+  an undecodable codec — still comes back *with* URLs and is genuinely
+  per-video, so it never rests anything.
+- **Which player client should the forced sweep lead with?** The hand-tuned
+  order is re-sorted into three bands: clients that have actually delivered a
+  file (most recent first), then clients nothing is known about in their
+  original order, then the ones whose URLs were rejected at the first byte.
+  So the client that worked on track 1 leads on track 2, and the one that
+  403'd is tried last instead of first — still tried, in case the gating lifts.
+- **Is the default yt-dlp extraction worth trying?** After **two** consecutive
+  downloads whose default-path stream URL was rejected on its opening chunk,
+  the default resolve is a few seconds spent to arrive at a URL that can't be
+  downloaded. The job then steps over it and goes straight to the player
+  clients that have been working. This is the most conservative of the three:
+  it only ever fires when a client has genuinely *worked*, and it re-probes the
+  default path every eighth job — that path stays the better route when it
+  works (a dedicated audio-only stream, no extraction step), so a session whose
+  gating lifts finds its way back on its own.
+
+Nothing here is a retirement. Every verdict is a rest with a timer or a
+counter on it, one success clears the streak that produced it, and none of it
+is persisted — YouTube's gating changes between launches, and a stale verdict
+read off disk would be worse than no memory at all. Each time the memory
+changes the plan it says so in the Log, naming what it learned, so a download
+that took a different route than the section above describes explains itself.
 
 ### Diagnosing failures from the Log
 
@@ -2496,8 +2555,8 @@ first-ever hard video fails cleanly rather than downloading. The forced-client
 fallback also refuses to run while a timed-out extraction is still executing in
 the interpreter, so concurrent extractions can't crash the app. Each failed job
 logs a single `Failure class: …` line (`nsig` | `po-token` | `bot-check` |
-`http-403` | `timeout` | `hls-only` | …) so a week of diagnostics logs can be
-tallied by failure mode.
+`gated-stream` | `http-403` | `timeout` | `hls-only` | …) so a week of
+diagnostics logs can be tallied by failure mode.
 
 The remaining gap — age-gated / members-only content needing a signed-in
 session — is scoped as optional cookie import (Phase 3) in the plan.

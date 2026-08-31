@@ -1338,6 +1338,10 @@ final class DownloadManager: ObservableObject {
             case .hlsOnly: return "hls-only"
             case .unplayableVideoCodec: return "unplayable-codec"
             case .noAudioFormat, .noVideoFormat: return "no-format"
+            // Distinct from the generic http-403 below: this one says the URL
+            // was rejected on its *opening* chunk, so the player client that
+            // minted it is gated rather than the link having expired.
+            case .streamRejectedAtStart: return "gated-stream"
             default: break
             }
         }

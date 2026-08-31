@@ -20,6 +20,16 @@ final class YouTubeKitExtractor: MediaExtractor {
         return isYouTubeHost && Self.videoID(from: url) != nil
     }
 
+    /// Rested after a run of resolves that came back with formats but **no
+    /// stream URL on any of them** — YouTube declining to serve this client,
+    /// which is a property of the session rather than of the video. The
+    /// resolve costs a second and a half and cannot succeed while that holds,
+    /// so an album's worth of them is a minute of pure waiting. See
+    /// `ExtractionMemory`.
+    func skipReason(for _: URL) -> String? {
+        ExtractionMemory.shared.nativeSkipReason()
+    }
+
     /// Which stream a (re-)resolution should pick — mirrors the three selection
     /// rules in `extractMedia` so a mid-download refresh re-picks consistently.
     private enum StreamKind {
@@ -161,6 +171,19 @@ final class YouTubeKitExtractor: MediaExtractor {
         }
         for a in audioFormats.prefix(20) {
             appLog("· audio \(a.mimeType ?? "?") \(Int(a.averageBitrate ?? 0) / 1000)kbps len=\(a.contentLength.map(String.init) ?? "?") url=\(a.url != nil)", level: .debug, category: category)
+        }
+
+        // A resolve that lists formats but carries a URL on none of them is
+        // the one failure worth remembering: it says YouTube isn't handing
+        // this client playable links *at all*, which will be just as true for
+        // the next track in the queue. Every other outcome — a video with only
+        // webm audio, an undecodable codec — still comes back with URLs and is
+        // genuinely per-video, so it must not rest the extractor.
+        let anyStreamURL = videoFormats.contains { $0.url != nil } || audioFormats.contains { $0.url != nil }
+        ExtractionMemory.shared.recordNativeResolve(hadStreamURLs: anyStreamURL)
+        if !anyStreamURL {
+            appLog("No format carries a stream URL — YouTube didn't serve this client any playable links.",
+                   level: .warning, category: category)
         }
 
         // Best decodable audio-only stream (mp4/m4a only — a webm/opus pick

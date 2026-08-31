@@ -38,6 +38,24 @@ enum AudioStreamDownloader {
                          onProgress: @escaping (Double) -> Void) async throws {
         let chunkSize = 5 * 1024 * 1024 // 5 MB
         let maxRefreshes = 3
+        /// Refreshes allowed for a URL the host **rejects outright** (403/410)
+        /// before a single byte has landed.
+        ///
+        /// The full budget above is for a URL that goes bad *mid-flight* —
+        /// googlevideo links expire, and re-resolving to resume from the
+        /// current offset is what saves a half-finished download. A rejection
+        /// on the **opening** chunk is a different animal: nothing expired in
+        /// the eighty milliseconds since it was resolved, the URL was *minted*
+        /// rejected because the player client that produced it is gated for
+        /// this video. Re-resolving asks that same client for that same
+        /// rendition and gets the same rejection back — three times, at a
+        /// second and a half apiece, and then the forced-client recovery
+        /// spends three more. One refresh still covers the genuinely stale
+        /// case; past that, failing immediately hands the job to the next
+        /// player client — which resolves *different* URLs, the one thing
+        /// that can help — several seconds sooner. Transport stalls keep the
+        /// full budget: a different failure with a different cure.
+        let maxRefreshesBeforeFirstByte = 1
         /// Consecutive failures tolerated at one offset before a refresh (and,
         /// with refreshes exhausted, before giving up).
         let maxStalledAttempts = 3
@@ -68,10 +86,10 @@ enum AudioStreamDownloader {
         /// Swaps in a re-resolved URL for the same stream so the loop can
         /// resume from `offset`. Returns false when refreshing isn't possible
         /// (no closure, budget exhausted, or re-resolution came up empty).
-        func tryRefresh(reason: String) async -> Bool {
-            guard let refresh, refreshesUsed < maxRefreshes else { return false }
+        func tryRefresh(reason: String, budget: Int) async -> Bool {
+            guard let refresh, refreshesUsed < budget else { return false }
             refreshesUsed += 1
-            appLog("\(reason) — re-resolving the stream URL (\(refreshesUsed)/\(maxRefreshes)) to resume from \(byteSize(offset))…",
+            appLog("\(reason) — re-resolving the stream URL (\(refreshesUsed)/\(budget))\(offset > 0 ? " to resume from \(byteSize(offset))" : "")…",
                    level: .warning, category: category)
             do {
                 guard let fresh = try await refresh() else {
@@ -98,7 +116,7 @@ enum AudioStreamDownloader {
                 return
             }
             stalledAttempts = 0
-            if await tryRefresh(reason: description) { return }
+            if await tryRefresh(reason: description, budget: maxRefreshes) { return }
             throw error()
         }
 
@@ -139,7 +157,8 @@ enum AudioStreamDownloader {
             // download resumes; a genuine EOF 416s again and we finish.
             if http.statusCode == 416, total == 0, offset > 0 {
                 if eofProbeOffset != offset,
-                   await tryRefresh(reason: "Range beyond reported stream (HTTP 416) at \(byteSize(offset)) with unknown total — probing with a fresh URL") {
+                   await tryRefresh(reason: "Range beyond reported stream (HTTP 416) at \(byteSize(offset)) with unknown total — probing with a fresh URL",
+                                    budget: maxRefreshes) {
                     eofProbeOffset = offset
                     continue
                 }
@@ -153,7 +172,18 @@ enum AudioStreamDownloader {
             // pointless, so go straight to a refresh.
             if http.statusCode == 403 || http.statusCode == 410 || http.statusCode == 416 {
                 stalledAttempts = 0
-                if await tryRefresh(reason: "Stream host rejected the URL (HTTP \(http.statusCode))") { continue }
+                // Before a byte has landed the URL didn't expire — it was
+                // minted rejected — so the budget is one, not three.
+                let budget = offset == 0 ? maxRefreshesBeforeFirstByte : maxRefreshes
+                if await tryRefresh(reason: "Stream host rejected the URL (HTTP \(http.statusCode))",
+                                    budget: budget) { continue }
+                // Distinguish the two shapes of this failure for the caller:
+                // rejected before any data arrived means *this rendition from
+                // this client* is gated and another client is the fix, which
+                // is worth acting on rather than just reporting.
+                if offset == 0 {
+                    throw ExtractorError.streamRejectedAtStart(http.statusCode)
+                }
                 throw ExtractorError.downloadFailed(
                     "Stream host rejected the URL (HTTP \(http.statusCode)) and it couldn't be re-resolved — the link is likely expired or token-gated. Restart the download to fetch a fresh URL.")
             }

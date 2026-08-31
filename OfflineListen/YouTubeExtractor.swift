@@ -33,6 +33,13 @@ enum ExtractorError: LocalizedError {
     case unplayableVideoCodec(String)
     case hlsOnly
     case downloadFailed(String)
+    /// The stream host rejected the URL before a single byte arrived. Split
+    /// out from `downloadFailed` because the two want different treatment: a
+    /// rejection mid-download is a URL that expired and is worth re-resolving,
+    /// while one on the opening chunk says the *rendition itself* is gated for
+    /// the player client that minted it — nothing that client resolves will
+    /// work, and the only thing that helps is a different client.
+    case streamRejectedAtStart(Int)
 
     var errorDescription: String? {
         switch self {
@@ -50,6 +57,8 @@ enum ExtractorError: LocalizedError {
             return "This link only offers HLS/streaming formats, which this app can't download yet (it fetches progressive files). Try a different quality, or a source that offers a direct file."
         case .downloadFailed(let message):
             return message
+        case .streamRejectedAtStart(let status):
+            return "The stream host rejected this player client's URL (HTTP \(status)) before any data arrived — the rendition is token-gated for it. Another player client usually serves the same video."
         }
     }
 }
@@ -165,10 +174,20 @@ protocol MediaExtractor {
     /// primary that's URL-specific (e.g. the YouTube-only native extractor) for
     /// links it can't resolve, instead of failing through it. Defaults to true.
     func canHandle(_ url: URL) -> Bool
+
+    /// Non-nil when this extractor handles `url` but isn't worth *trying*
+    /// right now — the string says why, for the log line the composite writes
+    /// in place of the attempt. Distinct from `canHandle`, which answers
+    /// whether the URL is this extractor's business at all: this one answers
+    /// whether an attempt would buy anything, and exists so a run of
+    /// structural failures (the same verdict on every video in a queue) is
+    /// paid once rather than once per track. Defaults to nil — always attempt.
+    func skipReason(for url: URL) -> String?
 }
 
 extension MediaExtractor {
     func canHandle(_ url: URL) -> Bool { true }
+    func skipReason(for url: URL) -> String? { nil }
 
     /// Convenience without a quality preference — best available.
     func extractMedia(from url: URL,
@@ -221,7 +240,18 @@ final class YoutubeDLExtractor: MediaExtractor {
         if error is URLError { return true }
         if let extractorError = error as? ExtractorError {
             if case .downloadFailed = extractorError { return true }
+            // The most worth retrying of the lot: a different client resolves
+            // a different URL, which is exactly what this failure needs.
+            if case .streamRejectedAtStart = extractorError { return true }
         }
+        return false
+    }
+
+    /// Whether `error` is the "this client's URL was gated from the start"
+    /// verdict — the one the session memory learns from.
+    static func isStreamRejectedAtStart(_ error: Error) -> Bool {
+        guard let extractorError = error as? ExtractorError else { return false }
+        if case .streamRejectedAtStart = extractorError { return true }
         return false
     }
 
@@ -975,9 +1005,24 @@ final class YoutubeDLExtractor: MediaExtractor {
         // track of every album. It stays in the list — last, where it costs
         // nothing until everything else has failed, and where it's ready if
         // YouTube's gating changes again.
-        let clientSets: [[String]] = mode == .video
+        let openingOrder: [[String]] = mode == .video
             ? [["tv"], ["android_vr"], ["android"], ["web_safari"], ["mweb"], ["web"], ["ios"]]
             : [["android_vr"], ["android"], ["tv"], ["web_safari"], ["mweb"], ["web"], ["ios"]]
+
+        // That order is the right *opening* guess, and it is only a guess:
+        // which clients YouTube serves is decided per session, per IP, and a
+        // client that was rejected at the first byte on the last track will be
+        // rejected on this one too. Lead with whatever has actually been
+        // delivering files and sink whatever hasn't, so an album pays the
+        // discovery cost once instead of thirty times.
+        let clientSets = ExtractionMemory.shared.ordered(openingOrder, mode: mode)
+        let openingLabels = openingOrder.map { $0.joined(separator: ",") }
+        let sweepLabels = clientSets.map { $0.joined(separator: ",") }
+        if sweepLabels != openingLabels {
+            let plan = sweepLabels.joined(separator: " → ")
+            let learned = ExtractionMemory.shared.summary(mode: mode)
+            appLog("Forced-client order re-sorted from this session (\(learned)): \(plan)", category: category)
+        }
 
         for clients in clientSets {
             let label = clients.joined(separator: ",")
@@ -1017,7 +1062,10 @@ final class YoutubeDLExtractor: MediaExtractor {
                     : try await downloadBestAudio(from: info, client: label, url: url,
                                                   category: category,
                                                   onDownloadStart: onDownloadStart, onProgress: onProgress)
-                if let media { return media }
+                if let media {
+                    ExtractionMemory.shared.recordClientSuccess(label, mode: mode)
+                    return media
+                }
                 appLog("Forced-client extract: client \(label) returned no usable \(mode == .video ? "H.264/HEVC video" : "audio") — trying next.",
                        category: category)
             } catch {
@@ -1026,6 +1074,9 @@ final class YoutubeDLExtractor: MediaExtractor {
                 // identically on every client — surface them instead of
                 // re-downloading the stream several more times.
                 guard Self.isDownloadStageError(error) else { throw error }
+                if Self.isStreamRejectedAtStart(error) {
+                    ExtractionMemory.shared.recordClientRejectedAtStart(label, mode: mode)
+                }
                 appLog("Forced-client extract: client \(label) download failed (\(error.localizedDescription)) — trying next client.",
                        level: .warning, category: category)
             }
@@ -1514,6 +1565,35 @@ final class YoutubeDLExtractor: MediaExtractor {
             #endif
             await wireJSRuntimeIfSafe(category: category)
 
+            // When this session has already learned that the default client's
+            // stream URLs come back gated — rejected on their opening chunk,
+            // twice running — the default route is several seconds spent to
+            // arrive at a URL that cannot be downloaded. Step over it and go
+            // straight to the player clients that have been serving files.
+            //
+            // Only ever taken when a client has actually *worked*, and only
+            // for a bounded run of jobs before the default path is probed
+            // again: it remains the better route when it works (a dedicated
+            // audio-only stream, no extraction step), so a session whose
+            // gating lifts finds its way back on its own. Python is
+            // bootstrapped by definition here — `pythonBootstrapped` is set by
+            // the first `extractInfo` of the session, and the forced clients
+            // drive the interpreter directly.
+            #if canImport(PythonKit)
+            if Self.isYouTubeURL(url), Self.pythonBootstrapped, orphanedDefaultExtraction == nil,
+               ExtractionMemory.shared.shouldSkipDefaultPath(mode: mode) {
+                appLog("Skipping the default extraction — its stream URLs have been rejected at the first byte this session (\(ExtractionMemory.shared.summary(mode: mode))). Going straight to the player clients that worked…",
+                       category: category)
+                if let media = try await extractViaForcedClients(
+                    url: url, mode: mode, quality: quality, category: category,
+                    onDownloadStart: onDownloadStart, onProgress: onProgress) {
+                    return media
+                }
+                appLog("No player client produced a file — falling back to the default extraction after all.",
+                       level: .warning, category: category)
+            }
+            #endif
+
             // The default web-client extraction (`extractInfo`) must run first: it
             // is the call that bootstraps the embedded Python runtime (PYTHONHOME,
             // the unpacked stdlib, PythonKit's module search path). The forced-
@@ -1605,12 +1685,19 @@ final class YoutubeDLExtractor: MediaExtractor {
             await wireJSRuntimeIfSafe(category: category)
 
             do {
-                return try await downloadUsingDefaultInfo(
+                let media = try await downloadUsingDefaultInfo(
                     formats: formats, info: info, youtubeDL: youtubeDL,
                     url: url, mode: mode, quality: quality, category: category,
                     onDownloadStart: onDownloadStart, onProgress: onProgress)
+                if Self.isYouTubeURL(url) { ExtractionMemory.shared.recordDefaultSuccess(mode: mode) }
+                return media
             } catch {
                 if isCancellation(error) { throw error }
+                // The memory this feeds only steers YouTube's player-client
+                // sweep, so only YouTube's verdicts belong in it.
+                if Self.isYouTubeURL(url), Self.isStreamRejectedAtStart(error) {
+                    ExtractionMemory.shared.recordDefaultRejectedAtStart(mode: mode)
+                }
                 // A failure *after* a successful extraction — the stream URL
                 // rejected even across refreshes, a truncated or unplayable
                 // result, a failed merge — is usually specific to the URLs this

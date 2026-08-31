@@ -47,6 +47,18 @@ final class CompositeExtractor: MediaExtractor {
                                                    onDownloadStart: onDownloadStart,
                                                    onProgress: onProgress)
         }
+        // The URL *is* the primary's business, but something it learned this
+        // session says the attempt would only cost time — the same structural
+        // failure on every video in the queue. Skipping it is worth real
+        // seconds per track, and it re-arms itself, so this is a rest rather
+        // than a retirement.
+        if let reason = primary.skipReason(for: url) {
+            appLog("Skipping \(primaryName) — \(reason). Using \(fallbackName).",
+                   category: "Extract")
+            return try await fallback.extractMedia(from: url, mode: mode, quality: quality,
+                                                   onDownloadStart: onDownloadStart,
+                                                   onProgress: onProgress)
+        }
         do {
             appLog("Trying \(primaryName)…", category: "Extract")
             return try await primary.extractMedia(from: url, mode: mode, quality: quality,
