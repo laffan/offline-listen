@@ -1453,6 +1453,11 @@ final class YoutubeDLExtractor: MediaExtractor {
         let title = info.title ?? url.absoluteString
         let reportedDuration = info.duration
 
+        /// Set when the audio-only pick was resolved fine but the host
+        /// rejected its URL on the opening chunk — which changes what the
+        /// muxed fallback below *means*, and so what it should say.
+        var audioOnlyWasGated = false
+
         // Prefer a dedicated audio-only stream — no transcoding, no extraction
         // step. Keep its real container extension (m4a, mp3, …).
         if let audio = audios.max(by: { $0.abr < $1.abr }),
@@ -1460,25 +1465,45 @@ final class YoutubeDLExtractor: MediaExtractor {
             appLog("Forced-client (\(client)) selected audio-only \(audio.ext) \(Int(audio.abr)) kbps",
                    level: .success, category: category)
             let dest = AppPaths.work.appendingPathComponent("\(UUID().uuidString).\(audio.ext.isEmpty ? "m4a" : audio.ext)")
-            onDownloadStart()
-            try await AudioStreamDownloader.download(
-                baseRequest: audioRequest, expectedSize: nil, to: dest, category: category,
-                refresh: forcedClientRefresher(url: url, label: client, formatID: audio.formatID, category: category),
-                onProgress: onProgress)
-            let verifiedDuration = try await MediaVerifier.verify(dest, isVideo: false, category: category)
-            let duration = reportedDuration > 0 ? reportedDuration : verifiedDuration
-            let size = (try? FileManager.default.attributesOfItem(atPath: dest.path)[.size] as? Int) ?? nil
-            appLog("Forced-client audio download finished: \(dest.lastPathComponent)\(size.map { " (\($0 / 1024) KB)" } ?? "")",
-                   level: .success, category: category)
-            return ExtractedMedia(fileURL: dest, title: title, duration: duration, isVideo: false)
+            do {
+                onDownloadStart()
+                try await AudioStreamDownloader.download(
+                    baseRequest: audioRequest, expectedSize: nil, to: dest, category: category,
+                    refresh: forcedClientRefresher(url: url, label: client, formatID: audio.formatID, category: category),
+                    onProgress: onProgress)
+                let verifiedDuration = try await MediaVerifier.verify(dest, isVideo: false, category: category)
+                let duration = reportedDuration > 0 ? reportedDuration : verifiedDuration
+                let size = (try? FileManager.default.attributesOfItem(atPath: dest.path)[.size] as? Int) ?? nil
+                appLog("Forced-client audio download finished: \(dest.lastPathComponent)\(size.map { " (\($0 / 1024) KB)" } ?? "")",
+                       level: .success, category: category)
+                return ExtractedMedia(fileURL: dest, title: title, duration: duration, isVideo: false)
+            } catch {
+                if isCancellation(error) { throw error }
+                // A gated *adaptive* rendition says nothing about this same
+                // client's **legacy muxed** stream. YouTube's SABR experiment
+                // (yt-dlp #12482) gates the DASH ladder — every adaptive
+                // format shares one playback context — while the old
+                // progressive format carries its own and is still served.
+                // Giving up on the client here throws that away and reaches
+                // for the next client's muxed stream instead, a whole
+                // `extract_info` later, to download the very same thing.
+                // This snapshot already holds the format list, so trying it
+                // costs nothing but the bytes.
+                guard Self.isStreamRejectedAtStart(error), !muxed.isEmpty else { throw error }
+                try? FileManager.default.removeItem(at: dest)
+                audioOnlyWasGated = true
+                appLog("Forced-client (\(client)) audio-only \(audio.formatID) was rejected at the first byte — falling back to this client's own muxed mp4 rather than starting over on another client.",
+                       level: .warning, category: category)
+            }
         }
 
-        // No audio-only stream: take the smallest muxed mp4 and extract its audio.
+        // No usable audio-only stream — none offered, or the one offered was
+        // gated. Take the smallest muxed mp4 and extract its audio.
         guard let video = muxed.min(by: { ($0.height ?? Int.max) < ($1.height ?? Int.max) }),
               let videoRequest = Self.request(for: video) else {
             return nil
         }
-        appLog("Forced-client (\(client)) no audio-only stream — using muxed mp4 \(video.height.map { "\($0)p" } ?? "?p") + audio extraction",
+        appLog("Forced-client (\(client)) \(audioOnlyWasGated ? "audio-only stream gated" : "no audio-only stream") — using muxed mp4 \(video.height.map { "\($0)p" } ?? "?p") + audio extraction",
                level: .warning, category: category)
         var dest = AppPaths.work.appendingPathComponent("\(UUID().uuidString).mp4")
         onDownloadStart()

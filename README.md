@@ -2299,6 +2299,17 @@ knows it:
    one: within a session it is re-sorted by what has actually been working —
    see [What the pipeline remembers](#what-the-pipeline-remembers).
 
+   **A gated audio stream doesn't sink its own client.** When a client's
+   audio-only rendition is rejected on its opening chunk, the fallback is that
+   same client's **legacy muxed mp4**, not the next client. YouTube's SABR
+   experiment ([yt-dlp #12482](https://github.com/yt-dlp/yt-dlp/issues/12482))
+   gates the *adaptive* ladder — every DASH format in a resolve shares one
+   playback context — while the old progressive format carries its own and is
+   still served. Moving on to the next client throws that away and then spends
+   a whole `extract_info` reaching for its muxed stream to download the very
+   same thing. The format list is already in hand, so trying it costs nothing
+   but the bytes.
+
 If a video exposes **no dedicated audio-only stream**, both extractors fall back
 to downloading the smallest muxed (video+audio) **MP4** and extracting its audio
 track to m4a via `VideoAudioExtractor` (AVFoundation's `AVAssetExportSession` —
