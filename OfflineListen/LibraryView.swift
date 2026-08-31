@@ -520,7 +520,12 @@ struct LibraryView: View {
             }
             Section {
                 ForEach(matchedTracks) { track in
-                    row(for: track, in: matchedTracks)
+                    // Results wear their covers, where the flat list doesn't: a
+                    // list you scroll for a title reads fastest as text, but a
+                    // handful of answers to "where is that record?" is picked
+                    // out fastest by the sleeve — the same reason Recent shows
+                    // them.
+                    row(for: track, in: matchedTracks, showsArtwork: true)
                 }
                 if matchedTracks.isEmpty {
                     Text("No tracks match “\(query)”")
@@ -988,11 +993,13 @@ struct LibraryView: View {
     /// One track row. `queue` is the list the row belongs to — what playback
     /// continues through after it, and what the chapter sheet advances within.
     @ViewBuilder
-    private func row(for track: Track, in queue: [Track]) -> some View {
+    private func row(for track: Track, in queue: [Track],
+                     showsArtwork: Bool = false) -> some View {
         let base = TrackRow(
             track: track,
             isCurrent: playback.currentTrack?.id == track.id,
-            onShowChapters: { chapterContext = ChapterContext(track: track, queue: queue) }
+            onShowChapters: { chapterContext = ChapterContext(track: track, queue: queue) },
+            showsArtwork: showsArtwork
         )
             .contentShape(Rectangle())
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {

@@ -41,6 +41,22 @@ final class DownloadJob: ObservableObject, Identifiable {
     /// `VideoQualityChooser`); everything queued as part of a *batch* carries
     /// the standing preference instead, since forty prompts is not a feature.
     let quality: VideoQuality
+    /// The release this job is one track of, set only by `enqueueAlbum` —
+    /// **Download Album**. It's what folds the record's tracks into one
+    /// collapsible group in the Download tab, and it's deliberately narrower
+    /// than "has a `folderID`": a Browse source files its one-off picks into a
+    /// folder too, and a dozen unrelated songs from a feed are a dozen
+    /// downloads, not a record.
+    let albumTitle: String?
+    /// What the queue row should read *before* the download has resolved
+    /// anything — the name and artist the list it was queued from already knew.
+    ///
+    /// Display only, and that's the whole point of it being separate from
+    /// `knownTitle`/`knownArtist`: a Browse feed's title is a video name, not
+    /// catalogue metadata, so it's worth showing in the queue but must not name
+    /// the finished track or talk the AI organizer out of its go at it.
+    let queuedTitle: String?
+    let queuedArtist: String?
 
     @Published var title: String
     /// A live sub-status shown in place of the state label while a long
@@ -65,6 +81,8 @@ final class DownloadJob: ObservableObject, Identifiable {
          spotifyRef: SpotifyRef? = nil, folderID: UUID? = nil,
          artworkURL: String? = nil, replacesTrackID: UUID? = nil,
          knownTitle: String? = nil, knownArtist: String? = nil,
+         albumTitle: String? = nil,
+         queuedTitle: String? = nil, queuedArtist: String? = nil,
          quality: VideoQuality = .best) {
         self.url = url
         self.mode = mode
@@ -76,11 +94,22 @@ final class DownloadJob: ObservableObject, Identifiable {
         self.replacesTrackID = replacesTrackID
         self.knownTitle = Self.cleaned(knownTitle)
         self.knownArtist = Self.cleaned(knownArtist)
+        self.albumTitle = Self.cleaned(albumTitle)
+        self.queuedTitle = Self.cleaned(queuedTitle)
+        self.queuedArtist = Self.cleaned(queuedArtist)
+        // A row used to read as the raw URL until the extraction came back with
+        // a title, which is the least useful thing a queue of forty links can
+        // say. Anything the caller already knew goes up straight away instead —
+        // the catalogue's own title first, then whatever the list it came from
+        // was showing — and the extracted title replaces it when it lands.
         if let spotifyRef {
             self.title = DownloadJob.spotifyPlaceholder(for: spotifyRef)
+        } else if let named = self.knownTitle ?? self.queuedTitle {
+            self.title = named
         } else {
             self.title = isPlaylist ? "Playlist" : url
         }
+        self.artist = self.knownArtist ?? self.queuedArtist
         self.state = .queued
     }
 
@@ -426,6 +455,10 @@ private struct DownloadRecord: Codable {
     /// YouTube video's name while its siblings wear the record's.
     var knownTitle: String?
     var knownArtist: String?
+    /// The release an album download's track belongs to, so a queue resumed
+    /// after a relaunch comes back grouped the way it went in. Optional so a
+    /// file written by an older build still decodes.
+    var albumTitle: String?
     /// Starts this job has had with no verdict (see `DownloadJob.startAttempts`).
     /// Optional so a file written by an older build still decodes.
     var startAttempts: Int?
@@ -441,6 +474,34 @@ private struct DownloadArchive: Codable {
     /// Album folder id (as a string, since JSON keys are strings) → source URL
     /// → position in the tracklist.
     var albumOrders: [String: [String: Int]]
+}
+
+/// How far a whole record has got, as the Download tab's album group reads it
+/// off its header.
+///
+/// It lives on the manager rather than being worked out in the view because of
+/// how the queue publishes: a `DownloadJob` is an `ObservableObject` of its own
+/// precisely so one row can redraw without the other four hundred doing the
+/// same — which means a header sitting *above* a dozen jobs would never hear a
+/// thing from any of them. The manager watches them all anyway, so it keeps the
+/// tally and publishes that.
+struct AlbumDownloadProgress: Equatable {
+    /// The release's name, as `enqueueAlbum` was given it.
+    var title: String
+    var total: Int
+    /// Tracks that landed in the library.
+    var finished: Int
+    /// Tracks that gave up (failed, or cancelled by hand). Counted as settled,
+    /// so a record with a miss in it still reaches the end of its bar rather
+    /// than sitting at 11/12 for good.
+    var stopped: Int
+    /// 0…1 across the whole record — **quantized to whole percents**, since
+    /// every distinct value is a redraw of the queue and the bar it draws is a
+    /// couple of hundred points wide.
+    var fraction: Double
+
+    var settled: Int { finished + stopped }
+    var isComplete: Bool { total > 0 && settled >= total }
 }
 
 /// Owns the download queue and runs up to `maxConcurrent` jobs at once:
@@ -460,6 +521,10 @@ final class DownloadManager: ObservableObject {
     }
 
     @Published private(set) var jobs: [DownloadJob] = []
+    /// Album folder id → how far that record's downloads have got. Rebuilt
+    /// whenever the queue moves and republished only when the numbers actually
+    /// change (see `AlbumDownloadProgress`).
+    @Published private(set) var albumProgress: [UUID: AlbumDownloadProgress] = [:]
     /// A resolved playlist waiting for the user to choose entries (drives the
     /// selection popup). Settable so the popup binding can clear it on dismiss.
     @Published var pendingPlaylist: PendingPlaylist?
@@ -563,6 +628,12 @@ final class DownloadManager: ObservableObject {
                                   artworkURL: record.artworkURL,
                                   knownTitle: record.knownTitle,
                                   knownArtist: record.knownArtist,
+                                  albumTitle: record.albumTitle,
+                                  // What the row last read, handed back as the
+                                  // display naming so a restarted job doesn't
+                                  // fall back to showing its URL.
+                                  queuedTitle: record.title,
+                                  queuedArtist: record.artist,
                                   // Never `.ask` on a resumed job: nobody is
                                   // watching a queue that restarted itself.
                                   quality: Self.quality(asking: false,
@@ -579,6 +650,9 @@ final class DownloadManager: ObservableObject {
             }
             return job
         }
+        // A queue restored from disk comes back grouped, so the tally has to be
+        // there before the first frame — nothing else will have written it yet.
+        refreshAlbumProgress()
     }
 
     /// How many times the queue may start one job that never reaches a verdict
@@ -633,11 +707,56 @@ final class DownloadManager: ObservableObject {
         jobs.contains { $0.state == .queued || $0.state.isActive }
     }
 
+    /// Recomputes the per-album tally and publishes it if anything moved.
+    ///
+    /// Called from `persistHistory` (which every queue change already goes
+    /// through) and from the download pipeline's own progress and state
+    /// updates, which don't. Cheap enough to run on either: it's one pass over
+    /// a list capped at a few hundred, and the equality check means a queue
+    /// with no album in it never publishes at all.
+    func refreshAlbumProgress() {
+        var built: [UUID: AlbumDownloadProgress] = [:]
+        var weights: [UUID: Double] = [:]
+        for job in jobs {
+            guard let id = job.folderID, let title = job.albumTitle else { continue }
+            var entry = built[id] ?? AlbumDownloadProgress(title: title, total: 0,
+                                                           finished: 0, stopped: 0,
+                                                           fraction: 0)
+            entry.total += 1
+            switch job.state {
+            case .finished: entry.finished += 1
+            case .failed, .cancelled: entry.stopped += 1
+            default: break
+            }
+            built[id] = entry
+            weights[id, default: 0] += Self.completionWeight(of: job)
+        }
+        for (id, weight) in weights {
+            guard var entry = built[id], entry.total > 0 else { continue }
+            entry.fraction = ((weight / Double(entry.total)) * 100).rounded() / 100
+            built[id] = entry
+        }
+        if built != albumProgress { albumProgress = built }
+    }
+
+    /// One job's share of its album's bar: a job that has stopped is a whole
+    /// track however it stopped, one being written out is as good as done, one
+    /// mid-download is worth what it has fetched, and anything still waiting is
+    /// worth nothing.
+    private static func completionWeight(of job: DownloadJob) -> Double {
+        switch job.state {
+        case .finished, .failed, .cancelled, .converting: return 1
+        case .downloading: return min(max(job.progress, 0), 1)
+        default: return 0
+        }
+    }
+
     /// Writes the finished/failed/cancelled jobs to disk (newest first, capped).
     /// Each record snapshots the live library track's current title/artist when
     /// it still exists (so post-AI metadata is captured), falling back to the
     /// job's own last-known values. Safe to call after any queue change.
     func persistHistory() {
+        refreshAlbumProgress()
         let records: [DownloadRecord] = jobs.compactMap { job in
             let stateRaw: String
             var failure: String? = nil
@@ -670,6 +789,7 @@ final class DownloadManager: ObservableObject {
                                   failureMessage: failure,
                                   knownTitle: job.knownTitle,
                                   knownArtist: job.knownArtist,
+                                  albumTitle: job.albumTitle,
                                   startAttempts: job.startAttempts)
         }
         // The cap is on *history*: unfinished work is never dropped to make
@@ -788,10 +908,14 @@ final class DownloadManager: ObservableObject {
     func enqueue(urlString: String, mode: DownloadMode, folderID: UUID? = nil,
                  artworkURL: String? = nil, replacesTrackID: UUID? = nil,
                  knownTitle: String? = nil, knownArtist: String? = nil,
+                 albumTitle: String? = nil,
+                 queuedTitle: String? = nil, queuedArtist: String? = nil,
                  asksQuality: Bool = false) {
         let job = makeJob(urlString: urlString, mode: mode, folderID: folderID,
                           artworkURL: artworkURL, replacesTrackID: replacesTrackID,
                           knownTitle: knownTitle, knownArtist: knownArtist,
+                          albumTitle: albumTitle,
+                          queuedTitle: queuedTitle, queuedArtist: queuedArtist,
                           asksQuality: asksQuality)
         jobs.insert(job, at: 0)
         if case .failed = job.state {
@@ -814,6 +938,11 @@ final class DownloadManager: ObservableObject {
         var artworkURL: String? = nil
         var knownTitle: String? = nil
         var knownArtist: String? = nil
+        /// What the list this link came from was already showing for it — the
+        /// queue row reads that instead of a URL while it waits its turn. See
+        /// `DownloadJob.queuedTitle`.
+        var queuedTitle: String? = nil
+        var queuedArtist: String? = nil
     }
 
     /// Queues a whole set of links as **one** change to the queue.
@@ -833,12 +962,15 @@ final class DownloadManager: ObservableObject {
     /// at the top amounted to: the queue lists newest-first, and the scheduler
     /// takes the oldest queued job — so the first link handed over is still
     /// the first one downloaded, and a record still arrives in tracklist order.
-    func enqueueBatch(_ links: [QueuedLink], mode: DownloadMode, folderID: UUID? = nil) {
+    func enqueueBatch(_ links: [QueuedLink], mode: DownloadMode, folderID: UUID? = nil,
+                      albumTitle: String? = nil) {
         guard !links.isEmpty else { return }
         let built = links.map { link in
             makeJob(urlString: link.url, mode: mode, folderID: folderID,
                     artworkURL: link.artworkURL,
                     knownTitle: link.knownTitle, knownArtist: link.knownArtist,
+                    albumTitle: albumTitle,
+                    queuedTitle: link.queuedTitle, queuedArtist: link.queuedArtist,
                     asksQuality: false)
         }
         jobs.insert(contentsOf: built.reversed(), at: 0)
@@ -857,11 +989,15 @@ final class DownloadManager: ObservableObject {
     private func makeJob(urlString: String, mode: DownloadMode, folderID: UUID?,
                          artworkURL: String?, replacesTrackID: UUID? = nil,
                          knownTitle: String?, knownArtist: String?,
+                         albumTitle: String? = nil,
+                         queuedTitle: String? = nil, queuedArtist: String? = nil,
                          asksQuality: Bool) -> DownloadJob {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         let job = DownloadJob(url: trimmed, mode: mode, folderID: folderID,
                               artworkURL: artworkURL, replacesTrackID: replacesTrackID,
                               knownTitle: knownTitle, knownArtist: knownArtist,
+                              albumTitle: albumTitle,
+                              queuedTitle: queuedTitle, queuedArtist: queuedArtist,
                               quality: Self.quality(asking: asksQuality, mode: mode))
         if URL(string: trimmed) == nil || !trimmed.lowercased().hasPrefix("http") {
             job.state = .failed(ExtractorError.invalidURL.localizedDescription)
@@ -938,6 +1074,12 @@ final class DownloadManager: ObservableObject {
         // restarted album reading differently from the rest.
         let knownTitle = job.knownTitle
         let knownArtist = job.knownArtist
+        // Same for the display naming and the record it belongs to: a retried
+        // track keeps its place in its album's group rather than reappearing
+        // on its own as a bare URL.
+        let queuedTitle = job.queuedTitle
+        let queuedArtist = job.queuedArtist
+        let albumTitle = job.albumTitle
         remove(job)
         appLog("Restarting: \(url)", category: "Queue")
         // Re-read the reference from the URL rather than trusting the job's:
@@ -953,6 +1095,8 @@ final class DownloadManager: ObservableObject {
             enqueue(urlString: url, mode: mode, folderID: folderID, artworkURL: artworkURL,
                     replacesTrackID: replacesTrackID,
                     knownTitle: knownTitle, knownArtist: knownArtist,
+                    albumTitle: albumTitle,
+                    queuedTitle: queuedTitle, queuedArtist: queuedArtist,
                     asksQuality: folderID == nil && replacesTrackID == nil)
         }
     }
@@ -1220,15 +1364,25 @@ final class DownloadManager: ObservableObject {
                 mode: job.mode,
                 quality: job.quality,
                 onDownloadStart: {
-                    Task { @MainActor in job.state = .downloading }
+                    Task { @MainActor in
+                        job.state = .downloading
+                        self.refreshAlbumProgress()
+                    }
                 },
                 onProgress: { fraction in
-                    Task { @MainActor in job.progress = fraction }
+                    Task { @MainActor in
+                        job.progress = fraction
+                        self.refreshAlbumProgress()
+                    }
                 }
             )
 
             job.state = .converting
-            job.title = extracted.title
+            // The catalogue's own title, where the job carried one, stays up:
+            // the row settles on it a moment later anyway, and flickering
+            // through the YouTube video's name on the way reads as a mistake.
+            job.title = job.knownTitle ?? extracted.title
+            refreshAlbumProgress()
 
             // Move the downloaded file into the library under a title-based name,
             // keeping its real extension (m4a for audio, mp4 for video).
@@ -1659,7 +1813,7 @@ final class DownloadManager: ObservableObject {
                        artworkURL: $0.artworkURL ?? artworkURL,
                        knownTitle: $0.title,
                        knownArtist: $0.artist)
-        }, mode: mode, folderID: album.id)
+        }, mode: mode, folderID: album.id, albumTitle: album.name)
         let skipped = tracks.count - missing.count
         appLog("Queued \(missing.count) track(s) from \"\(album.name)\" into a library folder\(skipped > 0 ? " — \(skipped) already there" : "").",
                category: "Queue")
@@ -1672,10 +1826,12 @@ final class DownloadManager: ObservableObject {
     /// generic "Browse" folder.
     func enqueue(urlString: String, mode: DownloadMode, browseFolderNamed folderName: String,
                  artworkURL: String? = nil,
-                 knownTitle: String? = nil, knownArtist: String? = nil) {
+                 knownTitle: String? = nil, knownArtist: String? = nil,
+                 queuedTitle: String? = nil, queuedArtist: String? = nil) {
         let folder = folder(named: folderName, fallback: "Browse")
         enqueue(urlString: urlString, mode: mode, folderID: folder.id, artworkURL: artworkURL,
-                knownTitle: knownTitle, knownArtist: knownArtist)
+                knownTitle: knownTitle, knownArtist: knownArtist,
+                queuedTitle: queuedTitle, queuedArtist: queuedArtist)
     }
 
     /// The batch form of the above — a source's **Select** ▸ Download, whose

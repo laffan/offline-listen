@@ -51,7 +51,10 @@ vertical space goes to the content instead.
    aside while it does, since a search answers across all of them). Matching
    ignores
    case and accents, so "beyonce" finds "Beyoncé", and the media-type filter
-   still applies. Results come back **as you type** — see
+   still applies. Result rows wear their **album art** where the flat list
+   doesn't: a list you scroll for a title reads fastest as text, but a handful
+   of answers to "where is that record?" is picked out fastest by the sleeve —
+   the same reason Recent shows them. Results come back **as you type** — see
    [Why the library is fast](#why-the-library-is-fast) for what that costs.
    A **filter** (All / Music /
    Podcasts / Video) sits at the top of the **All** tab. Swipe **left**
@@ -94,7 +97,13 @@ vertical space goes to the content instead.
    track you keep going back to. **Swipe a row right** to **Pin** it and it
    joins a **Pinned** folder at the top of the tab — a folder row like any
    other (pin glyph, its count, tap to twirl it open and shut, and it stays put
-   at the head of the list while the log scrolls past under it). Newest pin
+   at the head of the list while the log scrolls past under it). A **border in
+   the pin's own orange** runs around the whole folder — header and tracks
+   together — so the kept set reads as an area of its own rather than as a few
+   more rows of the log. A `List` draws rows and not boxes, so it's assembled a
+   row at a time: the rows inside carry the side rails, the header caps it, and
+   whichever row is last closes it — which is the header itself while the
+   folder is shut. Newest pin
    first; pinning the same track twice lifts it rather than listing it again,
    since this one *is* a set. Tapping a pinned track plays **through the pinned
    folder**, the way any curated folder plays. Swipe right again — or use **Pin
@@ -296,9 +305,40 @@ vertical space goes to the content instead.
    yt-dlp supports** work — YouTube, Vimeo, SoundCloud and ~hundreds more — not
    just YouTube — plus **Spotify** links, which take a different route (see
    **Spotify links** below). Swipe a row for **Cancel** (active/queued), **Restart**, or
-   **Clear**; tap a finished row to play it. Each finished row shows the track's
+   **Clear**; tap a finished row to play it. Every row shows the track's
    **title and artist** (kept in step with the Library, so an AI-cleaned name
-   shows here too). The queue is a **running history** — it persists across
+   shows here too) — including the rows that haven't downloaded yet, which used
+   to read as the raw URL until their extraction came back. Anything the list
+   that queued them already knew goes up straight away instead: the catalogue's
+   own title and artist for a discography pick, and for a Browse row or a
+   search hit whatever that row was showing. That naming is **display only** —
+   a feed's title is a video name, not catalogue metadata, so the finished
+   track is still named by the download and still gets the AI organizer's go at
+   it.
+
+   **A record queued whole is one row.** **Browse ▸ Download Album** puts a
+   dozen jobs in the queue at once, and a dozen rows of one record buries
+   everything else in the list. They fold into a single **collapsible group**
+   instead — **collapsed by default**, since a record you asked for whole is
+   one thing you asked for — wearing the album's **cover** and name, how far
+   along it is ("7 of 12 tracks · 61%"), and one **progress bar across the
+   whole record**. Twirl it open for the individual tracks, which are ordinary
+   queue rows with their own swipes. Only an album groups: a Browse source
+   files its one-off picks into a folder too, and a dozen unrelated songs from
+   a feed are a dozen downloads, not a record. Finishing a half-landed album
+   (Download Album again on one that crashed partway) joins the group it
+   belongs to rather than starting a second one, and the grouping survives a
+   relaunch with the queue.
+
+   The tally behind that bar is kept by the **queue**, not worked out by the
+   view. Each job is an `ObservableObject` of its own precisely so one row can
+   redraw without the other four hundred doing the same — which means a header
+   sitting *above* a dozen of them would never hear a thing from any of them.
+   The manager is watching all of them anyway, so it keeps the count and
+   publishes it, quantized to whole percents: every distinct value is a redraw
+   of the queue, and the bar it draws is a couple of hundred points wide.
+
+   The queue is a **running history** — it persists across
    relaunches (`Documents/downloads.json`, capped at the 500 most recent), so
    what you've downloaded stays listed until you **Clear** it; only in-flight
    jobs are dropped on quit. The tab's **badge** shows how many downloads are
@@ -591,7 +631,12 @@ actions per item, both acting in the mode set by the **Audio/Video toggle**
 atop the Sources screen:
 
 - **Download** — sends the link straight to the download queue in the
-  toggle's mode. Browse downloads are filed into a **library folder named
+  toggle's mode, **with the row's own name and artist**: the list has them
+  already, and a queue that reads as forty URLs tells you nothing about what's
+  still to arrive. It's display naming only — a feed's title is a video name,
+  not catalogue metadata, so the finished track is still named by the download
+  and still gets the AI organizer's go at it. Browse downloads are filed into a
+  **library folder named
   after the source** (a "Brian Eno" Discography lands in a "Brian Eno"
   folder), so everything from one source stays together; those tracks, being
   unlistened, still surface in the **Inbox** until you play them. Once the
@@ -860,13 +905,16 @@ a **Find** field — at both levels:
   switch settled on, in the field's own material and corner radius so the two
   read as one control with a switch on the end. (Inside the field, as it used
   to be, three targets meant three caption-sized icons squeezed between the
-  text and the edge.) The placeholder follows the target:
-  - **Find Genre** — the genre index.
-  - **Find Artist** — **every artist in the dataset** (~470k unique names),
-    most popular matches first, each with its home genre beneath; tapping one
-    opens that genre with the artist selected, centered and previewing.
-    Searching that many rows per keystroke is what the bundled **artist
-    index** exists for (see the "Why it isn't laggy" notes below).
+  text and the edge.) The placeholder follows the target, and they run
+  **Spotify, artist, genre** — the order they're listed in below, with
+  **Search Spotify** the one Find opens on. A name typed into Find is nearly
+  always an artist you want to hear rather than a genre you want to fly to, and
+  the live catalogue is the only target that can answer for an artist the
+  frozen dataset never had; the dataset's own artist index is the offline
+  answer to the same question, and the genre index — which the map in front of
+  you is already showing — comes last. Without Spotify credentials the target
+  isn't offered at all, so Find opens on **Find Artist** instead (and falls
+  back to it if the credentials are withdrawn while it's selected).
   - **Search Spotify** — offered only with credentials saved, because it's the
     one target that leaves the device. It asks Spotify's own catalogue rather
     than the frozen dataset, so it reaches artists the 2024 scrape never had
@@ -876,6 +924,13 @@ a **Find** field — at both levels:
     re-opens — there's no place on the map to send it back to. It's debounced
     twice as hard as the local search, since every keystroke past the delay is
     a real request.
+  - **Find Artist** — **every artist in the dataset** (~470k unique names),
+    most popular matches first, each with its home genre beneath; tapping one
+    opens that genre with the artist selected, centered and previewing.
+    Searching that many rows per keystroke is what the bundled **artist
+    index** exists for (see the "Why it isn't laggy" notes below).
+  - **Find Genre** — the genre index. Last of the three, and the one to switch
+    to when the field is meant to narrow the **list** rather than find a name.
 - **History** is the visit log, newest first: every genre you've opened
   (guitars icon), every artist you've tapped (mic icon, with their genre
   beneath) and every Spotify search you've followed, each in its map color
@@ -1043,7 +1098,10 @@ listen-first modal, walking the rest of the release) and misses dim to "no
 match" — no picker popup. A single-track pick goes in **unfiled**: it shows
 in the Library's **All** tab (and the Inbox) rather than an album folder.
 **Download Album** is the opposite case and files the whole record into a
-folder of its own, cover art and all.
+folder of its own, cover art and all — and its jobs arrive in the Download tab
+as a **single collapsible group** wearing that cover, rather than as a dozen
+rows burying whatever else is in the queue (see the
+[Download tab](#whats-here)).
 
 **It resumes rather than restarts.** Before queueing anything it looks for the
 record *in the library*: the folder it would file into, and — since the same
@@ -1473,7 +1531,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `Models.swift` | `Track`, `Folder`, `DownloadMode`, `LibraryFilter`, `FolderSort`, `FolderViewMode`, paths, helpers. |
 | `LibraryStore.swift` | Persists the library to `Documents/library.json` and folders to `Documents/folders.json`; owns the local moves across the sync boundary (queueing replica ops), the importer's reconcile primitives, and the mixtape/album conversions — including the album cover write that lands on the folder *and* every song in it, and the reset that puts the downloaded one (or a colour) back. |
 | `LocalSync.swift` | `LocalSyncStore` — the sync folder's security-scoped bookmark, the stamped manifest + journaled exporter, the coordinated importer (placeholder-aware copies), kqueue monitoring, and the off-main tree scan. |
-| `DownloadManager.swift` | Download queue (two concurrent slots) + `DownloadJob` + persisted history; `enqueueAlbum`, which files a whole release into one folder in tracklist order with the catalogue's own titles/artists; `ArtworkFetcher`, the best-effort album-art fetch a finished download (or an album folder) triggers; and `VideoQualityChooser`, which puts the source's real rendition list to the user mid-extraction (once per video, hand-queued downloads only). |
+| `DownloadManager.swift` | Download queue (two concurrent slots) + `DownloadJob` + persisted history; `enqueueAlbum`, which files a whole release into one folder in tracklist order with the catalogue's own titles/artists and marks its jobs so the Download tab groups them; `AlbumDownloadProgress`, the per-record tally the group's header reads (the jobs publish only to their own rows); `ArtworkFetcher`, the best-effort album-art fetch a finished download (or an album folder) triggers; and `VideoQualityChooser`, which puts the source's real rendition list to the user mid-extraction (once per video, hand-queued downloads only). |
 | `PythonGate.swift` | App-wide async mutex serializing every embedded-Python call, so the two-slot pipeline never runs concurrent interpreter work. |
 | `ExtractionMemory.swift` | What the pipeline learned *this session* about which route actually produces a file — the native extractor's rest, the default path's skip, and the player-client order the forced sweep leads with (see [What the pipeline remembers](#what-the-pipeline-remembers)). |
 | `YouTubeExtractor.swift` | `MediaExtractor` protocol + YoutubeDL-iOS impl + a mock. |
@@ -1501,7 +1559,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `SpotifySettings.swift` | `SpotifySettingsStore` — the Keychain-backed client id/secret (mirrors `AISettingsStore`). |
 | `SpotifyResolver.swift` | Spotify metadata → `ResolvedPlaylist`: ISRC-first YouTube matching with a duration gate, bounded and concurrent. |
 | `AIOrganizer.swift` | Builds the prompt, calls the API, writes music/podcast + clean metadata back to the library. |
-| `BrowseModels.swift` | `BrowseSourceKind`, `BrowseSource`, `BrowseItem` + status — the Browse tab's data model. |
+| `BrowseModels.swift` | `BrowseSourceKind`, `BrowseSource`, `BrowseItem` + status — the Browse tab's data model. `BrowseItem.naming` is the shared "Artist — Song" split the rows, the preview modal's lock-screen metadata and the download queue all name items by. |
 | `BrowseStore.swift` | Persists sources/items to `Documents/browse.json`; orchestrates refreshes and the new/downloaded/saved/discarded lifecycle. |
 | `FeedParser.swift` | Minimal RSS 2.0 + Atom parser (XMLParser) shared by the YouTube feeds and the generic RSS reader. |
 | `BrowseFetchers.swift` | YouTube channel/playlist feed fetch (+ channel-id resolution by page scrape), the YouTube-link-filtered RSS reader, and the search-result resolver. |
@@ -1518,8 +1576,8 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `EveryNoiseData/` | Bundled (folder reference): `genres.json` index + per-genre artist shards from the one-time `tools/everynoise/scrape.py`, plus the derived `artists.idx.z` from `build_artist_index.py`. |
 | `BrowseSourceView.swift` | One source's items with per-row Download/Preview/Discard, plus a **Select** mode for bulk download; also `BrowseTrackStatusButton`, the green play button every browse list shows once a download is in the library. |
 | `BrowsePreviewView.swift` | The preview modal: pipeline download, mini player with prev/play-pause/next over the queue it was opened with (auto-advancing at the end of each track — off its own frozen-playhead watchdog, not just the end notification — phone locked or not), the lock-screen metadata it borrows while it plays, Save/Discard. |
-| `*View.swift` | The five SwiftUI screens, in tab order (Browse, Library, Player, Download, Settings — which embeds the Log); none of them sets a navigation title. `LibraryView.swift` also holds `LibraryTab`, the Recent/Folders/Inbox/Watch/All strip, and the Folders tab's two shapes (the list, and the cover view's album grid). `PlayerView.swift` also holds the tap-to-seek scrubber, the caption overlay (and its own 5 Hz playhead clock), the `MiniPlayerBar` the other tabs inset above the tab bar, and the album-art loaders (`TrackArtwork`, `FolderArtwork`, `FolderCover`) — each a bounded `ImageCache` with a full decode for the big slots and an ImageIO thumbnail for the row-sized ones. |
-| `FolderView.swift` | Folder detail (tap-to-play, reorder, subfolders, mixtape header/Edit Cover, the album sleeve that opens its art options and the Discography row beneath its tracks), the discography push a library album makes, plus the Library's Inbox and Recent tabs. |
+| `*View.swift` | The five SwiftUI screens, in tab order (Browse, Library, Player, Download, Settings — which embeds the Log); none of them sets a navigation title. `DownloadView.swift` also holds the queue's album grouping — the collapsible record with its cover, count and whole-album bar. `LibraryView.swift` also holds `LibraryTab`, the Recent/Folders/Inbox/Watch/All strip, and the Folders tab's two shapes (the list, and the cover view's album grid). `PlayerView.swift` also holds the tap-to-seek scrubber, the caption overlay (and its own 5 Hz playhead clock), the `MiniPlayerBar` the other tabs inset above the tab bar, and the album-art loaders (`TrackArtwork`, `FolderArtwork`, `FolderCover`) — each a bounded `ImageCache` with a full decode for the big slots and an ImageIO thumbnail for the row-sized ones. |
+| `FolderView.swift` | Folder detail (tap-to-play, reorder, subfolders, mixtape header/Edit Cover, the album sleeve that opens its art options and the Discography row beneath its tracks), the discography push a library album makes, plus the Library's Inbox and Recent tabs — the latter including the pinned folder and the row-by-row frame that draws its border. |
 | `MixtapeViews.swift` | Mixtape banner rendering (non-destructive crop), the shared folder-row label, and the Edit Cover sheet (PhotosPicker + drag/pinch + font picker). |
 | `AlbumViews.swift` | The album side of a folder: the stand-in colour palette, the square sleeve (cover or colour) the folder screen and the cover grid draw, the grid's own cell, and the Album Art sheet — PhotosPicker, square framing, and the crop that turns the framing into the JPEG copied onto every song. |
 | `WatchFolderView.swift` | The phone's Library **Watch** tab (manage what's been sent to the watch). |

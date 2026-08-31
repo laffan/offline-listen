@@ -18,6 +18,10 @@ struct DownloadView: View {
     @State private var searchResults: DownloadSearchResults?
     /// A query that came back empty (drives the failure alert).
     @State private var failedQuery: String?
+    /// Which album groups are twirled open. Empty by default — a record put in
+    /// the queue whole is *one* thing you asked for, and twelve rows of it
+    /// burying everything else is the reason the grouping exists.
+    @State private var expandedAlbums: Set<UUID> = []
 
     /// The input reads as a search term when it's non-empty and contains no
     /// downloadable link — then the button flips from Download to Search. A
@@ -44,10 +48,21 @@ struct DownloadView: View {
                     .frame(maxHeight: .infinity)
                 } else {
                     List {
-                        ForEach(downloads.jobs) { job in
-                            DownloadJobRow(job: job)
-                                .contentShape(Rectangle())
-                                .onTapGesture { playFinished(job) }
+                        ForEach(listItems) { item in
+                            switch item {
+                            case .job(let job):
+                                jobRow(job)
+                            case .album(let album):
+                                DisclosureGroup(isExpanded: expansion(of: album.id)) {
+                                    ForEach(album.jobs) { job in
+                                        jobRow(job)
+                                    }
+                                } label: {
+                                    AlbumDownloadGroupHeader(albumID: album.id,
+                                                             title: album.title,
+                                                             count: album.jobs.count)
+                                }
+                            }
                         }
                     }
                     .listStyle(.plain)
@@ -217,6 +232,47 @@ struct DownloadView: View {
         }
     }
 
+    private func jobRow(_ job: DownloadJob) -> some View {
+        DownloadJobRow(job: job)
+            .contentShape(Rectangle())
+            .onTapGesture { playFinished(job) }
+    }
+
+    /// The queue as this screen lists it: an album's tracks folded into one
+    /// collapsible group, everything else a row of its own.
+    ///
+    /// A record's jobs go in as one contiguous batch, so the group takes the
+    /// place of the first of them and the rest simply drop out of the top
+    /// level. Finishing a half-landed album (Download Album on a record that
+    /// crashed partway) queues a second batch for the same folder, and those
+    /// join the group they belong to rather than starting a second one.
+    private var listItems: [DownloadListItem] {
+        var members: [UUID: [DownloadJob]] = [:]
+        for job in downloads.jobs {
+            guard let id = job.folderID, job.albumTitle != nil else { continue }
+            members[id, default: []].append(job)
+        }
+        var items: [DownloadListItem] = []
+        var placed: Set<UUID> = []
+        for job in downloads.jobs {
+            guard let id = job.folderID, let title = job.albumTitle else {
+                items.append(.job(job))
+                continue
+            }
+            guard placed.insert(id).inserted else { continue }
+            items.append(.album(AlbumDownloadGroup(id: id, title: title,
+                                                   jobs: members[id] ?? [job])))
+        }
+        return items
+    }
+
+    private func expansion(of albumID: UUID) -> Binding<Bool> {
+        Binding(get: { expandedAlbums.contains(albumID) },
+                set: { open in
+                    if open { expandedAlbums.insert(albumID) } else { expandedAlbums.remove(albumID) }
+                })
+    }
+
     /// Tapping a finished download plays it and switches to the player.
     private func playFinished(_ job: DownloadJob) {
         guard job.state == .finished,
@@ -224,6 +280,106 @@ struct DownloadView: View {
               let track = library.tracks.first(where: { $0.id == id }) else { return }
         playback.play(track, in: library.activeTracks)
         onPlay()
+    }
+}
+
+/// One album's worth of the queue: the folder its tracks are filing into, the
+/// release's name, and the jobs themselves in tracklist order.
+private struct AlbumDownloadGroup: Identifiable {
+    let id: UUID
+    let title: String
+    let jobs: [DownloadJob]
+}
+
+/// One row of the Download tab's list — a job on its own, or a whole record.
+private enum DownloadListItem: Identifiable {
+    case job(DownloadJob)
+    case album(AlbumDownloadGroup)
+
+    var id: String {
+        switch self {
+        case .job(let job): return job.id.uuidString
+        case .album(let album): return "album:\(album.id.uuidString)"
+        }
+    }
+}
+
+/// The header of an album's group: its sleeve, its name, how much of it has
+/// landed, and one bar across the whole record.
+///
+/// The counts come off `DownloadManager.albumProgress` rather than from the
+/// jobs directly — a job publishes to its own row and nowhere else, so a header
+/// reading their properties would simply never redraw (see
+/// `AlbumDownloadProgress`).
+private struct AlbumDownloadGroupHeader: View {
+    @EnvironmentObject private var downloads: DownloadManager
+    @EnvironmentObject private var library: LibraryStore
+
+    /// The album folder the record's tracks are filing into — also the group's
+    /// identity, and how its cover is found.
+    let albumID: UUID
+    let title: String
+    /// How many jobs the group holds, for the moment before the tally lands.
+    let count: Int
+
+    private var progress: AlbumDownloadProgress? { downloads.albumProgress[albumID] }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            cover
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(1)
+                Text(statusLine)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                if let progress, !progress.isComplete {
+                    ProgressView(value: progress.fraction)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    /// The release's cover, drawn the same way the Library's album rows draw
+    /// it — the art the download attached to the folder, or the album's
+    /// stand-in colour until it lands. A record whose folder has since been
+    /// deleted (its downloads outliving it in the history) keeps a plain
+    /// square rather than nothing at all.
+    @ViewBuilder
+    private var cover: some View {
+        if let folder = library.folder(withID: albumID) {
+            AlbumCoverArt(folder: folder,
+                          image: FolderCover.thumbnail(for: folder,
+                                                       tracks: library.tracks(in: folder.id)),
+                          cornerRadius: 5)
+                .frame(width: 40, height: 40)
+        } else {
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(Color.secondary.opacity(0.2))
+                .frame(width: 40, height: 40)
+                .overlay {
+                    Image(systemName: "square.stack")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+        }
+    }
+
+    private var statusLine: String {
+        guard let progress else { return tracks(count) }
+        if progress.isComplete {
+            return progress.stopped > 0
+                ? "\(progress.finished) of \(tracks(progress.total)) · \(progress.stopped) didn’t arrive"
+                : "\(tracks(progress.total)) downloaded"
+        }
+        return "\(progress.settled) of \(tracks(progress.total)) · \(Int(progress.fraction * 100))%"
+    }
+
+    private func tracks(_ n: Int) -> String {
+        "\(n) track\(n == 1 ? "" : "s")"
     }
 }
 
@@ -557,8 +713,13 @@ private struct SearchResultsView: View {
 
     private func download(_ result: YouTubeSearchResult) {
         // One hit picked out of a list of five: as deliberate as a pasted
-        // link, so it gets the same quality question.
-        downloads.enqueue(urlString: result.url, mode: mode, asksQuality: true)
+        // link, so it gets the same quality question. The row's own title and
+        // channel go with it, so the queue lists what was picked rather than
+        // the link behind it.
+        downloads.enqueue(urlString: result.url, mode: mode,
+                          queuedTitle: result.title,
+                          queuedArtist: result.channel.isEmpty ? nil : result.channel,
+                          asksQuality: true)
         sent.insert(result.videoID)
     }
 

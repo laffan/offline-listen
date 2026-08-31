@@ -482,12 +482,22 @@ struct BrowseSourceView: View {
     /// Queues one item, filed into a library folder named after this source so
     /// everything from a Browse source (e.g. a "Brian Eno" Discography) lands
     /// together — that folder's unlistened tracks still surface in the Inbox.
+    ///
+    /// The row's own name and artist ride along (`BrowseItem.naming`): the list
+    /// has them already, and a queue that reads as forty URLs tells you nothing
+    /// about what's left to arrive. They're display only — the finished track
+    /// is still named by the download and still gets the AI organizer's go at
+    /// it, since a feed title is a video name, not catalogue metadata.
     private func enqueue(_ item: BrowseItem) {
         let name = source?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let named = item.naming
         if name.isEmpty {
-            downloads.enqueue(urlString: item.url, mode: browse.downloadMode)
+            downloads.enqueue(urlString: item.url, mode: browse.downloadMode,
+                              queuedTitle: named.title, queuedArtist: named.artist)
         } else {
-            downloads.enqueue(urlString: item.url, mode: browse.downloadMode, browseFolderNamed: name)
+            downloads.enqueue(urlString: item.url, mode: browse.downloadMode,
+                              browseFolderNamed: name,
+                              queuedTitle: named.title, queuedArtist: named.artist)
         }
     }
 
@@ -512,7 +522,12 @@ struct BrowseSourceView: View {
             // One insert for the whole batch, not one per item — see
             // `DownloadManager.enqueueBatch`.
             let name = source?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let links = picks.map { DownloadManager.QueuedLink(url: $0.url) }
+            let links = picks.map { item -> DownloadManager.QueuedLink in
+                let named = item.naming
+                return DownloadManager.QueuedLink(url: item.url,
+                                                  queuedTitle: named.title,
+                                                  queuedArtist: named.artist)
+            }
             if name.isEmpty {
                 downloads.enqueueBatch(links, mode: browse.downloadMode)
             } else {

@@ -1114,24 +1114,12 @@ final class BrowsePreviewModel: ObservableObject, RemoteAudioSource {
         scrub(to: max(0, min(time, duration > 0 ? duration : time)))
     }
 
-    /// Song and artist out of a Browse item's single title string.
-    ///
-    /// The lists that *know* the artist spell it "Artist — Song" — the
-    /// discography browser's matched tracks, the AI song lists — which is the
-    /// same split the Browse rows draw name-over-artist from. Anything else is a
-    /// video title and goes up whole, with the item's own detail line (a channel
-    /// name, the release it came from) standing in for the artist when it's
-    /// short enough to read as one; a feed's paragraph of description isn't.
+    /// Song and artist out of a Browse item's single title string — the shared
+    /// split (`BrowseItem.naming`), with "no artist" spelled as the empty string
+    /// the lock screen's metadata wants.
     private func splitTitle(of item: BrowseItem) -> (title: String, artist: String) {
-        if let range = item.title.range(of: " — ") {
-            let artist = item.title[..<range.lowerBound].trimmingCharacters(in: .whitespaces)
-            let song = item.title[range.upperBound...].trimmingCharacters(in: .whitespaces)
-            if !artist.isEmpty, !song.isEmpty { return (song, artist) }
-        }
-        let detail = item.detail
-            .split(separator: "\n").first
-            .map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
-        return (item.title, detail.count <= 60 ? detail : "")
+        let named = item.naming
+        return (title: named.title, artist: named.artist ?? "")
     }
 
     private func loadArtwork(for item: BrowseItem) {

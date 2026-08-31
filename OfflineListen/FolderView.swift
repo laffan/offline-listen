@@ -764,10 +764,14 @@ struct RecentTracksView: View {
                     if pinsExpanded {
                         ForEach(pins) { track in
                             row(track, in: pins, playsAsFolder: true)
+                                .modifier(PinnedFrame(closesBelow: track.id == pins.last?.id))
                         }
                     }
                 } header: {
+                    // The frame starts here and — with the folder shut, which
+                    // is most of the time — ends here too.
                     pinnedFolderRow(count: pins.count)
+                        .modifier(PinnedFrame(opensAbove: true, closesBelow: !pinsExpanded))
                 }
             }
             Section {
@@ -792,7 +796,7 @@ struct RecentTracksView: View {
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: "pin.fill")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(RecentPin.tint)
                     .frame(width: 24)
                 Text("Pinned")
                     .font(.body)
@@ -858,7 +862,7 @@ struct RecentTracksView: View {
                     Label(isPinned ? "Unpin" : "Pin",
                           systemImage: isPinned ? "pin.slash" : "pin")
                 }
-                .tint(isPinned ? .gray : .orange)
+                .tint(isPinned ? .gray : RecentPin.tint)
             }
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                 if let entry {
@@ -922,4 +926,44 @@ struct RecentTracksView: View {
     private func relativeDate(_ date: Date) -> String {
         date.formatted(.relative(presentation: .numeric))
     }
+}
+
+/// The pin's colour and weight, in one place: the glyph, the swipe action and
+/// the border around the folder all draw from here, so the fence reads as
+/// belonging to the pin rather than as a stray line.
+private enum RecentPin {
+    static let tint = Color.orange
+    static let line: CGFloat = 1.5
+    /// How far the frame stands off the row's content, so text isn't touching
+    /// the rails.
+    static let inset: CGFloat = 10
+}
+
+/// One slice of the border around the Recent tab's **Pinned** folder.
+///
+/// A `List` draws rows, not boxes, so the frame is assembled a row at a time:
+/// every row inside the folder carries the two side rails, the header caps it
+/// with a top one, and whichever row is last closes it with a bottom one —
+/// which is the header itself while the folder is shut. The separators inside
+/// the folder go, so the rails run unbroken from the header down to the last
+/// pin instead of being crossed at every row.
+private struct PinnedFrame: ViewModifier {
+    var opensAbove = false
+    var closesBelow = false
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, RecentPin.inset)
+            .overlay(alignment: .leading) { rail.frame(width: RecentPin.line) }
+            .overlay(alignment: .trailing) { rail.frame(width: RecentPin.line) }
+            .overlay(alignment: .top) {
+                if opensAbove { rail.frame(height: RecentPin.line) }
+            }
+            .overlay(alignment: .bottom) {
+                if closesBelow { rail.frame(height: RecentPin.line) }
+            }
+            .listRowSeparator(.hidden)
+    }
+
+    private var rail: some View { Rectangle().fill(RecentPin.tint) }
 }

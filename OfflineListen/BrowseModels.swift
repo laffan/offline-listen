@@ -368,6 +368,30 @@ struct BrowseItem: Identifiable, Codable, Hashable {
         guard let groupKey else { return base }
         return "\(groupKey)\u{1}\(base)"
     }
+
+    /// Song and artist out of the item's single title string — what the row
+    /// prints, what the preview modal hands the lock screen, and what rides
+    /// along to the download queue so a queued row reads as a track instead of
+    /// a URL.
+    ///
+    /// The lists that *know* the artist spell it "Artist — Song" (the
+    /// discography browser's matched tracks, the AI song lists), which is the
+    /// split. Anything else is a video title and goes up whole, with the item's
+    /// own detail line — a channel name, the release it came from — standing in
+    /// for the artist when it's short enough to read as one; a feed's paragraph
+    /// of description isn't.
+    var naming: (title: String, artist: String?) {
+        if let range = title.range(of: " — ") {
+            let named = title[..<range.lowerBound].trimmingCharacters(in: .whitespaces)
+            let song = title[range.upperBound...].trimmingCharacters(in: .whitespaces)
+            if !named.isEmpty, !song.isEmpty { return (title: song, artist: named) }
+        }
+        let line = detail
+            .split(separator: "\n").first
+            .map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+        let standIn: String? = (line.isEmpty || line.count > 60) ? nil : line
+        return (title: title, artist: standIn)
+    }
 }
 
 /// What a fetcher hands back for one discovered link, before the store merges

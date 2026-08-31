@@ -27,9 +27,11 @@ struct EveryNoiseView: View {
 
     @State private var mode: ENBrowseMode = .map
     @State private var query = ""
-    /// What the root Find field searches: the genre index, or **every artist
-    /// in the dataset** via the flat global index (`ENArtistIndex`).
-    @State private var findMode: ENFindMode = .genre
+    /// What the root Find field searches: Spotify's live catalogue, **every
+    /// artist in the dataset** via the flat global index (`ENArtistIndex`), or
+    /// the genre index. Starts on Spotify — see `ENFindMode` — falling back to
+    /// the offline artist search when there are no credentials to search with.
+    @State private var findMode: ENFindMode = .spotify
     /// Global artist search results, and whether a scan is still in flight.
     @State private var artistHits: [ENArtistHit] = []
     @State private var artistSearching = false
@@ -197,11 +199,12 @@ struct EveryNoiseView: View {
         DispatchQueue.main.async(execute: open)
     }
 
-    /// The Find targets this level can actually answer. Spotify's needs
-    /// credentials, so without them it isn't offered — and a mode left
-    /// selected when they're removed falls back to the genre index.
+    /// The Find targets this level can actually answer, in the toggle's order.
+    /// Spotify's needs credentials, so without them it isn't offered — and a
+    /// mode left selected when they're removed (or never had them) falls back
+    /// to the artist index, the offline answer to the same question.
     private var findModes: [ENFindMode] {
-        spotifySettings.isConfigured ? ENFindMode.allCases : [.genre, .artist]
+        spotifySettings.isConfigured ? ENFindMode.allCases : [.artist, .genre]
     }
 
     private var liveArtistIsPushed: Binding<Bool> {
@@ -320,10 +323,16 @@ struct EveryNoiseView: View {
         .onChange(of: mode) { newMode in
             if newMode != .scan { player.stop() }
         }
-        // Credentials withdrawn while the Spotify target was selected: fall
-        // back rather than leaving a field that can only fail.
+        // No credentials — at launch, or withdrawn while the Spotify target was
+        // selected: fall back rather than leaving a field that can only fail
+        // (and a toggle with nothing lit, since the button goes with them).
+        .onAppear {
+            if !spotifySettings.isConfigured, findMode == .spotify {
+                findMode = ENFindMode.offlineDefault
+            }
+        }
         .onChange(of: spotifySettings.isConfigured) { configured in
-            if !configured, findMode == .spotify { findMode = .genre }
+            if !configured, findMode == .spotify { findMode = ENFindMode.offlineDefault }
         }
         // The global artist search: debounced (the scan reads ~470k names),
         // re-run when the query or the Find target changes.
@@ -556,16 +565,30 @@ enum ENListSort: String, CaseIterable, Identifiable {
     }
 }
 
-/// What the root-level Find field searches: the genre index, or every artist
-/// in the dataset (the global index — see `ENArtistIndex`). Toggled by the
-/// icons inside the field's trailing edge.
+/// What the root-level Find field searches: Spotify's live catalogue, every
+/// artist in the dataset (the global index — see `ENArtistIndex`), or the genre
+/// index. Toggled by the icons beside the field.
+///
+/// Declaration order is the toggle's order and the first case is the default,
+/// and both are deliberate: **Spotify** first, because a name typed into Find
+/// is nearly always an artist you want to hear rather than a genre you want to
+/// fly to, and the live catalogue is the one target that can answer for an
+/// artist the frozen dataset has never heard of. The dataset's own artist index
+/// comes next as the offline answer to the same question, and the genre map —
+/// which the map itself is already showing you — comes last.
 enum ENFindMode: String, CaseIterable, Identifiable {
-    case genre, artist
     /// Straight to Spotify's own catalogue, past the frozen dataset entirely.
     /// Offered only with credentials saved, since it's the one Find target
     /// that leaves the device.
     case spotify
+    case artist
+    case genre
     var id: String { rawValue }
+
+    /// What Find points at when Spotify's isn't on offer — the next target
+    /// down, which is still an artist search.
+    static let offlineDefault: ENFindMode = .artist
+
     /// The same glyphs the rest of the app uses for the two kinds — and, for
     /// the live search, an over-the-air one: this is the only target that
     /// isn't answered from the bundled data.
