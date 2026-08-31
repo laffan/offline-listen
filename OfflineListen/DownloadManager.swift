@@ -1242,12 +1242,10 @@ final class DownloadManager: ObservableObject {
             try FileManager.default.moveItem(at: extracted.fileURL, to: finalURL)
             appLog("Saved \(finalURL.lastPathComponent)", level: .success, category: "Queue")
 
-            // Capture chapter markers (best-effort) — from the extractor if it
-            // provided them, otherwise via a metadata-only yt-dlp lookup.
-            var chapters = extracted.chapters
-            if chapters.isEmpty {
-                chapters = await ChapterFetcher.fetch(url: url)
-            }
+            // Chapter markers the extractor handed over come along for free.
+            // Anything else needs a metadata-only yt-dlp lookup, and that runs
+            // *after* the add — see `ChapterFetcher.attach` below.
+            let chapters = extracted.chapters
 
             // A job that already knows what it downloaded (a discography pick,
             // whose title and artist come from Spotify) wears that instead of
@@ -1280,6 +1278,13 @@ final class DownloadManager: ObservableObject {
             // track that isn't there costs the download nothing.
             SubtitleFetcher.attach(from: url, to: track.id,
                                    isVideo: track.isVideo, library: library)
+            // Chapter markers, on the same terms. This used to run *before*
+            // the add, which meant its second inside the Python gate was a
+            // second the queue slot stayed occupied — every track waiting on
+            // the previous one's metadata lookup. It patches the track when it
+            // lands instead.
+            ChapterFetcher.attach(from: url, to: track.id,
+                                  alreadyKnown: !chapters.isEmpty, library: library)
             // A format conversion (Library ▸ Convert to Video/Audio): only
             // now that the replacement has fully landed does the original —
             // file and all — leave the library.
@@ -1582,6 +1587,21 @@ final class DownloadManager: ObservableObject {
     /// folder. Re-downloading the same album reuses its folder rather than
     /// spawning a second one.
     @discardableResult
+    /// Works out ahead of time which route will serve `url`, so the first
+    /// track of a batch doesn't have to discover it mid-download (see
+    /// `warmRoute`). Meant for a window where the user is doing something else
+    /// — the discography browser's matched tracklist, sitting on screen while
+    /// they decide — and deliberately fire-and-forget: it never blocks, never
+    /// reports, and does nothing at all once the route is known.
+    func warmExtractionRoute(for url: String, mode: DownloadMode) {
+        guard let link = URL(string: url) else { return }
+        let extractor = self.extractor
+        // `warmRoute` is nonisolated and async, so it leaves the main actor
+        // the moment it suspends — the same way the queue drives
+        // `extractMedia`.
+        Task { await extractor.warmRoute(for: link, mode: mode) }
+    }
+
     func enqueueAlbum(named albumName: String,
                       tracks: [AlbumTrack],
                       mode: DownloadMode,

@@ -1337,6 +1337,16 @@ private struct DiscographyReleaseRow: View {
         }
         searching = false
         searched = true
+
+        // Every track now has a link, and the list sits here while the user
+        // decides whether to take the record. That window is enough to work
+        // out which player client will actually serve these videos, so
+        // Download Album starts on a known route instead of spending the first
+        // track — both pipeline slots, in parallel — discovering it. Costs
+        // nothing once the route is known, and downloads nothing either way.
+        if let first = tracks.compactMap({ matches[$0.id] }).first {
+            downloads.warmExtractionRoute(for: first, mode: browse.downloadMode)
+        }
     }
 
     /// **Download Album**: match the release against YouTube if that hasn't

@@ -1821,6 +1821,24 @@ final class LibraryStore: ObservableObject {
         save()
     }
 
+    /// Records chapter markers captured after the track landed. Chapters
+    /// aren't in the stream the extractors resolve, so reading them costs a
+    /// metadata-only yt-dlp lookup — a full second inside the Python gate. The
+    /// queue slot isn't free until the track is added, so paying that before
+    /// the add delayed the *next* download; it's paid afterwards instead and
+    /// patched in here, exactly as artwork and subtitles are.
+    func setChapters(for id: UUID, chapters: [Chapter]) {
+        // Never overwrite markers the extractor already supplied — a
+        // `Chapter` carries a fresh UUID per parse, so equality can't tell
+        // "the same chapters again" from "different ones"; "we already have
+        // some" is the question that actually matters.
+        guard !chapters.isEmpty,
+              let index = tracks.firstIndex(where: { $0.id == id }),
+              tracks[index].chapters.isEmpty else { return }
+        tracks[index].chapters = chapters
+        save()
+    }
+
     /// The folder equivalent: points a folder at a cover already written to
     /// `AppPaths.folderArtwork`. An album downloaded whole from a discography
     /// wears its release cover in the Library's folder list this way — and a

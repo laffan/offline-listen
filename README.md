@@ -1487,7 +1487,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `AudioStreamDownloader.swift` | Shared chunked byte-range stream downloader. |
 | `VideoAudioExtractor.swift` | Extracts audio from a muxed video via AVFoundation. |
 | `HLSDownloader.swift` | Saves an HLS (`.m3u8`) stream by fetching and joining its fMP4 segments — the fallback that makes Vimeo (progressive-free) work, with no FFmpeg. |
-| `ChapterFetcher.swift` | Best-effort capture of YouTube chapter markers via the on-device yt-dlp module. |
+| `ChapterFetcher.swift` | Best-effort capture of YouTube chapter markers via the on-device yt-dlp module — `attach` runs it *after* the track is in the library and patches the markers in, the way artwork and subtitles land. |
 | `Subtitles.swift` | English subtitles: the cue model and the VTT/SRT/timedtext parser (including the unrolling auto-captions need), the memoized on-disk loader, the appearance keys Settings and the Player share, and `SubtitleFetcher` — the watch-page capture with the yt-dlp metadata fallback. |
 | `PlaylistResolver.swift` | Detects playlist links and flat-resolves their entries (on-device yt-dlp) so a playlist downloads into a folder. |
 | `ChapterSplitter.swift` | Exports one file per chapter (AVFoundation) for "Break Chapters into Playlist". |
@@ -2471,12 +2471,48 @@ outcomes the Log already shows and answers three questions with them:
   works (a dedicated audio-only stream, no extraction step), so a session whose
   gating lifts finds its way back on its own.
 
+A fourth question is answered the same way, once the first three have been:
+**is the working route also the cheap one?** A client that serves no
+audio-only stream is downloaded as muxed video and transcoded — around 40%
+more bytes than the audio is worth, plus an AVFoundation pass. So exactly once
+per session, and only once something *has* worked (there is always a
+fallback), the order is inverted to give the untried clients first refusal. If
+one of them serves audio on its own, every later track is cheaper; if none
+does, the cost was a single extra resolve.
+
 Nothing here is a retirement. Every verdict is a rest with a timer or a
 counter on it, one success clears the streak that produced it, and none of it
 is persisted — YouTube's gating changes between launches, and a stale verdict
 read off disk would be worse than no memory at all. Each time the memory
 changes the plan it says so in the Log, naming what it learned, so a download
 that took a different route than the section above describes explains itself.
+
+### Learning the route before the download needs it
+
+Discovering the route is not free: a default resolve, a rejection, a
+forced-client resolve, often another rejection. On the first track of a queue
+that is the better part of twenty seconds — and with two pipeline slots, the
+first *two* tracks each pay it in parallel, learning the same thing twice.
+
+Serialising them doesn't help: the second slot would idle through the first's
+discovery and then still have to download, finishing later than it does now.
+What helps is moving the discovery off the download timeline altogether.
+
+The **discography browser** provides the window. Download Album only lights up
+once every track has been matched to a YouTube link, and that matched tracklist
+then sits on screen while you decide whether to take the record. `warmRoute`
+uses that pause: it resolves one of the matched links exactly as a download
+would, and settles each candidate URL with a **two-byte ranged request** — the
+same 403 the opening chunk would have hit, learned for two bytes instead of a
+whole attempt. By the time Download Album is tapped, `ExtractionMemory` already
+knows which client serves these videos and whether the default route is gated,
+so track one takes the short path along with all the others.
+
+It is best-effort in every direction: one claim per session, video mode skipped
+(there the user picks a resolution, so there's no single route to settle), never
+the thing that triggers the yt-dlp module download, every failure swallowed, and
+nothing downloaded. A link pasted straight into the Download field has no such
+window and simply discovers the way it always did.
 
 ### Diagnosing failures from the Log
 

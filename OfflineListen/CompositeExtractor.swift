@@ -33,6 +33,14 @@ final class CompositeExtractor: MediaExtractor {
         self.fallbackName = fallbackName
     }
 
+    /// Warming is best-effort and each extractor decides whether it has
+    /// anything to warm, so both halves are simply offered the URL — the ones
+    /// with nothing to do return immediately.
+    func warmRoute(for url: URL, mode: DownloadMode) async {
+        await primary.warmRoute(for: url, mode: mode)
+        await fallback.warmRoute(for: url, mode: mode)
+    }
+
     func extractMedia(from url: URL,
                       mode: DownloadMode,
                       quality: VideoQuality,

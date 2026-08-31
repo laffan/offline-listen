@@ -175,6 +175,13 @@ protocol MediaExtractor {
     /// links it can't resolve, instead of failing through it. Defaults to true.
     func canHandle(_ url: URL) -> Bool
 
+    /// Best-effort: work out, ahead of time, which route will actually serve
+    /// `url` — and record it — so the first download doesn't have to discover
+    /// it the slow way. Called from a window where the user is doing something
+    /// else (reading a tracklist), never on the path to a download. Defaults to
+    /// doing nothing.
+    func warmRoute(for url: URL, mode: DownloadMode) async
+
     /// Non-nil when this extractor handles `url` but isn't worth *trying*
     /// right now — the string says why, for the log line the composite writes
     /// in place of the attempt. Distinct from `canHandle`, which answers
@@ -188,6 +195,7 @@ protocol MediaExtractor {
 extension MediaExtractor {
     func canHandle(_ url: URL) -> Bool { true }
     func skipReason(for url: URL) -> String? { nil }
+    func warmRoute(for url: URL, mode: DownloadMode) async {}
 
     /// Convenience without a quality preference — best available.
     func extractMedia(from url: URL,
@@ -437,6 +445,21 @@ final class YoutubeDLExtractor: MediaExtractor {
     }
 
 #if canImport(YoutubeDL)
+    /// The default path's audio pick, in one place: best audio-only stream in
+    /// a container AVFoundation can play directly, m4a preferred. Shared with
+    /// the route warm-up, which has to select exactly what the download would
+    /// so the URL it probes is the URL that would be fetched.
+    static func bestDefaultAudio(from formats: [Format]) -> Format? {
+        let audioOnly = formats.filter {
+            $0.isAudioOnly
+                && isProgressiveDownloadable(formatID: $0.format_id, ext: $0.ext, url: $0.url)
+                && playableAudioExts.contains($0.ext.lowercased())
+        }
+        let m4aAudio = audioOnly.filter { $0.ext == "m4a" }
+        return (m4aAudio.isEmpty ? audioOnly : m4aAudio)
+            .max(by: { ($0.abr ?? $0.tbr ?? 0) < ($1.abr ?? $1.tbr ?? 0) })
+    }
+
     /// Runs yt-dlp's (opaque) info extraction with a heartbeat log every 10s and
     /// an overall timeout, so a stall becomes visible and recoverable instead of
     /// an indefinite hang.
@@ -695,12 +718,7 @@ final class YoutubeDLExtractor: MediaExtractor {
         // AVFoundation can play directly — so an opus/webm-only stream isn't
         // saved raw but routes to the muxed + extraction fallback below. Used
         // for audio mode and as the merge track for video-only downloads.
-        let audioOnly = formats.filter {
-            $0.isAudioOnly && progressive($0) && Self.playableAudioExts.contains($0.ext.lowercased())
-        }
-        let m4aAudio = audioOnly.filter { $0.ext == "m4a" }
-        let bestAudio = (m4aAudio.isEmpty ? audioOnly : m4aAudio)
-            .max(by: { ($0.abr ?? $0.tbr ?? 0) < ($1.abr ?? $1.tbr ?? 0) })
+        let bestAudio = Self.bestDefaultAudio(from: formats)
 
         let chosen: Format
         var mergeAudioRequest: URLRequest?
@@ -1015,10 +1033,19 @@ final class YoutubeDLExtractor: MediaExtractor {
         // rejected on this one too. Lead with whatever has actually been
         // delivering files and sink whatever hasn't, so an album pays the
         // discovery cost once instead of thirty times.
-        let clientSets = ExtractionMemory.shared.ordered(openingOrder, mode: mode)
+        // Once per session, when the incumbent only ever yields muxed video,
+        // the untried clients get first refusal — the picture we download and
+        // throw away is worth one resolve to try to stop paying for.
+        let probingForDirectAudio = mode == .audio
+            && ExtractionMemory.shared.claimDirectAudioProbe(mode: mode)
+        let clientSets = ExtractionMemory.shared.ordered(openingOrder, mode: mode,
+                                                         probingForDirectAudio: probingForDirectAudio)
         let openingLabels = openingOrder.map { $0.joined(separator: ",") }
         let sweepLabels = clientSets.map { $0.joined(separator: ",") }
-        if sweepLabels != openingLabels {
+        if probingForDirectAudio {
+            appLog("The client that works only offers muxed video, so this one job leads with the untried clients to see if any serves audio on its own: \(sweepLabels.joined(separator: " → "))",
+                   category: category)
+        } else if sweepLabels != openingLabels {
             let plan = sweepLabels.joined(separator: " → ")
             let learned = ExtractionMemory.shared.summary(mode: mode)
             appLog("Forced-client order re-sorted from this session (\(learned)): \(plan)", category: category)
@@ -1352,6 +1379,25 @@ final class YoutubeDLExtractor: MediaExtractor {
                           formats: formats)
     }
 
+    /// The two ways a forced-client snapshot can yield audio, picked once and
+    /// used everywhere: a dedicated audio-only stream in a container
+    /// AVFoundation plays directly (m4a/mp3/aac — SoundCloud's progressive mp3
+    /// as well as YouTube's m4a; opus/webm is ignored here and handled by the
+    /// muxed route), and the smallest muxed mp4 to extract audio from. Shared
+    /// with the route warm-up so the URL it probes is the URL a download would
+    /// actually fetch.
+    private static func audioPicks(from info: ForcedInfo) -> (direct: ForcedFormat?, muxed: ForcedFormat?) {
+        let candidates = info.formats.filter { $0.progressive }
+        return (
+            direct: candidates
+                .filter { $0.hasAudio && !$0.hasVideo && playableAudioExts.contains($0.ext) }
+                .max(by: { $0.abr < $1.abr }),
+            muxed: candidates
+                .filter { $0.hasAudio && $0.hasVideo && $0.ext == "mp4" }
+                .min(by: { ($0.height ?? Int.max) < ($1.height ?? Int.max) })
+        )
+    }
+
     /// Builds a `URLRequest` for a snapshotted format, carrying its headers —
     /// shared by both download stages so headers can't drift.
     private static func request(for format: ForcedFormat) -> URLRequest? {
@@ -1440,16 +1486,7 @@ final class YoutubeDLExtractor: MediaExtractor {
                                    category: String,
                                    onDownloadStart: @escaping () -> Void,
                                    onProgress: @escaping (Double) -> Void) async throws -> ExtractedMedia? {
-        let candidates = info.formats.filter { $0.progressive }
-        // Accept any audio-only container AVFoundation can play directly
-        // (m4a/mp3/aac/…) — covers SoundCloud's progressive mp3, not just
-        // YouTube's m4a. Unplayable (opus/webm) audio is ignored here and
-        // handled by the muxed-extraction fallback.
-        let audios = candidates.filter {
-            $0.hasAudio && !$0.hasVideo && Self.playableAudioExts.contains($0.ext)
-        }
-        let muxed = candidates.filter { $0.hasAudio && $0.hasVideo && $0.ext == "mp4" }
-
+        let picks = Self.audioPicks(from: info)
         let title = info.title ?? url.absoluteString
         let reportedDuration = info.duration
 
@@ -1460,8 +1497,7 @@ final class YoutubeDLExtractor: MediaExtractor {
 
         // Prefer a dedicated audio-only stream — no transcoding, no extraction
         // step. Keep its real container extension (m4a, mp3, …).
-        if let audio = audios.max(by: { $0.abr < $1.abr }),
-           let audioRequest = Self.request(for: audio) {
+        if let audio = picks.direct, let audioRequest = Self.request(for: audio) {
             appLog("Forced-client (\(client)) selected audio-only \(audio.ext) \(Int(audio.abr)) kbps",
                    level: .success, category: category)
             let dest = AppPaths.work.appendingPathComponent("\(UUID().uuidString).\(audio.ext.isEmpty ? "m4a" : audio.ext)")
@@ -1476,6 +1512,7 @@ final class YoutubeDLExtractor: MediaExtractor {
                 let size = (try? FileManager.default.attributesOfItem(atPath: dest.path)[.size] as? Int) ?? nil
                 appLog("Forced-client audio download finished: \(dest.lastPathComponent)\(size.map { " (\($0 / 1024) KB)" } ?? "")",
                        level: .success, category: category)
+                ExtractionMemory.shared.recordAudioRoute(client, neededExtraction: false, mode: .audio)
                 return ExtractedMedia(fileURL: dest, title: title, duration: duration, isVideo: false)
             } catch {
                 if isCancellation(error) { throw error }
@@ -1489,7 +1526,7 @@ final class YoutubeDLExtractor: MediaExtractor {
                 // `extract_info` later, to download the very same thing.
                 // This snapshot already holds the format list, so trying it
                 // costs nothing but the bytes.
-                guard Self.isStreamRejectedAtStart(error), !muxed.isEmpty else { throw error }
+                guard Self.isStreamRejectedAtStart(error), picks.muxed != nil else { throw error }
                 try? FileManager.default.removeItem(at: dest)
                 audioOnlyWasGated = true
                 appLog("Forced-client (\(client)) audio-only \(audio.formatID) was rejected at the first byte — falling back to this client's own muxed mp4 rather than starting over on another client.",
@@ -1499,8 +1536,7 @@ final class YoutubeDLExtractor: MediaExtractor {
 
         // No usable audio-only stream — none offered, or the one offered was
         // gated. Take the smallest muxed mp4 and extract its audio.
-        guard let video = muxed.min(by: { ($0.height ?? Int.max) < ($1.height ?? Int.max) }),
-              let videoRequest = Self.request(for: video) else {
+        guard let video = picks.muxed, let videoRequest = Self.request(for: video) else {
             return nil
         }
         appLog("Forced-client (\(client)) \(audioOnlyWasGated ? "audio-only stream gated" : "no audio-only stream") — using muxed mp4 \(video.height.map { "\($0)p" } ?? "?p") + audio extraction",
@@ -1518,9 +1554,134 @@ final class YoutubeDLExtractor: MediaExtractor {
         let size = (try? FileManager.default.attributesOfItem(atPath: dest.path)[.size] as? Int) ?? nil
         appLog("Forced-client audio extraction finished: \(dest.lastPathComponent)\(size.map { " (\($0 / 1024) KB)" } ?? "")",
                level: .success, category: category)
+        ExtractionMemory.shared.recordAudioRoute(client, neededExtraction: true, mode: .audio)
         return ExtractedMedia(fileURL: dest, title: title, duration: duration, isVideo: false)
     }
 #endif
+
+    /// Establishes which route will serve a URL **before** a download needs it.
+    ///
+    /// Discovering the route costs a default resolve, a rejection, a
+    /// forced-client resolve and often another rejection — on the first track
+    /// of a queue that is the better part of twenty seconds, and with two
+    /// pipeline slots the first *two* tracks each pay it, in parallel,
+    /// learning the same thing twice. Serialising them would only trade that
+    /// waste for idling. Moving it off the download timeline is what actually
+    /// helps: the discography browser has already matched every track to a
+    /// YouTube link and is sitting there while the user reads the list, so the
+    /// route can be worked out in that window and be waiting in
+    /// `ExtractionMemory` by the time Download Album is tapped.
+    ///
+    /// It downloads nothing. Each candidate URL is settled with a two-byte
+    /// ranged request (`AudioStreamDownloader.probe`) — the same 403 the
+    /// opening chunk would have hit, for two bytes instead of a whole attempt.
+    ///
+    /// Entirely best-effort and entirely optional: one claim per session, no
+    /// module download, every failure swallowed. A URL pasted straight into the
+    /// Download field has no such window and simply discovers as it always
+    /// did.
+    func warmRoute(for url: URL, mode: DownloadMode) async {
+        #if canImport(YoutubeDL) && canImport(PythonKit)
+        let category = "Warm-up"
+        // Video downloads pick by resolution and put the ladder to the user;
+        // there is no single "route" to settle ahead of time.
+        guard mode == .audio else { return }
+        let url = Self.canonicalURL(url)
+        guard Self.isYouTubeURL(url) else { return }
+        guard ExtractionMemory.shared.claimWarmup(mode: mode) else { return }
+        // Never let warming be the thing that triggers the tens-of-MB module
+        // download — that is a cost the user asked for a download to pay.
+        guard FileManager.default.fileExists(atPath: YoutubeDL.pythonModuleURL.path) else {
+            appLog("yt-dlp module not present — nothing to warm yet.", level: .debug, category: category)
+            return
+        }
+
+        appLog("Working out which player client serves this album, so the first track doesn't have to…",
+               category: category)
+
+        // Mirror the download path's setup exactly: the wrapper instance, then
+        // the on-device JS runtime, then the default extraction that bootstraps
+        // the interpreter and makes the forced clients safe to drive directly.
+        guard let youtubeDL = try? await PythonGate.shared.run({ YoutubeDL() }) else {
+            appLog("Couldn't initialize yt-dlp — leaving the route to the first download.",
+                   level: .debug, category: category)
+            return
+        }
+        try? await PythonGate.shared.run {
+            PythonBridge.bootstrapAndConfigure(pythonAlreadyInitialized: Self.pythonBootstrapped)
+        }
+        await wireJSRuntimeIfSafe(category: category)
+
+        // 1. The default route. It's the best one when it works — a dedicated
+        //    audio stream, no extraction — so it's asked first, and a clean
+        //    answer here means there is nothing else to warm.
+        var defaultFormats: [Format] = []
+        do {
+            (defaultFormats, _) = try await resolveInfo(youtubeDL, url: url, category: category, timeout: 45)
+            Self.pythonBootstrapped = true
+            PythonBridge.markPythonRunning()
+        } catch {
+            Self.pythonBootstrapped = true
+            PythonBridge.markPythonRunning()
+            if isCancellation(error) { return }
+            appLog("Default resolve didn't answer (\(error.localizedDescription)) — warming the player clients instead.",
+                   level: .debug, category: category)
+        }
+        if let audio = Self.bestDefaultAudio(from: defaultFormats),
+           let audioURL = URL(string: audio.url) {
+            var request = URLRequest(url: audioURL)
+            for (key, value) in audio.http_headers { request.setValue(value, forHTTPHeaderField: key) }
+            if await AudioStreamDownloader.probe(request, category: category) {
+                ExtractionMemory.shared.recordDefaultSuccess(mode: mode)
+                appLog("The default route serves this album's streams — nothing to reroute.",
+                       level: .success, category: category)
+                return
+            }
+            ExtractionMemory.shared.recordDefaultGatedByProbe(mode: mode)
+            appLog("The default route's audio stream is gated here — downloads will skip straight past it.",
+                   level: .warning, category: category)
+        }
+
+        // 2. The player clients, in the same order the recovery sweep uses,
+        //    stopping at the first that serves bytes. Capped: warming is worth
+        //    a few seconds of someone else's time, not a full sweep.
+        let clientSets: [[String]] = [["android_vr"], ["android"], ["tv"], ["web_safari"]]
+        for clients in clientSets {
+            if Task.isCancelled { return }
+            let label = clients.joined(separator: ",")
+            guard let info = try? await forcedClientResolve(
+                url: url, clients: clients, label: label, category: category,
+                transform: { [self] raw in snapshotInfo(raw) }) else {
+                appLog("Client \(label) didn't resolve — trying the next.", level: .debug, category: category)
+                continue
+            }
+            let picks = Self.audioPicks(from: info)
+            if let direct = picks.direct, let request = Self.request(for: direct),
+               await AudioStreamDownloader.probe(request, category: category) {
+                ExtractionMemory.shared.recordClientSuccess(label, mode: mode)
+                ExtractionMemory.shared.recordAudioRoute(label, neededExtraction: false, mode: mode)
+                appLog("\(label) serves audio on its own — downloads will lead with it and skip the video entirely.",
+                       level: .success, category: category)
+                return
+            }
+            if picks.direct != nil {
+                ExtractionMemory.shared.recordClientRejectedAtStart(label, mode: mode)
+            }
+            if let muxed = picks.muxed, let request = Self.request(for: muxed),
+               await AudioStreamDownloader.probe(request, category: category) {
+                ExtractionMemory.shared.recordClientSuccess(label, mode: mode)
+                ExtractionMemory.shared.recordAudioRoute(label, neededExtraction: true, mode: mode)
+                appLog("\(label) serves its muxed \(muxed.height.map { "\($0)p" } ?? "") stream — downloads will lead with it (audio extracted from the video).",
+                       level: .success, category: category)
+                return
+            }
+            appLog("\(label) offers nothing this device can fetch — trying the next.",
+                   level: .debug, category: category)
+        }
+        appLog("No client answered ahead of time; the first download will work it out.",
+               level: .warning, category: category)
+        #endif
+    }
 
     func extractMedia(from url: URL,
                       mode: DownloadMode,

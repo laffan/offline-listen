@@ -310,6 +310,34 @@ enum AudioStreamDownloader {
         onProgress(1.0)
     }
 
+    /// Asks the stream host for the first two bytes and reports whether it
+    /// serves them — the cheapest possible answer to "would this URL actually
+    /// download?".
+    ///
+    /// It exists so the route can be established *before* a download needs it
+    /// (see `warmRoute`): a rejection here is the same 403 the opening chunk
+    /// would have hit, learned for two bytes instead of a whole attempt.
+    /// Best-effort by construction — a network error is reported as "no", the
+    /// same as a rejection, because either way this isn't a route to lead with.
+    static func probe(_ baseRequest: URLRequest, category: String) async -> Bool {
+        var request = baseRequest
+        request.timeoutInterval = 20
+        request.setValue("bytes=0-1", forHTTPHeaderField: "Range")
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { return false }
+            let served = (http.statusCode == 200 || http.statusCode == 206) && !data.isEmpty
+            appLog("Probe: stream host answered HTTP \(http.statusCode)\(served ? "" : " — this route wouldn't download").",
+                   level: .debug, category: category)
+            return served
+        } catch {
+            if isCancellation(error) { return false }
+            appLog("Probe: couldn't reach the stream host (\(error.localizedDescription)).",
+                   level: .debug, category: category)
+            return false
+        }
+    }
+
     /// Parses the total-size field of a Content-Range header ("bytes 0-99/1234"
     /// → 1234). Returns nil for a missing header or an unknown total ("/*").
     private static func contentRangeTotal(_ http: HTTPURLResponse) -> Int? {

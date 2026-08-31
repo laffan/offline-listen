@@ -58,6 +58,14 @@ final class ExtractionMemory: @unchecked Sendable {
     /// Forced-client labels whose stream URLs were rejected before a byte
     /// landed. They go to the back of the sweep, not out of it.
     private var rejectedClients: [DownloadMode: Set<String>] = [:]
+    /// Whether the winning client's audio only ever arrives as a **muxed
+    /// video + extraction** — the expensive shape, since it downloads the
+    /// picture too and then transcodes.
+    private var winnerNeedsExtraction: [DownloadMode: Bool] = [:]
+    /// Modes whose route warm-up has been claimed this session.
+    private var warmupClaimed: Set<DownloadMode> = []
+    /// Modes whose one "is there a cheaper route?" probe has been spent.
+    private var directAudioProbeSpent: Set<DownloadMode> = []
     /// Consecutive default-path downloads rejected at their first byte.
     private var defaultRejections: [DownloadMode: Int] = [:]
     /// Jobs that have skipped the default path since it was last probed.
@@ -115,6 +123,27 @@ final class ExtractionMemory: @unchecked Sendable {
         defaultRejections[mode, default: 0] += 1
     }
 
+    /// Claims the session's route warm-up for `mode`, spending it. Returns
+    /// false when the route is already known (or another warm-up has the
+    /// claim), so the work is never done twice or done pointlessly.
+    func claimWarmup(mode: DownloadMode) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard (winningClients[mode] ?? []).isEmpty,
+              !warmupClaimed.contains(mode) else { return false }
+        warmupClaimed.insert(mode)
+        return true
+    }
+
+    /// The warm-up probed the default route deliberately and the host rejected
+    /// it. That single, purposeful answer is worth as much as the two
+    /// accidental ones the download path has to collect, so it sets the streak
+    /// outright rather than incrementing it — the point of warming is that the
+    /// first track shouldn't have to learn this the slow way.
+    func recordDefaultGatedByProbe(mode: DownloadMode) {
+        lock.lock(); defer { lock.unlock() }
+        defaultRejections[mode] = defaultRejectionThreshold
+    }
+
     /// The default path delivered. Clears the streak so a recovered session
     /// keeps the better route.
     func recordDefaultSuccess(mode: DownloadMode) {
@@ -144,6 +173,39 @@ final class ExtractionMemory: @unchecked Sendable {
         return true
     }
 
+    /// How a client's audio actually arrived: a dedicated audio-only stream,
+    /// or the muxed video with its audio extracted. The distinction is worth
+    /// a whole session's bookkeeping because the second shape downloads the
+    /// picture as well — around 40% more bytes on a typical track — and pays
+    /// an AVFoundation pass on top.
+    func recordAudioRoute(_ label: String, neededExtraction: Bool, mode: DownloadMode) {
+        lock.lock(); defer { lock.unlock() }
+        winnerNeedsExtraction[mode] = neededExtraction
+        // A route that turned out cheap answers the question the probe was
+        // for, so the probe is no longer owed.
+        if !neededExtraction { directAudioProbeSpent.insert(mode) }
+    }
+
+    /// Claims the session's single attempt at finding a client that serves a
+    /// **direct audio-only** stream, spending it.
+    ///
+    /// The sweep leads with whatever has been working, which is right — but
+    /// when the incumbent only ever yields muxed video, "working" is costing
+    /// every track the picture it throws away. Exactly once per session, and
+    /// only once something *has* worked (so there's always a fallback), the
+    /// order is inverted to give the untried clients first refusal. If one of
+    /// them serves audio-only, every later track is cheaper; if none does, the
+    /// cost was a single extra resolve and the incumbent still finishes the
+    /// job.
+    func claimDirectAudioProbe(mode: DownloadMode) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard !(winningClients[mode] ?? []).isEmpty,
+              winnerNeedsExtraction[mode] == true,
+              !directAudioProbeSpent.contains(mode) else { return false }
+        directAudioProbeSpent.insert(mode)
+        return true
+    }
+
     /// A forced client produced a verified file. It leads the sweep from here.
     func recordClientSuccess(_ label: String, mode: DownloadMode) {
         lock.lock(); defer { lock.unlock() }
@@ -168,7 +230,11 @@ final class ExtractionMemory: @unchecked Sendable {
     /// known about — in their hand-tuned order — then the ones whose URLs were
     /// rejected at the first byte. A three-way partition, so the opening order
     /// still decides everything the memory has no opinion about.
-    func ordered(_ sets: [[String]], mode: DownloadMode) -> [[String]] {
+    /// `probingForDirectAudio` inverts the first two bands for one job (see
+    /// `claimDirectAudioProbe`): the untried clients get first refusal, with
+    /// the proven ones still behind them as the guaranteed fallback.
+    func ordered(_ sets: [[String]], mode: DownloadMode,
+                 probingForDirectAudio: Bool = false) -> [[String]] {
         lock.lock()
         let winners = winningClients[mode] ?? []
         let rejected = rejectedClients[mode] ?? []
@@ -181,9 +247,11 @@ final class ExtractionMemory: @unchecked Sendable {
             if let set = sets.first(where: { label($0) == winner }) { leaders.append(set) }
         }
         let remaining = sets.filter { set in !leaders.contains(where: { label($0) == label(set) }) }
-        return leaders
-            + remaining.filter { !rejected.contains(label($0)) }
-            + remaining.filter { rejected.contains(label($0)) }
+        let untried = remaining.filter { !rejected.contains(label($0)) }
+        let sunk = remaining.filter { rejected.contains(label($0)) }
+        return probingForDirectAudio
+            ? untried + leaders + sunk
+            : leaders + untried + sunk
     }
 
     /// A one-line account of what the memory currently believes, for the log

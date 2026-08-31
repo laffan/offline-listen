@@ -20,6 +20,27 @@ import PythonKit
 /// module isn't there — or PythonKit/YoutubeDL aren't linked — it simply returns
 /// no chapters and the rest of the app behaves exactly as before.
 enum ChapterFetcher {
+    /// Captures chapters **after** the track is in the library, patching them
+    /// in when they arrive — the shape `ArtworkFetcher` and `SubtitleFetcher`
+    /// already use, and for the same reason. `fetch` is a metadata-only
+    /// `extract_info` that still costs about a second inside the Python gate,
+    /// and the download queue doesn't free the slot until the track lands, so
+    /// running it inline made every track wait a second for the *previous*
+    /// one's chapters. Nothing about the result is urgent: a chaptered track
+    /// grows its arrow a moment after it appears.
+    ///
+    /// `alreadyKnown` is set when the extractor supplied markers itself, in
+    /// which case there's nothing to look up.
+    static func attach(from url: URL, to trackID: UUID,
+                       alreadyKnown: Bool, library: LibraryStore) {
+        guard !alreadyKnown else { return }
+        Task {
+            let chapters = await fetch(url: url)
+            guard !chapters.isEmpty else { return }
+            await MainActor.run { library.setChapters(for: trackID, chapters: chapters) }
+        }
+    }
+
     static func fetch(url: URL) async -> [Chapter] {
         // The Mac has no embedded interpreter — it asks the real yt-dlp binary
         // for the same metadata, and degrades identically when there isn't one.
