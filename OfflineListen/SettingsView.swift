@@ -106,6 +106,11 @@ struct SettingsView: View {
     /// 1.4 MB"), and empty when it holds nothing — which is also what decides
     /// whether the Clear button is offered.
     @State private var spotifyCacheContents = ""
+    /// Kinds of read Spotify has capped for the saved credentials, already
+    /// phrased for display. Separate from the countdown above because they
+    /// are a different animal: a daily cap on one endpoint, which leaves the
+    /// rest of the app working and which no amount of waiting *here* shortens.
+    @State private var spotifyCaps: [String] = []
 
     // How captions are drawn — the same keys the Player reads, so a change
     // here shows on the next cue.
@@ -365,6 +370,14 @@ struct SettingsView: View {
         spotifyRequestsToday = await SpotifyUsageMeter.shared.requestsToday()
         spotifyUsageBreakdown = await SpotifyUsageMeter.shared.summary()
         spotifyCacheContents = await SpotifyMetadataCache.shared.contentsDescription()
+        let blocked = await SpotifyRateLimiter.shared.blockedEndpoints(for: spotify.clientID)
+        spotifyCaps = blocked.map { block in
+            let phrase = SpotifyEndpoint.phrase(for: block.family)
+                .replacingOccurrences(of: "reads of ", with: "")
+            let named = phrase.prefix(1).uppercased() + phrase.dropFirst()
+            let left = SpotifyClient.remainingPhrase(block.until.timeIntervalSinceNow)
+            return "\(named) — \(left) left, until \(block.until.formatted(date: .omitted, time: .shortened))"
+        }
     }
 
     // MARK: - Local Sync
@@ -709,8 +722,30 @@ struct SettingsView: View {
                         }
                     }
                 }
+                if !spotifyCaps.isEmpty {
+                    // Spotify's *daily* cap on one kind of read — a different
+                    // thing from the rolling window below, and the one that
+                    // looks like a broken app when it isn't. New credentials
+                    // don't clear it: the counter isn't kept per client id
+                    // alone, which is why making a second Spotify app changes
+                    // nothing.
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label("Spotify has capped some reads for the day",
+                              systemImage: "calendar.badge.exclamationmark")
+                            .font(.footnote)
+                            .foregroundStyle(.orange)
+                        ForEach(spotifyCaps, id: \.self) { cap in
+                            Text(cap)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Text("A limit on those reads only — everything already downloaded, and every catalogue already read, is unaffected. Waiting is the only cure: new credentials inherit it.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 if spotifyCooldown > 1 {
-                    Label("Rate limited by Spotify — clears in about \(spotifyCooldownText). Credentials from a newly created Spotify app start with a fresh quota.",
+                    Label("Rate limited by Spotify — clears in about \(spotifyCooldownText).",
                           systemImage: "hourglass")
                         .font(.footnote)
                         .foregroundStyle(.orange)
@@ -723,8 +758,13 @@ struct SettingsView: View {
                             await refreshSpotifyCooldown()
                         }
                     } label: {
-                        Label("Forget the wait and retry", systemImage: "arrow.clockwise")
-                            .font(.footnote)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Label("Forget the wait and retry", systemImage: "arrow.clockwise")
+                                .font(.footnote)
+                            Text("Clears the app's record of the wait, not Spotify's. If the limit is real the next read re-earns it.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             } else {

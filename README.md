@@ -1230,9 +1230,32 @@ arrives as one 429 that says nothing about what earned it, and the developer
 dashboard reports a day late — the count is what makes "something spiked"
 answerable while it is happening.
 
-Escalated penalties are real — a repeatedly tripped development-mode app
-can be timed out for **half a day** — so the recorded window also **persists
-across launches** (a relaunch that forgot it would re-trip the 429 and
+**Two different limits, and telling them apart is the whole game.** The
+rolling thirty seconds above is one. The other is a **daily cap on a single
+endpoint**: `/artists/{id}/albums` is metered on its own 24-hour window, and
+a client that has spent its day there is answered 429 with a `Retry-After`
+counting down to the next roll-over — 85,000-odd seconds, most of a day —
+while every other endpoint goes on answering normally. The app's own log
+caught it exactly: a `/search` verified fine and a catalogue read came back
+capped, seconds apart, on freshly minted credentials.
+
+So a `Retry-After` over **fifteen minutes** is not treated as a rate limit at
+all. No thirty-second window takes a quarter of an hour to clear, so a wait
+that long is recorded against **that endpoint** and nothing else: pasted album
+links, artwork lookups, track searches, the Every Noise harvest and every
+catalogue already cached carry on working, and only new artist release lists
+are refused — with a message that says which reads are capped, for how long,
+and that the rest of the app is unaffected. Settings ▸ Spotify lists them.
+
+The uncomfortable part, worth knowing before you go looking for a fix: **new
+credentials do not clear it.** The counter behind this cap is not kept per
+client id alone, so a second Spotify app inherits the same deadline to the
+second — which is what makes it look like the app is being singled out when it
+is only being counted. Waiting is the cure.
+
+Escalated penalties on the *rolling* window are real too — a repeatedly
+tripped development-mode app can be timed out for **half a day** — so the
+recorded window also **persists across launches** (a relaunch that forgot it would re-trip the 429 and
 extend it), and it's keyed to the **client id** that earned it: a newly
 created Spotify app starts with a clean quota, so pasting fresh
 credentials is the honest shortcut out of a long window (verification

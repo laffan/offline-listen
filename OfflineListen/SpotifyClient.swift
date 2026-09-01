@@ -18,6 +18,10 @@ enum SpotifyError: LocalizedError {
     case badReference(String)
     /// Metadata resolved, but nothing survived the YouTube matching.
     case noMatches(String)
+    /// Spotify answered 429. The first value names *what kind of read* it
+    /// refused when the block is specific to one (see `SpotifyEndpoint`);
+    /// the second is how long the app will hold off for.
+    case rateLimited(String?, TimeInterval)
 
     var errorDescription: String? {
         switch self {
@@ -39,7 +43,21 @@ enum SpotifyError: LocalizedError {
             return message
         case .noMatches(let name):
             return "No YouTube matches found for \"\(name)\"."
+        case .rateLimited(let what, let wait):
+            guard let what else {
+                return "Rate limited by Spotify — try again in \(Self.phrase(forWait: wait))."
+            }
+            return "Spotify has capped this app's \(what) for \(Self.phrase(forWait: wait)). It's a limit on that one kind of read: everything already downloaded is unaffected, catalogues read earlier still open, and the rest of the app's Spotify features keep working."
         }
+    }
+
+    /// "about 3 minutes" / "about 23 hours" — a wait said the way somebody
+    /// would say it, since these run from seconds to most of a day.
+    private static func phrase(forWait wait: TimeInterval) -> String {
+        if wait <= 1 { return "a moment" }
+        if wait < 90 { return "about \(Int(wait.rounded())) seconds" }
+        if wait < 2 * 3600 { return "about \(Int((wait / 60).rounded())) minutes" }
+        return "about \(Int((wait / 3600).rounded())) hours"
     }
 }
 
@@ -52,6 +70,7 @@ extension SpotifyError {
     /// Spotify extend it. A pass that swallowed the error and read the next
     /// release turned a few seconds of limit into hours of it.
     var isRateLimit: Bool {
+        if case .rateLimited = self { return true }
         if case .http(429, _) = self { return true }
         return false
     }
@@ -186,6 +205,52 @@ actor SpotifyTokenCache {
     }
 }
 
+/// Which *kind* of read a request is: the key a long block is recorded
+/// against, and the phrase an error uses to name it.
+///
+/// Spotify meters some endpoints on **their own 24-hour window**, separately
+/// from the rolling thirty seconds everything shares. `/artists/{id}/albums`
+/// is the notorious one — a client that has spent its day there is answered
+/// 429 with a `Retry-After` counting down to the next roll-over (most of a
+/// day) while every other endpoint goes on answering normally, which is
+/// exactly what this app's log showed: a verified `/search` and a capped
+/// catalogue read, seconds apart, on freshly minted credentials.
+///
+/// Treating that as an app-wide outage was wrong twice over. It stopped reads
+/// that would have worked — a pasted album link, artwork lookup, the tracks
+/// of a record already listed — and it made a cap on one screen look like a
+/// dead integration.
+enum SpotifyEndpoint {
+    /// The request's shape with the ids taken out: "artists/albums",
+    /// "albums", "tracks", "search". A cap is on the shape, not on one artist.
+    static func family(of url: URL) -> String {
+        let parts = url.path.split(separator: "/").map(String.init)
+        guard let version = parts.firstIndex(of: "v1") else { return url.path }
+        // Segments alternate name/id, so the even ones are the shape:
+        // "artists/<id>/albums" → artists/albums, "albums/<id>" → albums.
+        let names = parts.dropFirst(version + 1)
+            .enumerated()
+            .filter { $0.offset % 2 == 0 }
+            .map(\.element)
+        return names.isEmpty ? url.path : names.joined(separator: "/")
+    }
+
+    /// How an error names the capped read, in words somebody who didn't write
+    /// the app would recognise.
+    static func phrase(for family: String) -> String {
+        switch family {
+        case "artists/albums": return "reads of artist release lists"
+        case "artists/top-tracks": return "reads of artist top tracks"
+        case "artists": return "reads of artist profiles"
+        case "albums": return "reads of album tracklists"
+        case "tracks": return "reads of track details"
+        case "playlists": return "reads of playlists"
+        case "search": return "searches"
+        default: return "reads of \(family)"
+        }
+    }
+}
+
 /// Tracks Spotify's rate-limit state **app-wide**, and paces the app's own
 /// traffic so it has less occasion to arise.
 ///
@@ -218,6 +283,13 @@ actor SpotifyRateLimiter {
 
     private static let untilKey = "spotifyRateLimitUntil"
     private static let ownerKey = "spotifyRateLimitOwner"
+    private static let blocksKey = "spotifyEndpointBlocks"
+
+    /// A `Retry-After` longer than this is not the rolling window at all — no
+    /// thirty-second window takes a quarter of an hour to clear. It is
+    /// Spotify's own daily cap on one kind of read, so it is recorded against
+    /// that endpoint and the rest of the app carries on.
+    private static let endpointBlockThreshold: TimeInterval = 15 * 60
 
     /// The window Spotify meters on.
     private static let windowLength: TimeInterval = 30
@@ -243,6 +315,11 @@ actor SpotifyRateLimiter {
     /// queueing at once each take the next one rather than all reading the
     /// same free space.
     private var slots: [Date] = []
+    /// Per-endpoint caps: "client id|endpoint family" → when it lifts. Kept
+    /// across launches like the app-wide window, and for the same reason —
+    /// these run to most of a day, and a relaunch that forgot one would spend
+    /// a request rediscovering it.
+    private var blocks: [String: Date] = [:]
 
     init() {
         let stored = UserDefaults.standard.double(forKey: Self.untilKey)
@@ -250,6 +327,9 @@ actor SpotifyRateLimiter {
             retryAt = Date(timeIntervalSince1970: stored)
             owner = UserDefaults.standard.string(forKey: Self.ownerKey)
         }
+        let saved = UserDefaults.standard.dictionary(forKey: Self.blocksKey) as? [String: Double] ?? [:]
+        let now = Date().timeIntervalSince1970
+        blocks = saved.filter { $0.value > now }.mapValues { Date(timeIntervalSince1970: $0) }
     }
 
     /// Seconds left of the recorded window **for these credentials**
@@ -262,6 +342,32 @@ actor SpotifyRateLimiter {
             return 0
         }
         return remaining
+    }
+
+    /// Seconds left of a cap on **one kind of read** for these credentials.
+    /// Separate from the app-wide window so a capped catalogue endpoint
+    /// doesn't stop a search that Spotify would have answered.
+    func endpointBlock(for clientID: String, endpoint family: String) -> TimeInterval {
+        let key = Self.blockKey(clientID, family)
+        guard let until = blocks[key] else { return 0 }
+        let left = until.timeIntervalSinceNow
+        if left <= 0 {
+            blocks.removeValue(forKey: key)
+            persistBlocks()
+            return 0
+        }
+        return left
+    }
+
+    /// Every kind of read currently capped for these credentials, soonest
+    /// first — what Settings lists.
+    func blockedEndpoints(for clientID: String) -> [(family: String, until: Date)] {
+        let prefix = "\(clientID)|"
+        return blocks.compactMap { key, until in
+            guard key.hasPrefix(prefix), until.timeIntervalSinceNow > 0 else { return nil }
+            return (String(key.dropFirst(prefix.count)), until)
+        }
+        .sorted { $0.until < $1.until }
     }
 
     /// Books this request a place in the rolling window and answers how long
@@ -296,7 +402,23 @@ actor SpotifyRateLimiter {
     /// actually keep — never shorter than one already known for the same
     /// client id, and longer than Spotify asked when this is a repeat.
     @discardableResult
-    func noteRateLimited(for seconds: TimeInterval, clientID: String) -> TimeInterval {
+    func noteRateLimited(for seconds: TimeInterval, clientID: String,
+                         endpoint family: String? = nil) -> TimeInterval {
+        // A very long wait is a cap on this *kind* of read rather than the
+        // rolling window everything shares: record it against the endpoint,
+        // leave the rest of the app free, and don't count it as a strike —
+        // the escalation ladder is for a client that keeps pushing into a
+        // rolling window, which this isn't.
+        if seconds > Self.endpointBlockThreshold, let family {
+            let until = Date().addingTimeInterval(seconds)
+            let key = Self.blockKey(clientID, family)
+            if let existing = blocks[key], existing >= until {
+                return existing.timeIntervalSinceNow
+            }
+            blocks[key] = until
+            persistBlocks()
+            return seconds
+        }
         if owner != clientID { strikes = 0 }
         strikes += 1
         var window = max(1, seconds)
@@ -336,8 +458,19 @@ actor SpotifyRateLimiter {
         retryAt = nil
         owner = nil
         strikes = 0
+        blocks = [:]
         UserDefaults.standard.removeObject(forKey: Self.untilKey)
         UserDefaults.standard.removeObject(forKey: Self.ownerKey)
+        UserDefaults.standard.removeObject(forKey: Self.blocksKey)
+    }
+
+    private static func blockKey(_ clientID: String, _ family: String) -> String {
+        "\(clientID)|\(family)"
+    }
+
+    private func persistBlocks() {
+        let stored = blocks.mapValues { $0.timeIntervalSince1970 }
+        UserDefaults.standard.set(stored, forKey: Self.blocksKey)
     }
 }
 
@@ -637,15 +770,25 @@ struct SpotifyClient {
     /// Runaway guard for one group's `next` walk — a backstop under the
     /// budgets below, for a chain that never ends and never fills.
     private static let maxAlbumPages = 15
-    /// The sections an artist page shows, and how deep each is read before the
-    /// walk stops and the page says the list is partial. Albums are what
-    /// somebody came for, so they get the room; the singles and compilations
-    /// of a long-running artist run to hundreds of entries that nobody scrolls
-    /// and every one of which is a request. At Spotify's default page size
-    /// this is at most ~14 requests for the largest catalogue there is, and
-    /// three for an ordinary one.
-    static let catalogueGroups: [(name: String, budget: Int)] = [
-        ("album", 150), ("single", 60), ("compilation", 60)
+    /// How an artist's catalogue is read: which `include_groups` walks, in
+    /// which order, and how deep each goes before it stops and the page says
+    /// the list is partial.
+    ///
+    /// **Two walks, not three, and not one.** Requests to this endpoint are
+    /// the app's scarcest resource — Spotify caps it on its own daily window —
+    /// so the count matters as much as the ceiling. One combined walk is a
+    /// single request for a small artist, but truncating it can leave the
+    /// Albums section short for a prolific one, since this endpoint's ordering
+    /// within a combined walk isn't documented. A walk per group guarantees
+    /// every section but costs three requests for an artist with eleven
+    /// releases. Splitting **albums** (which is what somebody came for, and
+    /// which must be complete) from **everything else** (the long tail nobody
+    /// scrolls to the end of) buys the guarantee for one extra request: two
+    /// for an ordinary artist, at most eight for the largest catalogue there
+    /// is, against the forty-eight a full walk of Dolly Parton's cost.
+    static let catalogueGroups: [(groups: String, label: String, budget: Int)] = [
+        ("album", "albums", 100),
+        ("single,compilation", "singles and compilations", 60)
     ]
     /// The page size the catalogue walk *asks* for: Spotify's documented
     /// maximum, and 2.5× the default it serves when nothing is asked. That
@@ -1018,25 +1161,23 @@ struct SpotifyClient {
     /// discography view; each row's `url` re-enters the ordinary paste
     /// pipeline when the user downloads an album.
     ///
-    /// **One walk per group, each with a budget.** It used to be a single
+    /// Read as two budgeted walks rather than one to the end — see
+    /// `catalogueGroups` for why two. It used to be a single
     /// `include_groups=album,single,compilation` walk paginated to
     /// completion, and for a long-catalogue artist that is brutal: Dolly
-    /// Parton is 48 pages, so *one page open* spent most of a day's quota and,
-    /// once those requests were paced, a minute of spinner. Splitting the walk
-    /// costs two extra requests for a small artist (three groups, one page
-    /// each) and saves dozens for a large one, because each section stops at a
-    /// depth that is worth having — and it sidesteps the reported pagination
-    /// bugs on multi-group walks, where later pages come back inconsistent.
-    /// Truncation is reported rather than hidden: the page says the list is
-    /// the most recent of a longer catalogue.
+    /// Parton is 48 pages, so *one page open* spent a day's worth of an
+    /// endpoint Spotify caps daily, and — once those requests were paced — a
+    /// minute of spinner with it. Truncation is reported rather than hidden:
+    /// the page says the list is part of a longer catalogue.
     func artistAlbums(id: String, ignoringCache: Bool = false) async throws -> SpotifyCatalogue {
         if !ignoringCache, let cached = await SpotifyMetadataCache.shared.albums(forArtist: id) {
             return cached
         }
         var found: [SpotifyAlbumSummary] = []
         var truncated = false
-        for group in Self.catalogueGroups {
-            let read = try await catalogueGroup(group.name, byArtist: id, budget: group.budget)
+        for walk in Self.catalogueGroups {
+            let read = try await catalogueGroup(walk.groups, labelled: walk.label,
+                                                byArtist: id, budget: walk.budget)
             found.append(contentsOf: read.releases)
             truncated = truncated || read.truncated
         }
@@ -1053,9 +1194,9 @@ struct SpotifyClient {
         return catalogue
     }
 
-    /// One `include_groups` group, paginated until the budget is reached.
+    /// One `include_groups` walk, paginated until its budget is reached.
     /// Answers what it read and whether Spotify had more to give.
-    private func catalogueGroup(_ group: String, byArtist id: String,
+    private func catalogueGroup(_ groups: String, labelled label: String, byArtist id: String,
                                 budget: Int) async throws -> (releases: [SpotifyAlbumSummary], truncated: Bool) {
         var found: [SpotifyAlbumSummary] = []
         // The page size is *asked* for rather than assumed: some
@@ -1067,7 +1208,7 @@ struct SpotifyClient {
         // mints carry whichever size it accepted, so the rest of the walk is
         // valid by construction.
         var askedWithLimit = sendsPageLimit
-        var next: String? = Self.artistAlbumsPage(id: id, group: group,
+        var next: String? = Self.artistAlbumsPage(id: id, groups: groups,
                                                   limit: askedWithLimit ? Self.cataloguePageSize : nil)
         var pages = 0
         while let link = next, let url = URL(string: link) {
@@ -1075,13 +1216,13 @@ struct SpotifyClient {
             // A backstop under the budget, for a `next` chain that never
             // ends and never fills.
             if pages > Self.maxAlbumPages {
-                appLog("Spotify artist \(id): the \(group) walk ran past \(Self.maxAlbumPages) pages — stopping there.",
+                appLog("Spotify artist \(id): the \(label) walk ran past \(Self.maxAlbumPages) pages — stopping there.",
                        level: .warning, category: Self.category)
                 return (found, true)
             }
             let data: Data
             do {
-                data = try await get(url, describing: "artist's \(group)s")
+                data = try await get(url, describing: "artist's \(label)")
             } catch let error as SpotifyError {
                 // Only the first page can be refused for its size — after that
                 // the URL is Spotify's own — so anything else is a real error.
@@ -1091,7 +1232,7 @@ struct SpotifyClient {
                        level: .warning, category: Self.category)
                 askedWithLimit = false
                 pages = 0
-                next = Self.artistAlbumsPage(id: id, group: group, limit: nil)
+                next = Self.artistAlbumsPage(id: id, groups: groups, limit: nil)
                 continue
             }
             guard let page = try? JSONDecoder().decode(APIPage<APIAlbumSummary>.self, from: data) else {
@@ -1103,11 +1244,13 @@ struct SpotifyClient {
                     id: itemID,
                     name: name,
                     releaseDate: item.releaseDate ?? "",
-                    // The group we asked for, not the one the item reports:
-                    // this walk *is* the answer to "which section", and an
-                    // item whose own label disagreed would land in no section
-                    // at all.
-                    group: group,
+                    // A single-group walk *is* the answer to "which
+                    // section", so take it rather than the item's own label,
+                    // which would land a disagreeing item in no section at
+                    // all. A combined walk has to ask the item.
+                    group: groups.contains(",")
+                        ? (item.albumGroup ?? item.albumType ?? "album")
+                        : groups,
                     totalTracks: item.totalTracks ?? 0,
                     imageURL: item.images?.first?.url))
             }
@@ -1117,7 +1260,7 @@ struct SpotifyClient {
                 // endpoint's ordering within a group isn't documented, so the
                 // depth is a budget rather than a claim about which releases
                 // it kept.
-                appLog("Spotify artist \(id): more than \(budget) \(group) release(s) — the first \(found.count) Spotify listed are read and the rest left.",
+                appLog("Spotify artist \(id): more than \(budget) \(label) — the first \(found.count) Spotify listed are read and the rest left.",
                        level: .warning, category: Self.category)
                 return (found, true)
             }
@@ -1127,8 +1270,8 @@ struct SpotifyClient {
 
     /// The first page of an artist's releases, with or without an explicit
     /// page size.
-    private static func artistAlbumsPage(id: String, group: String, limit: Int?) -> String {
-        var path = "\(apiBase)/artists/\(id)/albums?include_groups=\(group)"
+    private static func artistAlbumsPage(id: String, groups: String, limit: Int?) -> String {
+        var path = "\(apiBase)/artists/\(id)/albums?include_groups=\(groups)"
         if let limit { path += "&limit=\(limit)" }
         return path
     }
@@ -1292,17 +1435,24 @@ struct SpotifyClient {
     /// knows about, records the `Retry-After` of any 429 it meets (and
     /// retries once when it's short); then maps the status onto a typed error.
     private func get(_ url: URL, describing what: String) async throws -> Data {
-        // Sending during a known window is what makes Spotify extend it —
-        // hold here instead, however unrelated this particular read is.
-        let cooldown = await SpotifyRateLimiter.shared.remainingCooldown(for: clientID)
+        // Two holds, and the difference matters. The **app-wide** one is the
+        // rolling window Spotify meters everything on; the **endpoint** one is
+        // its separate daily cap on one kind of read, which leaves every other
+        // read working. Sending into either is what makes Spotify extend it.
+        let family = SpotifyEndpoint.family(of: url)
+        let appWide = await SpotifyRateLimiter.shared.remainingCooldown(for: clientID)
+        let capped = await SpotifyRateLimiter.shared.endpointBlock(for: clientID, endpoint: family)
+        let cooldown = max(appWide, capped)
         if cooldown > 0 {
             guard cooldown <= Self.maxRateLimitWait else {
                 // Logged distinctly from a server 429, so "the app is
                 // waiting out a recorded window" and "Spotify answered 429
                 // again" can't be confused in the Log.
-                appLog("Spotify: \(Int(max(1, (cooldown / 60).rounded()))) min left of the recorded rate-limit window — the \(what) request was not sent.",
+                let scope = capped > appWide ? "Spotify's cap on \(family)" : "the recorded rate-limit window"
+                appLog("Spotify: \(Self.remainingPhrase(cooldown)) left of \(scope) — the \(what) request was not sent.",
                        level: .warning, category: Self.category)
-                throw SpotifyError.http(429, Self.rateLimitMessage(wait: cooldown))
+                throw SpotifyError.rateLimited(capped > appWide ? SpotifyEndpoint.phrase(for: family) : nil,
+                                               cooldown)
             }
             appLog("Spotify: holding \(Int(cooldown.rounded()))s for the rate limit before reading the \(what).",
                    level: .debug, category: Self.category)
@@ -1328,16 +1478,28 @@ struct SpotifyClient {
             // asked for when this is a repeat, because being asked twice
             // means the first answer wasn't enough.
             let window = await SpotifyRateLimiter.shared.noteRateLimited(for: retryAfter,
-                                                                         clientID: clientID)
-            appLog("Spotify rate limited reading the \(what) — Retry-After \(Int(retryAfter))s; holding off \(Int(window.rounded()))s.",
-                   level: .warning, category: Self.category)
+                                                                         clientID: clientID,
+                                                                         endpoint: family)
+            if retryAfter > Self.endpointCapThreshold {
+                // Said in full, because this is the one that looks like a bug
+                // and isn't: no thirty-second window takes hours to clear, so
+                // a wait this long is Spotify's daily cap on `family` and
+                // nothing the app can pace its way out of. The body goes in
+                // too — it is the only place Spotify ever explains itself.
+                appLog("Spotify capped \(family) for these credentials — Retry-After \(Int(retryAfter))s (\(Self.remainingPhrase(retryAfter))). This is Spotify's own daily limit on that endpoint, not the app pacing itself; other Spotify reads are unaffected. Spotify said: \(Self.errorMessage(from: data))",
+                       level: .warning, category: Self.category)
+            } else {
+                appLog("Spotify rate limited reading the \(what) — Retry-After \(Int(retryAfter))s; holding off \(Int(window.rounded()))s.",
+                       level: .warning, category: Self.category)
+            }
             if window <= Self.maxRateLimitWait {
                 try await Task.sleep(nanoseconds: UInt64((window + 1) * 1_000_000_000))
                 try await claimSlot(for: what)
                 (data, status, response) = try await send(url, bearer: bearer)
                 if status == 429 {
                     let again = Self.retryAfterSeconds(from: response) ?? retryAfter
-                    await SpotifyRateLimiter.shared.noteRateLimited(for: again, clientID: clientID)
+                    await SpotifyRateLimiter.shared.noteRateLimited(for: again, clientID: clientID,
+                                                                    endpoint: family)
                 }
             }
         }
@@ -1346,8 +1508,12 @@ struct SpotifyClient {
             case 401: throw SpotifyError.credentialsRejected
             case 404: throw SpotifyError.notFound(what)
             case 429:
+                let held = await SpotifyRateLimiter.shared.endpointBlock(for: clientID, endpoint: family)
+                guard held <= 0 else {
+                    throw SpotifyError.rateLimited(SpotifyEndpoint.phrase(for: family), held)
+                }
                 let wait = await SpotifyRateLimiter.shared.remainingCooldown(for: clientID)
-                throw SpotifyError.http(429, Self.rateLimitMessage(wait: wait))
+                throw SpotifyError.rateLimited(nil, wait)
             default: throw SpotifyError.http(status, Self.errorMessage(from: data))
             }
         }
@@ -1390,12 +1556,19 @@ struct SpotifyClient {
         return seconds
     }
 
-    /// The user-facing 429 line, with the actual wait when it's known.
-    private static func rateLimitMessage(wait: TimeInterval) -> String {
-        if wait <= 1 { return "rate limited by Spotify — wait a moment and try again" }
-        if wait < 90 { return "rate limited by Spotify — try again in about \(Int(wait.rounded())) seconds" }
-        return "rate limited by Spotify — try again in about \(Int((wait / 60).rounded())) minutes"
+    /// A wait said the way somebody would say it — these run from seconds to
+    /// most of a day, and "1420 minutes" tells nobody anything.
+    static func remainingPhrase(_ wait: TimeInterval) -> String {
+        if wait < 90 { return "\(Int(max(1, wait.rounded())))s" }
+        if wait < 2 * 3600 { return "\(Int((wait / 60).rounded())) min" }
+        let hours = wait / 3600
+        return "\(String(format: "%.1f", hours))h"
     }
+
+    /// Where "the app is being paced" stops and "Spotify has capped this
+    /// endpoint for the day" begins. Mirrors `SpotifyRateLimiter`'s own
+    /// threshold; the two only ever want to agree.
+    private static let endpointCapThreshold: TimeInterval = 15 * 60
 
     /// Pulls the human-readable message out of an error body, falling back to
     /// the raw bytes.
