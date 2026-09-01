@@ -178,11 +178,16 @@ struct SpotifyDiscographyProvider: DiscographyProviding {
         add("Singles & EPs", "single")
         add("Compilations", "compilation")
 
+        // When this catalogue was actually read from Spotify — which is not
+        // "now" when it came out of the cache, and the cache keeps things
+        // indefinitely. The page says so rather than passing week-old
+        // releases off as today's.
+        let read = await SpotifyMetadataCache.shared.releasesFetched(forArtist: resolvedID) ?? Date()
         return DiscographyCatalogue(artistName: portrait?.name ?? resolvedName,
                                     spotifyArtistID: resolvedID,
                                     artistImageURL: portrait?.imageURL,
                                     sections: sections,
-                                    fetched: Date())
+                                    fetched: read)
     }
 
     func tracks(for release: DiscographyRelease) async throws -> [DiscographyTrackInfo] {
@@ -803,11 +808,47 @@ struct DiscographyBrowserView: View {
                 saveForLaterButton
                 addSourceButton
             }
+            cacheNote(catalogue)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 8)
         .padding(.bottom, 4)
     }
+
+    /// **Cached results from …**, with the one control that changes that.
+    ///
+    /// A catalogue read once is kept for good (`SpotifyMetadataCache`), which
+    /// is what stops the same artist being bought from Spotify twice — but a
+    /// page that silently shows week-old releases as though they were today's
+    /// is lying by omission. So it says how old what you're looking at is, in
+    /// a caption rather than a banner, and only once that age is worth
+    /// mentioning: a catalogue just off the network says nothing at all.
+    @ViewBuilder
+    private func cacheNote(_ catalogue: DiscographyCatalogue) -> some View {
+        if Date().timeIntervalSince(catalogue.fetched) > Self.cacheNoteThreshold {
+            HStack(spacing: 5) {
+                Image(systemName: "clock.arrow.circlepath")
+                Text("Cached results from \(catalogue.fetched.formatted(.relative(presentation: .numeric)))")
+                if loading {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button("Refresh") {
+                        Task { await fetch(refreshing: true) }
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                }
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .padding(.top, 2)
+        }
+    }
+
+    /// How old a catalogue has to be before the page mentions it. Long enough
+    /// that a fresh read and a refresh stay silent, short enough that anything
+    /// carried over from an earlier visit is labelled.
+    private static let cacheNoteThreshold: TimeInterval = 120
 
     private var learnMoreButton: some View {
         headerButton("Learn More", systemImage: "text.book.closed") {

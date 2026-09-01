@@ -1175,13 +1175,22 @@ to `/artists/{id}/albums`, which is the app's busiest endpoint by a distance
 outlives the cache). Some client-credentials apps answer *"Invalid limit"* to
 a value their own docs allow, so the ask is made **once** and a refusal
 remembered per client id.
-**Caching**: catalogue reads are cached app-wide for six hours
-(`SpotifyMetadataCache`) — an artist's name→id lookup, their portrait and
-album list, and each album's tracklist are fetched once, so opening a page,
-searching its Top 10 and expanding a release share those reads, and coming
-back to an artist later in the day costs nothing (a derivation also pre-warms
-every release it touched). The toolbar's **Refresh** is the one thing that
-reads past the cache, which is what it is for.
+**Caching**: catalogue reads are kept **for good, on disk**
+(`SpotifyMetadataCache`, one JSON file written a couple of seconds after the
+last change) — an artist's name→id lookup, their portrait and release list,
+and each album's tracklist are fetched **once, ever**. Opening a page,
+searching its Top 10 and expanding a release share those reads; so does
+coming back next week, or after a relaunch. What lands there is public,
+effectively-immutable metadata — a 1979 album does not change while you read
+it — and the same screens asking again tomorrow is what a day's request count
+was mostly made of. Two things read past it, both deliberate: the artist
+page's **Refresh** (the portrait and release list, not the tracklists it
+already holds — re-buying those is exactly what a refresh should not do), and
+**Clear Artist Cache** in Settings ▸ Spotify, which throws the lot away and
+shows what it is holding first ("8 artists · 214 tracklists · 1.4 MB"). Since
+nothing expires, the artist page says how old what you are looking at is —
+*"Cached results from 3 days ago — Refresh"*, a caption under the header
+buttons, shown only once that age is worth mentioning.
 **Pacing** (`SpotifyRateLimiter`): every request claims a slot in a rolling
 **thirty-second** window — the window Spotify itself meters — capped at 30,
 and a request with no slot waits for one. What trips a limit is never a day's
@@ -1593,7 +1602,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `AISettings.swift` | `AISettingsStore` (model/key/assist, Keychain-backed), `AIModel`, `Keychain` helper. |
 | `AnthropicClient.swift` | Minimal Anthropic Messages API client (verify + single-shot completion) over URLSession. |
 | `SpotifyRef.swift` | Parses `spotify:` URIs / `open.spotify.com` links into a (kind, id) pair; resolves `spotify.link` short links by redirect. |
-| `SpotifyClient.swift` | Spotify Web API client: Client Credentials token (cached, 401-refreshing) + the track/album/playlist/artist metadata reads, paginated and **batched** (`/albums?ids=`, cross-album `/tracks?ids=`), plus `searchArtists(genre:)` — the one request the Every Noise dataset harvest makes — and `searchArtists(named:)` behind that browser's Spotify Find mode. Also `SpotifyRateLimiter` (the persisted, per-client-id `Retry-After` window), `SpotifyMetadataCache` (the ten-minute catalogue cache), and the popularity-ranked `derivedTopTracks`. |
+| `SpotifyClient.swift` | Spotify Web API client: Client Credentials token (cached, 401-refreshing) + the track/album/playlist/artist metadata reads, paginated and **batched** (`/albums?ids=`, cross-album `/tracks?ids=`), plus `searchArtists(genre:)` — the one request the Every Noise dataset harvest makes — and `searchArtists(named:)` behind that browser's Spotify Find mode. Also `SpotifyRateLimiter` (the persisted, per-client-id `Retry-After` window, plus the rolling 30-second pacer every request claims a slot in), `SpotifyUsageMeter` (the day's request count, per endpoint), `SpotifyMetadataCache` (the catalogue kept for good in `Documents/spotify-catalogue.json`), and the popularity-ranked `derivedTopTracks`. |
 | `SpotifySettings.swift` | `SpotifySettingsStore` — the Keychain-backed client id/secret (mirrors `AISettingsStore`). |
 | `SpotifyResolver.swift` | Spotify metadata → `ResolvedPlaylist`: ISRC-first YouTube matching with a duration gate, bounded and concurrent. |
 | `AIOrganizer.swift` | Builds the prompt, calls the API, writes music/podcast + clean metadata back to the library. |

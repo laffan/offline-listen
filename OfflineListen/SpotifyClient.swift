@@ -66,7 +66,7 @@ func isSpotifyRateLimit(_ error: Error) -> Bool {
 /// One Spotify track, reduced to the fields the YouTube match actually needs.
 /// Deliberately not a model of Spotify's object graph — four endpoints feed
 /// this one shape.
-struct SpotifyTrack: Sendable, Equatable {
+struct SpotifyTrack: Sendable, Equatable, Codable {
     let id: String
     let name: String
     let artists: [String]
@@ -114,7 +114,7 @@ struct SpotifyArtistHit: Sendable, Hashable {
     let imageURL: String?
 }
 
-struct SpotifyAlbumSummary: Sendable, Identifiable, Hashable {
+struct SpotifyAlbumSummary: Sendable, Identifiable, Hashable, Codable {
     let id: String
     let name: String
     /// "1979", "1979-10" or "1979-10-12" — Spotify's precision varies.
@@ -133,7 +133,7 @@ struct SpotifyAlbumSummary: Sendable, Identifiable, Hashable {
 
 /// A Spotify album, playlist or artist reduced to a name (which becomes the
 /// library folder's name) and its tracks in Spotify's own order.
-struct SpotifyCollection: Sendable {
+struct SpotifyCollection: Sendable, Codable {
     let name: String
     let tracks: [SpotifyTrack]
 }
@@ -382,98 +382,205 @@ actor SpotifyUsageMeter {
     }
 }
 
-/// Session-lived cache for the catalogue reads the discography browser
-/// repeats: the same artist's portrait and album list (opening their page,
-/// then Search Top 10), the same album's tracklist (a Top 10 derivation,
-/// then expanding that album). It's public, effectively-static metadata —
-/// a release from 1979 does not change while you read it — so the TTL is
-/// measured in hours rather than minutes: ten minutes meant that coming back
-/// to an artist after lunch re-bought their whole catalogue, which is exactly
-/// the duplication a day's request count is made of. Anything that must see
-/// today's catalogue (the toolbar's Refresh) asks past the cache explicitly.
+/// The catalogue the app has already read, kept **for good** and on disk.
+///
+/// What lands here is public, effectively-immutable metadata: who a name
+/// resolves to, an artist's portrait and release list, and a record's
+/// tracklist. A 1979 album does not change while you are reading it, so
+/// there is no expiry at all — an artist read once is never bought from
+/// Spotify a second time. That is what the request count is mostly made of:
+/// not one screen asking for too much, but the same screens asking again
+/// tomorrow, and again after a relaunch.
+///
+/// Two things read past it, both of them deliberate acts: the discography's
+/// **Refresh** (the artist's portrait and release list, which is what a
+/// refresh is actually asking about — a tracklist it already has is the one
+/// thing it should not re-buy), and **Clear Artist Cache** in Settings, which
+/// throws the lot away.
+///
+/// Persistence is one JSON file, written 2 seconds after the last change so a
+/// batch of stores costs one write. A file that can't be read — a schema that
+/// moved under it — is simply started again: everything in here is
+/// re-derivable, at worst for the price of the requests it was saving.
 /// An actor: reads come from several concurrent tasks.
 actor SpotifyMetadataCache {
     static let shared = SpotifyMetadataCache()
 
-    private let ttl: TimeInterval = 6 * 60 * 60
-    private let maxArtists = 30
-    private let maxCollections = 100
+    /// Ceilings, not expiry: nothing is dropped for being old, only for being
+    /// the oldest thing in a cache that has grown past its size. Generous
+    /// enough that ordinary browsing never reaches them.
+    private static let maxArtists = 400
+    private static let maxCollections = 1_000
+    /// How long the writer waits for the next change before saving.
+    private static let saveDelay: TimeInterval = 2
 
-    private var artistsByID: [String: (value: (name: String, imageURL: String?), at: Date)] = [:]
-    /// Typed name → the artist it resolved to. A Browse source and a library
-    /// album both know their artist only by *name*, so every visit used to
-    /// open with a `/search` before it could read anything — and the answer to
-    /// "who is this name" does not change between visits.
-    private var idsByName: [String: (value: (id: String, name: String), at: Date)] = [:]
-    private var albumsByArtist: [String: (value: [SpotifyAlbumSummary], at: Date)] = [:]
-    private var collectionsByAlbum: [String: (value: SpotifyCollection, at: Date)] = [:]
-    /// Tracklists read **names-only** (the song index's read, which skips the
-    /// ISRC re-read because it only ever shows titles). Kept apart from the
-    /// full collections above so a cheap read can never be served in place of
-    /// one that needs ISRCs to match a recording on YouTube — a full
-    /// collection answers a names-only ask, never the other way round.
-    private var namesByAlbum: [String: (value: SpotifyCollection, at: Date)] = [:]
+    static var file: URL { AppPaths.documents.appendingPathComponent("spotify-catalogue.json") }
+
+    /// One cached thing and when it was read — the date is what the artist
+    /// page's "cached results from…" line reports, and what trimming sorts on.
+    private struct Entry<Value: Codable>: Codable {
+        var value: Value
+        var at: Date
+    }
+
+    private struct Profile: Codable {
+        var name: String
+        var imageURL: String?
+    }
+
+    private struct Lookup: Codable {
+        var id: String
+        var name: String
+    }
+
+    /// The whole cache as it sits on disk.
+    private struct Store: Codable {
+        var artists: [String: Entry<Profile>] = [:]
+        var lookups: [String: Entry<Lookup>] = [:]
+        var releases: [String: Entry<[SpotifyAlbumSummary]>] = [:]
+        var collections: [String: Entry<SpotifyCollection>] = [:]
+        var names: [String: Entry<SpotifyCollection>] = [:]
+    }
+
+    private var store = Store()
+    private var saveTask: Task<Void, Never>?
+
+    init() {
+        guard let data = try? Data(contentsOf: Self.file),
+              let decoded = try? JSONDecoder().decode(Store.self, from: data) else { return }
+        store = decoded
+    }
+
+    // MARK: - Artists
 
     func artist(forID id: String) -> (name: String, imageURL: String?)? {
-        fresh(artistsByID[id])
+        guard let entry = store.artists[id] else { return nil }
+        return (entry.value.name, entry.value.imageURL)
     }
 
     func storeArtist(_ value: (name: String, imageURL: String?), forID id: String) {
-        artistsByID[id] = (value, Date())
-        trim(&artistsByID, to: maxArtists)
+        store.artists[id] = Entry(value: Profile(name: value.name, imageURL: value.imageURL),
+                                  at: Date())
+        trim(&store.artists, to: Self.maxArtists)
+        scheduleSave()
     }
 
     func artistID(forName name: String) -> (id: String, name: String)? {
-        fresh(idsByName[Self.nameKey(name)])
+        guard let entry = store.lookups[Self.nameKey(name)] else { return nil }
+        return (entry.value.id, entry.value.name)
     }
 
     func storeArtistID(_ value: (id: String, name: String), forName name: String) {
-        idsByName[Self.nameKey(name)] = (value, Date())
-        trim(&idsByName, to: maxArtists)
+        store.lookups[Self.nameKey(name)] = Entry(value: Lookup(id: value.id, name: value.name),
+                                                  at: Date())
+        trim(&store.lookups, to: Self.maxArtists)
+        scheduleSave()
     }
 
-    private static func nameKey(_ name: String) -> String {
-        name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    }
+    // MARK: - Releases
 
     func albums(forArtist id: String) -> [SpotifyAlbumSummary]? {
-        fresh(albumsByArtist[id])
+        store.releases[id]?.value
     }
 
     func storeAlbums(_ value: [SpotifyAlbumSummary], forArtist id: String) {
-        albumsByArtist[id] = (value, Date())
-        trim(&albumsByArtist, to: maxArtists)
+        store.releases[id] = Entry(value: value, at: Date())
+        trim(&store.releases, to: Self.maxArtists)
+        scheduleSave()
     }
 
+    /// When this artist's release list was last read from Spotify — the page
+    /// says so, because with no expiry the answer can be days old.
+    func releasesFetched(forArtist id: String) -> Date? {
+        store.releases[id]?.at
+    }
+
+    // MARK: - Tracklists
+
     func collection(forAlbum id: String) -> SpotifyCollection? {
-        fresh(collectionsByAlbum[id])
+        store.collections[id]?.value
     }
 
     func storeCollection(_ value: SpotifyCollection, forAlbum id: String) {
-        collectionsByAlbum[id] = (value, Date())
-        trim(&collectionsByAlbum, to: maxCollections)
+        store.collections[id] = Entry(value: value, at: Date())
+        trim(&store.collections, to: Self.maxCollections)
+        scheduleSave()
     }
 
     /// A tracklist for a caller that only needs the song names — the full
     /// collection when one has been read, otherwise the names-only copy.
     func names(forAlbum id: String) -> SpotifyCollection? {
-        fresh(collectionsByAlbum[id]) ?? fresh(namesByAlbum[id])
+        store.collections[id]?.value ?? store.names[id]?.value
     }
 
     func storeNames(_ value: SpotifyCollection, forAlbum id: String) {
-        namesByAlbum[id] = (value, Date())
-        trim(&namesByAlbum, to: maxCollections)
+        store.names[id] = Entry(value: value, at: Date())
+        trim(&store.names, to: Self.maxCollections)
+        scheduleSave()
     }
 
-    private func fresh<T>(_ entry: (value: T, at: Date)?) -> T? {
-        guard let entry, Date().timeIntervalSince(entry.at) < ttl else { return nil }
-        return entry.value
+    // MARK: - Settings
+
+    /// What the cache is holding, for the Settings row that offers to empty
+    /// it: "8 artists · 214 tracklists · 1.4 MB". Empty when there's nothing.
+    func contentsDescription() -> String {
+        let artists = store.releases.count
+        let tracklists = store.collections.count + store.names.count
+        guard artists + tracklists > 0 else { return "" }
+        var parts = ["\(artists) artist\(artists == 1 ? "" : "s")",
+                     "\(tracklists) tracklist\(tracklists == 1 ? "" : "s")"]
+        let attributes = try? FileManager.default.attributesOfItem(atPath: Self.file.path)
+        if let bytes = (attributes?[.size] as? NSNumber)?.int64Value, bytes > 0 {
+            parts.append(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))
+        }
+        return parts.joined(separator: " · ")
     }
 
-    private func trim<T>(_ table: inout [String: (value: T, at: Date)], to cap: Int) {
+    /// Throws the whole catalogue away — the file included. The next visit to
+    /// any artist reads Spotify again, which is the point: this is the control
+    /// for a cache that otherwise never expires.
+    func clear() {
+        saveTask?.cancel()
+        saveTask = nil
+        store = Store()
+        try? FileManager.default.removeItem(at: Self.file)
+        appLog("Spotify: the cached catalogue was cleared.", category: "Spotify")
+    }
+
+    // MARK: - Housekeeping
+
+    private static func nameKey(_ name: String) -> String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func trim<T: Codable>(_ table: inout [String: Entry<T>], to cap: Int) {
         while table.count > cap,
               let oldest = table.min(by: { $0.value.at < $1.value.at }) {
             table.removeValue(forKey: oldest.key)
+        }
+    }
+
+    /// Coalesces writes: a song index storing sixty tracklists in a second is
+    /// one save, not sixty.
+    private func scheduleSave() {
+        saveTask?.cancel()
+        saveTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.saveDelay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await self?.write()
+        }
+    }
+
+    private func write() {
+        // Deliberately not clearing `saveTask`: a store that landed while this
+        // was waiting has already replaced it, and nilling it here would leave
+        // that newer save uncancellable.
+        do {
+            let data = try JSONEncoder().encode(store)
+            try data.write(to: Self.file, options: .atomic)
+        } catch {
+            appLog("Couldn't save the Spotify catalogue cache: \(error.localizedDescription)",
+                   level: .warning, category: "Spotify")
         }
     }
 }

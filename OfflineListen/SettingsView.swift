@@ -102,6 +102,10 @@ struct SettingsView: View {
     /// count, where it can be read while it is happening.
     @State private var spotifyRequestsToday = 0
     @State private var spotifyUsageBreakdown = ""
+    /// What the kept catalogue is holding ("8 artists · 214 tracklists ·
+    /// 1.4 MB"), and empty when it holds nothing — which is also what decides
+    /// whether the Clear button is offered.
+    @State private var spotifyCacheContents = ""
 
     // How captions are drawn — the same keys the Player reads, so a change
     // here shows on the next cue.
@@ -360,6 +364,7 @@ struct SettingsView: View {
         spotifyCooldown = await SpotifyRateLimiter.shared.remainingCooldown(for: spotify.clientID)
         spotifyRequestsToday = await SpotifyUsageMeter.shared.requestsToday()
         spotifyUsageBreakdown = await SpotifyUsageMeter.shared.summary()
+        spotifyCacheContents = await SpotifyMetadataCache.shared.contentsDescription()
     }
 
     // MARK: - Local Sync
@@ -685,6 +690,25 @@ struct SettingsView: View {
                         }
                     }
                 }
+                if !spotifyCacheContents.isEmpty {
+                    // The catalogue is kept indefinitely — an artist read once
+                    // is never bought twice — so this is the one control that
+                    // makes the app ask Spotify again from scratch.
+                    Button {
+                        Task {
+                            await SpotifyMetadataCache.shared.clear()
+                            await refreshSpotifyCooldown()
+                        }
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Label("Clear Artist Cache", systemImage: "trash")
+                                .font(.footnote)
+                            Text(spotifyCacheContents)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
                 if spotifyCooldown > 1 {
                     Label("Rate limited by Spotify — clears in about \(spotifyCooldownText). Credentials from a newly created Spotify app start with a fresh quota.",
                           systemImage: "hourglass")
@@ -710,7 +734,7 @@ struct SettingsView: View {
             Text("Spotify")
         } footer: {
             if spotify.isConfigured {
-                Text("Paste a Spotify track, album, playlist or artist link into the Download tab and its tracks are matched to YouTube videos and downloaded. Signing in as an app rather than as you, it reads public metadata only — your saved songs and private playlists aren't visible to it.")
+                Text("Paste a Spotify track, album, playlist or artist link into the Download tab and its tracks are matched to YouTube videos and downloaded. Signing in as an app rather than as you, it reads public metadata only — your saved songs and private playlists aren't visible to it.\n\nCatalogues you open are kept on the device and never re-read, so browsing the same artist twice costs nothing. Each artist page says how old what it's showing is, and refreshes from there; clearing the cache makes every page read Spotify again.")
             } else {
                 Text("Create a free app at developer.spotify.com to get a client ID and secret, then paste them here to download Spotify links. They're stored securely in the device Keychain.")
             }
