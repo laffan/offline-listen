@@ -71,10 +71,19 @@ struct DiscographyCatalogue: Codable {
 /// Where a discography browser gets its data: the catalogue layout, each
 /// release's tracks, and the on-demand YouTube match for one track.
 protocol DiscographyProviding {
-    /// The full first pass — names only, no YouTube work.
-    func loadCatalogue() async throws -> DiscographyCatalogue
+    /// The full first pass — names only, no YouTube work. `refreshing` is the
+    /// toolbar's Refresh button: read past whatever is cached and take the
+    /// catalogue as it stands now.
+    func loadCatalogue(refreshing: Bool) async throws -> DiscographyCatalogue
     /// A release's tracks (still names only), fetched if the layout carries none.
     func tracks(for release: DiscographyRelease) async throws -> [DiscographyTrackInfo]
+    /// Several releases' tracklists in one go — what the song index reads.
+    /// Keyed by release id; a release the provider couldn't read is absent.
+    func tracklists(for releases: [DiscographyRelease]) async throws -> [String: [DiscographyTrackInfo]]
+    /// How many releases the song index hands to `tracklists(for:)` at a time.
+    /// One for a provider that can only read them singly; a provider with a
+    /// batch endpoint says so and the index costs a fraction of the requests.
+    var songIndexBatchSize: Int { get }
     /// The YouTube video for one track, or nil when nothing usable matches.
     func youTubeURL(for track: DiscographyTrackInfo) async -> String?
     /// Which record a loose song belongs to — the one thing the artist's
@@ -86,6 +95,17 @@ extension DiscographyProviding {
     /// A layout that carries its tracklists inline is searched by the caller;
     /// only a provider that can *ask* (Spotify) overrides this.
     func albumName(forTrackNamed name: String, artist: String) async -> String? { nil }
+
+    var songIndexBatchSize: Int { 1 }
+
+    /// One release at a time — all a provider without a batch read can do.
+    func tracklists(for releases: [DiscographyRelease]) async throws -> [String: [DiscographyTrackInfo]] {
+        var index: [String: [DiscographyTrackInfo]] = [:]
+        for release in releases {
+            index[release.id] = try await tracks(for: release)
+        }
+        return index
+    }
 }
 
 /// Case- and diacritic-insensitive comparison for catalogue text, which
@@ -118,7 +138,7 @@ struct SpotifyDiscographyProvider: DiscographyProviding {
     /// Spotify remains the fallback when no AI key is configured.
     var aiSettings: AISettingsStore? = nil
 
-    func loadCatalogue() async throws -> DiscographyCatalogue {
+    func loadCatalogue(refreshing: Bool) async throws -> DiscographyCatalogue {
         let resolvedID: String
         var resolvedName = artistName
         if let artistID {
@@ -128,9 +148,12 @@ struct SpotifyDiscographyProvider: DiscographyProviding {
             resolvedID = hit.id
             resolvedName = hit.name
         }
-        // The portrait for the header; non-fatal if it doesn't come.
-        let portrait = try? await client.artist(id: resolvedID)
-        let albums = try await client.artistAlbums(id: resolvedID)
+        // The portrait for the header; non-fatal if it doesn't come. Both
+        // reads are cached app-wide, and Refresh is the one thing that means
+        // "past the cache" — otherwise re-opening an artist you looked at this
+        // morning re-buys their whole catalogue.
+        let portrait = try? await client.artist(id: resolvedID, ignoringCache: refreshing)
+        let albums = try await client.artistAlbums(id: resolvedID, ignoringCache: refreshing)
 
         // Top 10 pinned first — its tracks (and their YouTube matches) load on
         // demand, exactly like an album's. The release id doubles as the
@@ -207,6 +230,29 @@ struct SpotifyDiscographyProvider: DiscographyProviding {
             ? Array(collection.tracks.prefix(10))
             : collection.tracks
         return Self.infos(tracks, on: release)
+    }
+
+    /// One `/albums?ids=` per twenty releases, titles only — the song
+    /// index's read, and the one place in the app that used to walk a whole
+    /// catalogue a record at a time. Each of those reads cost two requests
+    /// (`/albums/{id}`, then a `/tracks?ids=` re-read for ISRCs the index
+    /// never shows), so a sixty-release artist cost 120 requests in under a
+    /// minute — which is a burst, and a burst is what Spotify's rolling
+    /// thirty-second window actually punishes. The same index is now three
+    /// requests. ISRCs are skipped deliberately: they matter when a track is
+    /// matched against YouTube, and that path reads the album in full.
+    var songIndexBatchSize: Int { 20 }
+
+    func tracklists(for releases: [DiscographyRelease]) async throws -> [String: [DiscographyTrackInfo]] {
+        let wanted = releases.filter { $0.kind == .release }
+        guard !wanted.isEmpty else { return [:] }
+        let collections = try await client.albums(ids: wanted.map(\.id), namesOnly: true)
+        var index: [String: [DiscographyTrackInfo]] = [:]
+        for release in wanted {
+            guard let collection = collections[release.id] else { continue }
+            index[release.id] = Self.infos(collection.tracks, on: release)
+        }
+        return index
     }
 
     private static func infos(_ tracks: [SpotifyTrack],
@@ -292,7 +338,9 @@ struct AIDiscographyProvider: DiscographyProviding {
     let artistName: String
     let settings: AISettingsStore
 
-    func loadCatalogue() async throws -> DiscographyCatalogue {
+    /// `refreshing` has nothing to bypass here — the model is asked afresh
+    /// every time — so it is accepted and ignored.
+    func loadCatalogue(refreshing: Bool) async throws -> DiscographyCatalogue {
         let discography = try await DiscographyAgent.layout(artist: artistName, settings: settings)
 
         var sections: [DiscographySection] = []
@@ -471,7 +519,7 @@ struct DiscographyBrowserView: View {
                         description: loadError
                     )
                     Button {
-                        Task { await fetch() }
+                        Task { await fetch(refreshing: true) }
                     } label: {
                         Label("Try Again", systemImage: "arrow.clockwise")
                     }
@@ -501,7 +549,7 @@ struct DiscographyBrowserView: View {
                         ProgressView().controlSize(.small)
                     } else {
                         Button {
-                            Task { await fetch() }
+                            Task { await fetch(refreshing: true) }
                         } label: {
                             Image(systemName: "arrow.clockwise")
                         }
@@ -566,21 +614,30 @@ struct DiscographyBrowserView: View {
         }
     }
 
-    /// Fills in the tracklists the search reads, one release at a time.
+    /// Fills in the tracklists the search reads, a **batch** of releases at a
+    /// time — `provider.songIndexBatchSize` of them per call.
     ///
-    /// Deliberately **the same call expanding a release makes** — `/albums/{id}`,
-    /// which works — rather than the batch `/albums?ids=`, which is faster on
-    /// paper and answers 403 (Forbidden) under a client-credentials app, the
-    /// same way `/tracks?ids=` and the top-tracks endpoint do. A song search
-    /// that can't run is worth nothing next to one that takes a few seconds.
+    /// This is the most expensive screen in the app in requests, and it used
+    /// to be the most expensive by an order of magnitude: one release at a
+    /// time, two requests each, as fast as the network would serve them. That
+    /// is a burst, and a burst is precisely what Spotify's rolling
+    /// thirty-second window meters — so a big catalogue could spend a whole
+    /// day's goodwill on one sheet, and the 429 it earned then arrived on
+    /// screens that only cost two requests. Read in twenties it is a handful.
     ///
     /// Nothing is re-read: a layout that carries its tracks inline (the AI
-    /// catalogue) costs no requests at all, a release opened earlier this
-    /// session is already in `SpotifyMetadataCache`, and a second visit to the
-    /// sheet resumes where the first left off. Results land as they arrive, so
-    /// the list is usable while the tail is still coming in — and only ordinary
+    /// catalogue) costs no requests at all, a release opened earlier is
+    /// already in `SpotifyMetadataCache`, and a second visit to the sheet
+    /// resumes where the first left off. Results land per batch, so the list
+    /// is usable while the tail is still coming in — and only ordinary
     /// releases are read, since the pinned Top 10 is a *view* of the catalogue
     /// rather than part of it and would list the same songs twice.
+    ///
+    /// A **rate limit stops the pass** rather than being counted as a failed
+    /// record and moved past: every later batch would land inside the same
+    /// penalty window, and a request landing inside the window is what makes
+    /// Spotify extend it. What was read stays; re-opening the sheet picks up
+    /// the rest once the window has cleared.
     @MainActor
     private func buildSongIndex() async {
         guard let catalogue, !indexing else { return }
@@ -594,18 +651,41 @@ struct DiscographyBrowserView: View {
         indexFailures = 0
         defer { indexing = false }
 
+        // Whatever the layout already carries is indexed for free.
+        var unread: [DiscographyRelease] = []
         for release in pending {
             if let inline = release.tracks, !inline.isEmpty {
                 songIndex[release.id] = inline
-            } else if let loaded = try? await provider.tracks(for: release) {
-                songIndex[release.id] = loaded
+                indexProgress.done += 1
             } else {
-                // One unreadable record shouldn't cost the whole search; note
-                // it, index the rest, and say so at the bottom of the sheet.
-                songIndex[release.id] = []
-                indexFailures += 1
+                unread.append(release)
             }
-            indexProgress.done += 1
+        }
+
+        let size = max(1, provider.songIndexBatchSize)
+        var start = 0
+        while start < unread.count {
+            let chunk = Array(unread[start..<min(start + size, unread.count)])
+            start += size
+            do {
+                let loaded = try await provider.tracklists(for: chunk)
+                for release in chunk {
+                    songIndex[release.id] = loaded[release.id] ?? []
+                    if loaded[release.id] == nil { indexFailures += 1 }
+                }
+            } catch {
+                if isCancellation(error) { return }
+                if isSpotifyRateLimit(error) {
+                    appLog("Song search: stopped \(indexProgress.done) of \(pending.count) release(s) in — \(error.localizedDescription)",
+                           level: .warning, category: "Browse")
+                    return
+                }
+                // Unreadable records shouldn't cost the whole search; note
+                // them, index the rest, and say so at the bottom of the sheet.
+                for release in chunk { songIndex[release.id] = [] }
+                indexFailures += chunk.count
+            }
+            indexProgress.done += chunk.count
             if Task.isCancelled { return }
         }
         if indexFailures > 0 {
@@ -813,13 +893,17 @@ struct DiscographyBrowserView: View {
         .disabled(disabled)
     }
 
+    /// `refreshing` distinguishes the toolbar's Refresh (and Try Again) from
+    /// the first load: only an explicit ask reads past the app-wide catalogue
+    /// cache, so re-opening an artist is free while Refresh still means what
+    /// it says.
     @MainActor
-    private func fetch() async {
+    private func fetch(refreshing: Bool = false) async {
         guard !loading else { return }
         loading = true
         defer { loading = false }
         do {
-            let fresh = try await provider.loadCatalogue()
+            let fresh = try await provider.loadCatalogue(refreshing: refreshing)
             catalogue = fresh
             loadError = nil
             onFetched?(fresh)

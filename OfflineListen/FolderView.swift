@@ -768,10 +768,10 @@ struct RecentTracksView: View {
                         }
                     }
                 } header: {
-                    // The frame starts here and — with the folder shut, which
-                    // is most of the time — ends here too.
+                    // The frame starts here; the last pin closes it. Shut,
+                    // the folder is a plain row with no border at all.
                     pinnedFolderRow(count: pins.count)
-                        .modifier(PinnedFrame(opensAbove: true, closesBelow: !pinsExpanded))
+                        .modifier(PinnedFrame(isDrawn: pinsExpanded, opensAbove: true))
                 }
             }
             Section {
@@ -937,33 +937,68 @@ private enum RecentPin {
     /// How far the frame stands off the row's content, so text isn't touching
     /// the rails.
     static let inset: CGFloat = 10
+    /// Where the rails stand relative to the screen edge — the margin the
+    /// list's own rows keep, so the box lines up with the log beneath it.
+    static let gutter: CGFloat = 16
+    /// The breathing room above and below a row inside the frame. The frame
+    /// takes the list's row insets to zero (see `PinnedFrame`), so it has to
+    /// put back the vertical padding those insets were providing.
+    static let rowPad: CGFloat = 11
+    /// Extra room inside the top and bottom of the box, so the first and last
+    /// rows aren't sitting on the rails.
+    static let endPad: CGFloat = 10
 }
 
 /// One slice of the border around the Recent tab's **Pinned** folder.
 ///
 /// A `List` draws rows, not boxes, so the frame is assembled a row at a time:
 /// every row inside the folder carries the two side rails, the header caps it
-/// with a top one, and whichever row is last closes it with a bottom one —
-/// which is the header itself while the folder is shut. The separators inside
-/// the folder go, so the rails run unbroken from the header down to the last
-/// pin instead of being crossed at every row.
+/// with a top one, and the last pin closes it with a bottom one. The
+/// separators inside the folder go, so the rails run unbroken from the header
+/// down to the last pin instead of being crossed at every row.
+///
+/// The row's own padding is the frame's, not the list's: a `List` puts its row
+/// insets *outside* the row's content, so an overlay drawn on that content
+/// stopped short of the row above and below and the side rails came out as a
+/// dashed line with a gap at every boundary. Zeroing `listRowInsets` and
+/// re-padding inside the frame lets each row's rails meet its neighbour's.
+///
+/// With the folder shut there's nothing inside to fence off, so no frame is
+/// drawn at all — a box around the one closed row reads as a stray rectangle
+/// rather than as a folder holding something.
 private struct PinnedFrame: ViewModifier {
+    var isDrawn = true
     var opensAbove = false
     var closesBelow = false
 
     func body(content: Content) -> some View {
         content
-            .padding(.horizontal, RecentPin.inset)
-            .overlay(alignment: .leading) { rail.frame(width: RecentPin.line) }
-            .overlay(alignment: .trailing) { rail.frame(width: RecentPin.line) }
+            .padding(.horizontal, isDrawn ? RecentPin.inset : 0)
+            .padding(.top, isDrawn && opensAbove ? RecentPin.endPad : 0)
+            .padding(.bottom, isDrawn && closesBelow ? RecentPin.endPad : 0)
+            .padding(.vertical, RecentPin.rowPad)
+            .frame(maxWidth: .infinity)
+            .overlay(alignment: .leading) { rail(width: RecentPin.line) }
+            .overlay(alignment: .trailing) { rail(width: RecentPin.line) }
             .overlay(alignment: .top) {
-                if opensAbove { rail.frame(height: RecentPin.line) }
+                if opensAbove { rail(height: RecentPin.line) }
             }
             .overlay(alignment: .bottom) {
-                if closesBelow { rail.frame(height: RecentPin.line) }
+                if closesBelow { rail(height: RecentPin.line) }
             }
+            .padding(.horizontal, RecentPin.gutter)
+            .listRowInsets(EdgeInsets())
             .listRowSeparator(.hidden)
     }
 
-    private var rail: some View { Rectangle().fill(RecentPin.tint) }
+    /// A length of rail — or nothing at all, with the folder shut, which is
+    /// what keeps the padding and the alignment while the border goes away.
+    @ViewBuilder
+    private func rail(width: CGFloat? = nil, height: CGFloat? = nil) -> some View {
+        if isDrawn {
+            Rectangle()
+                .fill(RecentPin.tint)
+                .frame(width: width, height: height)
+        }
+    }
 }

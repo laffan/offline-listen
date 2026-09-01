@@ -97,13 +97,17 @@ vertical space goes to the content instead.
    track you keep going back to. **Swipe a row right** to **Pin** it and it
    joins a **Pinned** folder at the top of the tab — a folder row like any
    other (pin glyph, its count, tap to twirl it open and shut, and it stays put
-   at the head of the list while the log scrolls past under it). A **border in
-   the pin's own orange** runs around the whole folder — header and tracks
-   together — so the kept set reads as an area of its own rather than as a few
-   more rows of the log. A `List` draws rows and not boxes, so it's assembled a
-   row at a time: the rows inside carry the side rails, the header caps it, and
-   whichever row is last closes it — which is the header itself while the
-   folder is shut. Newest pin
+   at the head of the list while the log scrolls past under it). With the folder
+   **open**, a **border in the pin's own orange** runs around the whole thing —
+   header and tracks together, with a little room inside its top and bottom
+   edges — so the kept set reads as an area of its own rather than as a few
+   more rows of the log. Shut, there is nothing inside to fence off and no
+   border is drawn: a box around one closed row reads as a stray rectangle. A
+   `List` draws rows and not boxes, so it's assembled a row at a time: the rows
+   inside carry the side rails, the header caps it and the last pin closes it.
+   The frame also takes over the list's **row insets** — those sit outside the
+   row's content, so an overlay drawn on that content stopped short of its
+   neighbour's and the rails came out dashed, with a gap at every track. Newest pin
    first; pinning the same track twice lifts it rather than listing it again,
    since this one *is* a set. Tapping a pinned track plays **through the pinned
    folder**, the way any curated folder plays. Swipe right again — or use **Pin
@@ -492,8 +496,10 @@ vertical space goes to the content instead.
      in as *itself*, not as you, so it reads **public** metadata only — no liked
      songs, no private or collaborative playlists, no user library. A private
      playlist's link fails with a message saying so rather than silently
-     returning nothing. When Spotify is rate limiting the app, this section
-     shows the **countdown** until the window clears, plus **Forget the wait
+     returning nothing. This section also shows the **day's request count**, with
+     a per-endpoint breakdown, so the app's own Spotify usage is readable
+     without the developer dashboard; and when Spotify is rate limiting the
+     app, the **countdown** until the window clears plus **Forget the wait
      and retry** (see the Spotify-politeness notes under
      [The Every Noise browser](#the-every-noise-browser)).
    - **Log** — a row that opens the timestamped, copyable stream of every
@@ -1128,18 +1134,24 @@ meant. The record's tracklist may never have been loaded — that's rather the
 point — so the row opens, fetches, and only then reports back that there's
 something to scroll to.
 
-The tracklists behind it are read **one record at a time, with the same call
-expanding a release makes**. The batch endpoint (`/albums?ids=`) is faster on
-paper and answers **403 Forbidden** under a client-credentials app, exactly as
-`/tracks?ids=` and the top-tracks endpoint do — a search that can't run is
-worth nothing next to one that takes a few seconds. Nothing is re-read: the AI
-layout carries its tracks inline and costs no requests at all, a release opened
-earlier this session is already in the metadata cache, and re-opening the sheet
+The tracklists behind it are read **twenty releases per request**, through the
+batch endpoint (`/albums?ids=`) and without the `/tracks?ids=` re-read that
+recovers ISRCs — the index only ever shows song *titles*, and the ISRC matters
+when a track is matched against YouTube, which reads the album in full anyway.
+This was the app's most expensive screen by an order of magnitude when it read
+one record at a time: two requests each, as fast as the network would serve
+them, so a sixty-release artist spent **120 requests in under a minute**. That
+is a *burst*, and a burst is what Spotify's rolling thirty-second window
+actually meters — the same index is now three requests. Nothing is re-read: the
+AI layout carries its tracks inline and costs no requests at all, a release
+opened earlier is already in the metadata cache, and re-opening the sheet
 resumes where it left off. Results are searchable **as they land** rather than
 after the last one, with the count showing above the list; a release that won't
-load is noted at the bottom rather than sinking the whole search. Only ordinary
-releases are indexed — the pinned Top 10 is a *view* of the catalogue rather
-than part of it, and would list the same songs twice.
+load is noted at the bottom rather than sinking the whole search, while a
+**rate limit stops the pass outright** — every later batch would land inside
+the same penalty window and extend it, and what was read is kept for the next
+visit. Only ordinary releases are indexed — the pinned Top 10 is a *view* of
+the catalogue rather than part of it, and would list the same songs twice.
 
 This is the same screen a discography-mode **Artist source** opens in Browse —
 one album-first browser, wherever a catalogue shows.
@@ -1150,26 +1162,52 @@ for), the "+" keeps the old popup: file the artist into Browse as a regular
 refresh kicked off immediately.
 
 **Spotify politeness.** The browser is careful with the modest quota a free
-developer app gets, three ways. **Batch endpoints**: a Top 10 derivation
-reads its releases through `/albums?ids=` (20 albums, tracklists included,
-in one request) and recovers ISRC/popularity with one `/tracks?ids=` sweep
-across *all* of them — ~5 requests where one-album-at-a-time cost ~24, so a
-whole artist (open + Top 10) runs ~6–8 requests instead of nearly 30.
-**Caching**: catalogue reads are cached app-wide for ten minutes
-(`SpotifyMetadataCache`) — an artist's portrait and album list, and each
-album's tracklist, are fetched once, so opening a page, searching its Top
-10 and expanding a release share those reads, and re-opening an artist
-costs nothing (a derivation also pre-warms every release it touched).
-**Rate-limit honesty** (`SpotifyRateLimiter`): a 429's `Retry-After` is
-recorded **globally**, short windows are quietly waited out (with one
-polite retry), and long ones fail fast with the actual wait in the
-message. That global part matters — Spotify *extends* the penalty window
-while requests keep arriving, so a client that pressed on (as this one
-used to) turned one burst into minutes of 429s, surfacing on screens that
-only cost two requests.
+developer app gets, five ways. **Batch endpoints**: a Top 10 derivation reads
+its releases through `/albums?ids=` (20 albums, tracklists included, in one
+request) and recovers ISRC/popularity with one `/tracks?ids=` sweep across
+*all* of them — ~5 requests where one-album-at-a-time cost ~24, so a whole
+artist (open + Top 10) runs ~6–8 requests instead of nearly 30. The song index
+reads the same way, titles only.
+**Page size**: the catalogue walk asks for `limit=50`, Spotify's documented
+maximum, rather than taking the 20 it serves by default — 2.5× fewer requests
+to `/artists/{id}/albums`, which is the app's busiest endpoint by a distance
+(a 300-release artist is 6 pages instead of 15, paid again on every visit that
+outlives the cache). Some client-credentials apps answer *"Invalid limit"* to
+a value their own docs allow, so the ask is made **once** and a refusal
+remembered per client id.
+**Caching**: catalogue reads are cached app-wide for six hours
+(`SpotifyMetadataCache`) — an artist's name→id lookup, their portrait and
+album list, and each album's tracklist are fetched once, so opening a page,
+searching its Top 10 and expanding a release share those reads, and coming
+back to an artist later in the day costs nothing (a derivation also pre-warms
+every release it touched). The toolbar's **Refresh** is the one thing that
+reads past the cache, which is what it is for.
+**Pacing** (`SpotifyRateLimiter`): every request claims a slot in a rolling
+**thirty-second** window — the window Spotify itself meters — capped at 30,
+and a request with no slot waits for one. What trips a limit is never a day's
+total but a burst, and pacing is the brake that doesn't depend on any caller
+remembering to be careful.
+**Rate-limit honesty**: a 429's `Retry-After` is recorded **globally**, very
+short windows are quietly waited out (with one polite retry), and anything
+longer fails fast with the actual wait in the message. That global part
+matters — Spotify *extends* the penalty window while requests keep arriving,
+so a client that pressed on (as this one used to) turned one burst into hours
+of 429s, surfacing on screens that only cost two requests. A **second** 429
+with no success in between is therefore taken as meaning the first answer
+wasn't enough: the app backs off for a minute, doubling to a quarter of an
+hour, rather than testing the limit every few seconds — and the loops that
+read a catalogue stop their pass on a 429 instead of asking for the next
+record.
+
+**What the app is spending** is counted as it goes (`SpotifyUsageMeter`):
+Settings ▸ Spotify shows the day's request total with a per-endpoint
+breakdown, and the Log takes the same line every 50 requests. A rate limit
+arrives as one 429 that says nothing about what earned it, and the developer
+dashboard reports a day late — the count is what makes "something spiked"
+answerable while it is happening.
 
 Escalated penalties are real — a repeatedly tripped development-mode app
-can be timed out for an **hour** — so the recorded window also **persists
+can be timed out for **half a day** — so the recorded window also **persists
 across launches** (a relaunch that forgot it would re-trip the 429 and
 extend it), and it's keyed to the **client id** that earned it: a newly
 created Spotify app starts with a clean quota, so pasting fresh

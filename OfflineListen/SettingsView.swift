@@ -96,6 +96,12 @@ struct SettingsView: View {
     /// (0 = none) — drives the section's "rate limited" row, so "is it me or
     /// Spotify" is answerable at a glance.
     @State private var spotifyCooldown: TimeInterval = 0
+    /// How many Spotify requests the app has made today (`SpotifyUsageMeter`).
+    /// A rate limit arrives as one 429 with no account of what earned it, and
+    /// the developer dashboard reports a day late — so the app keeps its own
+    /// count, where it can be read while it is happening.
+    @State private var spotifyRequestsToday = 0
+    @State private var spotifyUsageBreakdown = ""
 
     // How captions are drawn — the same keys the Player reads, so a change
     // here shows on the next cue.
@@ -352,6 +358,8 @@ struct SettingsView: View {
     @MainActor
     private func refreshSpotifyCooldown() async {
         spotifyCooldown = await SpotifyRateLimiter.shared.remainingCooldown(for: spotify.clientID)
+        spotifyRequestsToday = await SpotifyUsageMeter.shared.requestsToday()
+        spotifyUsageBreakdown = await SpotifyUsageMeter.shared.summary()
     }
 
     // MARK: - Local Sync
@@ -664,6 +672,18 @@ struct SettingsView: View {
                         spotifyVerifyState = .idle
                     }
                     .font(.callout)
+                }
+                if spotifyRequestsToday > 0 {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Label("\(spotifyRequestsToday) request\(spotifyRequestsToday == 1 ? "" : "s") today",
+                              systemImage: "chart.bar")
+                            .font(.footnote)
+                        if !spotifyUsageBreakdown.isEmpty {
+                            Text(spotifyUsageBreakdown)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
                 if spotifyCooldown > 1 {
                     Label("Rate limited by Spotify — clears in about \(spotifyCooldownText). Credentials from a newly created Spotify app start with a fresh quota.",
