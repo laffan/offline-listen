@@ -1168,13 +1168,25 @@ request) and recovers ISRC/popularity with one `/tracks?ids=` sweep across
 *all* of them — ~5 requests where one-album-at-a-time cost ~24, so a whole
 artist (open + Top 10) runs ~6–8 requests instead of nearly 30. The song index
 reads the same way, titles only.
-**Page size**: the catalogue walk asks for `limit=50`, Spotify's documented
-maximum, rather than taking the 20 it serves by default — 2.5× fewer requests
-to `/artists/{id}/albums`, which is the app's busiest endpoint by a distance
-(a 300-release artist is 6 pages instead of 15, paid again on every visit that
-outlives the cache). Some client-credentials apps answer *"Invalid limit"* to
-a value their own docs allow, so the ask is made **once** and a refusal
-remembered per client id.
+**A bounded catalogue walk**: `/artists/{id}/albums` is the app's busiest
+endpoint by a distance, and it used to be read to the *end* — one
+`include_groups=album,single,compilation` walk paginated to completion. For a
+long-running artist that is brutal: Dolly Parton is 48 pages, so opening her
+page once spent most of a day's quota, and once those requests were paced it
+spent a minute of spinner too. Each group is now walked separately with a
+budget — 150 albums, 60 singles, 60 compilations — which costs two extra
+requests for a small artist (three groups, one page each) and saves dozens for
+a large one, at most ~14 requests for the biggest catalogue there is. It also
+sidesteps the reported pagination bugs on multi-group walks. Where a section
+is deeper than its budget the page says so rather than quietly passing off a
+partial list: *"A long catalogue — not every release is listed."* (Not "the
+most recent" — this endpoint's ordering within a group isn't documented, so
+the depth is a budget rather than a claim about which releases it kept.)
+**Page size**: the walk asks for `limit=50`, Spotify's documented maximum,
+rather than taking the 20 it serves by default. Some client-credentials apps
+answer *"Invalid limit"* to a value their own docs allow (mine does), so the
+ask is made **once**, the refusal is remembered per client id, and the walk
+takes the server's page from then on.
 **Caching**: catalogue reads are kept **for good, on disk**
 (`SpotifyMetadataCache`, one JSON file written a couple of seconds after the
 last change) — an artist's name→id lookup, their portrait and release list,
@@ -1195,7 +1207,10 @@ buttons, shown only once that age is worth mentioning.
 **thirty-second** window — the window Spotify itself meters — capped at 30,
 and a request with no slot waits for one. What trips a limit is never a day's
 total but a burst, and pacing is the brake that doesn't depend on any caller
-remembering to be careful.
+remembering to be careful. Nothing the app does in one screenful comes near
+that ceiling, so it is rarely felt; when it is, the loading spinner says
+*"Pacing Spotify requests — about 12s…"*, because a held request under an
+unlabelled spinner is indistinguishable from a hang.
 **Rate-limit honesty**: a 429's `Retry-After` is recorded **globally**, very
 short windows are quietly waited out (with one polite retry), and anything
 longer fails fast with the actual wait in the message. That global part

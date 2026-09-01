@@ -64,6 +64,11 @@ struct DiscographyCatalogue: Codable {
     var artistImageURL: String? = nil
     var sections: [DiscographySection]
     var fetched: Date
+    /// Set when the catalogue is deeper than the app read — a long-running
+    /// artist's singles and compilations run to hundreds of entries, each of
+    /// them a request. Optional so a first pass saved before this existed
+    /// still decodes.
+    var partial: Bool? = nil
 }
 
 // MARK: - Providers
@@ -153,7 +158,8 @@ struct SpotifyDiscographyProvider: DiscographyProviding {
         // "past the cache" — otherwise re-opening an artist you looked at this
         // morning re-buys their whole catalogue.
         let portrait = try? await client.artist(id: resolvedID, ignoringCache: refreshing)
-        let albums = try await client.artistAlbums(id: resolvedID, ignoringCache: refreshing)
+        let catalogue = try await client.artistAlbums(id: resolvedID, ignoringCache: refreshing)
+        let albums = catalogue.releases
 
         // Top 10 pinned first — its tracks (and their YouTube matches) load on
         // demand, exactly like an album's. The release id doubles as the
@@ -187,7 +193,8 @@ struct SpotifyDiscographyProvider: DiscographyProviding {
                                     spotifyArtistID: resolvedID,
                                     artistImageURL: portrait?.imageURL,
                                     sections: sections,
-                                    fetched: read)
+                                    fetched: read,
+                                    partial: catalogue.truncated)
     }
 
     func tracks(for release: DiscographyRelease) async throws -> [DiscographyTrackInfo] {
@@ -500,6 +507,10 @@ struct DiscographyBrowserView: View {
     /// buttons walk the record rather than dead-ending on one song.
     @State private var previewItem: BrowseItem?
     @State private var previewQueue: [BrowseItem] = []
+    /// What the first-load spinner says when it isn't simply "reading": the
+    /// app paces its own Spotify requests, and a hold of several seconds with
+    /// an unlabelled spinner over it is indistinguishable from a hang.
+    @State private var loadingNote: String?
     /// The header's Learn More sheet, and its once-per-visit cached result.
     @State private var showingBio = false
     @State private var bio: ArtistBio?
@@ -531,8 +542,9 @@ struct DiscographyBrowserView: View {
                     .buttonStyle(.bordered)
                 }
             } else {
-                ProgressView("Reading the catalogue…")
+                ProgressView(loadingNote ?? "Reading the catalogue…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .task { await watchPacing() }
             }
         }
         .navigationTitle(title)
@@ -596,6 +608,21 @@ struct DiscographyBrowserView: View {
                 return
             }
             await fetch()
+        }
+    }
+
+    /// Keeps the spinner honest while the pacer is holding requests back.
+    /// Polls rather than subscribes: it runs only while the first load is on
+    /// screen, and reading an actor once a second costs nothing next to the
+    /// wait it is describing.
+    @MainActor
+    private func watchPacing() async {
+        while !Task.isCancelled {
+            let hold = await SpotifyRateLimiter.shared.pacingBacklog()
+            loadingNote = hold > 2
+                ? "Pacing Spotify requests — about \(Int(hold.rounded()))s…"
+                : nil
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
         }
     }
 
@@ -825,24 +852,33 @@ struct DiscographyBrowserView: View {
     /// mentioning: a catalogue just off the network says nothing at all.
     @ViewBuilder
     private func cacheNote(_ catalogue: DiscographyCatalogue) -> some View {
-        if Date().timeIntervalSince(catalogue.fetched) > Self.cacheNoteThreshold {
-            HStack(spacing: 5) {
-                Image(systemName: "clock.arrow.circlepath")
-                Text("Cached results from \(catalogue.fetched.formatted(.relative(presentation: .numeric)))")
-                if loading {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Button("Refresh") {
-                        Task { await fetch(refreshing: true) }
+        VStack(spacing: 3) {
+            if Date().timeIntervalSince(catalogue.fetched) > Self.cacheNoteThreshold {
+                HStack(spacing: 5) {
+                    Image(systemName: "clock.arrow.circlepath")
+                    Text("Cached results from \(catalogue.fetched.formatted(.relative(presentation: .numeric)))")
+                    if loading {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Button("Refresh") {
+                            Task { await fetch(refreshing: true) }
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color.accentColor)
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Color.accentColor)
                 }
             }
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-            .padding(.top, 2)
+            // A catalogue read to its budget rather than to its end. Said
+            // plainly, because "where are the rest of the singles?" has an
+            // answer and it isn't a bug.
+            if catalogue.partial == true {
+                Text("A long catalogue — not every release is listed.")
+                    .multilineTextAlignment(.center)
+            }
         }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .padding(.top, 2)
     }
 
     /// How old a catalogue has to be before the page mentions it. Long enough

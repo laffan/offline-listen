@@ -131,6 +131,21 @@ struct SpotifyAlbumSummary: Sendable, Identifiable, Hashable, Codable {
     var url: String { "https://open.spotify.com/album/\(id)" }
 }
 
+/// An artist's releases as the app read them, and whether that reading was
+/// complete.
+///
+/// The distinction is not pedantry: a catalogue like Dolly Parton's runs to
+/// hundreds of entries once every budget compilation and market variant is
+/// counted, and reading it whole cost 48 requests for one page — most of a
+/// day's quota for one artist, and a minute of spinner once those requests
+/// were paced. Each group is now read up to a budget and stops, and the page
+/// says so rather than pretending the list is the whole story.
+struct SpotifyCatalogue: Sendable, Codable {
+    var releases: [SpotifyAlbumSummary]
+    /// True when at least one group had more releases than its budget.
+    var truncated: Bool
+}
+
 /// A Spotify album, playlist or artist reduced to a name (which becomes the
 /// library folder's name) and its tracks in Spotify's own order.
 struct SpotifyCollection: Sendable, Codable {
@@ -264,6 +279,17 @@ actor SpotifyRateLimiter {
         let wait = max(0, Self.windowLength - now.timeIntervalSince(blocking))
         slots.append(now.addingTimeInterval(wait))
         return wait
+    }
+
+    /// How long a request starting *now* would be held — what the pacer's
+    /// queue is currently booked out to. Read by the loading spinner so a
+    /// paced read says why it is slow instead of looking hung. Doesn't
+    /// reserve anything; asking is free.
+    func pacingBacklog() -> TimeInterval {
+        let now = Date()
+        let live = slots.filter { now.timeIntervalSince($0) <= Self.windowLength }
+        guard live.count >= Self.windowBudget else { return 0 }
+        return max(0, Self.windowLength - now.timeIntervalSince(live[live.count - Self.windowBudget]))
     }
 
     /// Records a 429's Retry-After and answers the window the app will
@@ -437,7 +463,7 @@ actor SpotifyMetadataCache {
     private struct Store: Codable {
         var artists: [String: Entry<Profile>] = [:]
         var lookups: [String: Entry<Lookup>] = [:]
-        var releases: [String: Entry<[SpotifyAlbumSummary]>] = [:]
+        var releases: [String: Entry<SpotifyCatalogue>] = [:]
         var collections: [String: Entry<SpotifyCollection>] = [:]
         var names: [String: Entry<SpotifyCollection>] = [:]
     }
@@ -479,11 +505,11 @@ actor SpotifyMetadataCache {
 
     // MARK: - Releases
 
-    func albums(forArtist id: String) -> [SpotifyAlbumSummary]? {
+    func albums(forArtist id: String) -> SpotifyCatalogue? {
         store.releases[id]?.value
     }
 
-    func storeAlbums(_ value: [SpotifyAlbumSummary], forArtist id: String) {
+    func storeAlbums(_ value: SpotifyCatalogue, forArtist id: String) {
         store.releases[id] = Entry(value: value, at: Date())
         trim(&store.releases, to: Self.maxArtists)
         scheduleSave()
@@ -608,10 +634,19 @@ struct SpotifyClient {
     private static let batchSize = 50
     /// `/albums?ids=` accepts up to 20 ids per call.
     private static let albumBatchSize = 20
-    /// Runaway guard for the artist-albums `next` walk (a karaoke-factory
-    /// "artist" can list thousands of releases; at the page size below this
-    /// covers 2,500).
-    private static let maxAlbumPages = 50
+    /// Runaway guard for one group's `next` walk — a backstop under the
+    /// budgets below, for a chain that never ends and never fills.
+    private static let maxAlbumPages = 15
+    /// The sections an artist page shows, and how deep each is read before the
+    /// walk stops and the page says the list is partial. Albums are what
+    /// somebody came for, so they get the room; the singles and compilations
+    /// of a long-running artist run to hundreds of entries that nobody scrolls
+    /// and every one of which is a request. At Spotify's default page size
+    /// this is at most ~14 requests for the largest catalogue there is, and
+    /// three for an ordinary one.
+    static let catalogueGroups: [(name: String, budget: Int)] = [
+        ("album", 150), ("single", 60), ("compilation", 60)
+    ]
     /// The page size the catalogue walk *asks* for: Spotify's documented
     /// maximum, and 2.5× the default it serves when nothing is asked. That
     /// ratio is most of what a day's request count is made of — a 300-release
@@ -845,7 +880,7 @@ struct SpotifyClient {
     /// over. Same-named recordings (an album track re-issued as a single)
     /// collapse to their most popular copy.
     func derivedTopTracks(artistID: String, limit: Int = 10) async throws -> [SpotifyTrack] {
-        let releases = try await artistAlbums(id: artistID)
+        let releases = try await artistAlbums(id: artistID).releases
         var considered = releases.filter { $0.group != "compilation" }
         if considered.isEmpty { considered = releases }
         if considered.count > Self.maxDerivedTopReleases {
@@ -979,14 +1014,50 @@ struct SpotifyClient {
     }
 
     /// An artist's releases — albums, singles/EPs and compilations, without
-    /// the "appears on" clutter — paginated to completion. This backs the
-    /// Every Noise browser's discography view; each row's `url` re-enters the
-    /// ordinary paste pipeline when the user downloads an album.
-    func artistAlbums(id: String, ignoringCache: Bool = false) async throws -> [SpotifyAlbumSummary] {
+    /// the "appears on" clutter. This backs the Every Noise browser's
+    /// discography view; each row's `url` re-enters the ordinary paste
+    /// pipeline when the user downloads an album.
+    ///
+    /// **One walk per group, each with a budget.** It used to be a single
+    /// `include_groups=album,single,compilation` walk paginated to
+    /// completion, and for a long-catalogue artist that is brutal: Dolly
+    /// Parton is 48 pages, so *one page open* spent most of a day's quota and,
+    /// once those requests were paced, a minute of spinner. Splitting the walk
+    /// costs two extra requests for a small artist (three groups, one page
+    /// each) and saves dozens for a large one, because each section stops at a
+    /// depth that is worth having — and it sidesteps the reported pagination
+    /// bugs on multi-group walks, where later pages come back inconsistent.
+    /// Truncation is reported rather than hidden: the page says the list is
+    /// the most recent of a longer catalogue.
+    func artistAlbums(id: String, ignoringCache: Bool = false) async throws -> SpotifyCatalogue {
         if !ignoringCache, let cached = await SpotifyMetadataCache.shared.albums(forArtist: id) {
             return cached
         }
-        var albums: [SpotifyAlbumSummary] = []
+        var found: [SpotifyAlbumSummary] = []
+        var truncated = false
+        for group in Self.catalogueGroups {
+            let read = try await catalogueGroup(group.name, byArtist: id, budget: group.budget)
+            found.append(contentsOf: read.releases)
+            truncated = truncated || read.truncated
+        }
+        // The same release can be listed once per market variant under a
+        // different id; a name+year collapse keeps the list readable.
+        var seen = Set<String>()
+        let unique = found.filter {
+            seen.insert("\($0.name.lowercased())|\($0.year)|\($0.group)").inserted
+        }
+        appLog("Spotify artist \(id): \(unique.count) release(s) in the catalogue\(truncated ? " (a longer one, read to the budget)" : "").",
+               category: Self.category)
+        let catalogue = SpotifyCatalogue(releases: unique, truncated: truncated)
+        await SpotifyMetadataCache.shared.storeAlbums(catalogue, forArtist: id)
+        return catalogue
+    }
+
+    /// One `include_groups` group, paginated until the budget is reached.
+    /// Answers what it read and whether Spotify had more to give.
+    private func catalogueGroup(_ group: String, byArtist id: String,
+                                budget: Int) async throws -> (releases: [SpotifyAlbumSummary], truncated: Bool) {
+        var found: [SpotifyAlbumSummary] = []
         // The page size is *asked* for rather than assumed: some
         // client-credentials apps answer 400 "Invalid limit" to a value their
         // own docs call valid, which is why this endpoint used to send none at
@@ -996,29 +1067,31 @@ struct SpotifyClient {
         // mints carry whichever size it accepted, so the rest of the walk is
         // valid by construction.
         var askedWithLimit = sendsPageLimit
-        var next: String? = Self.artistAlbumsPage(id: id,
+        var next: String? = Self.artistAlbumsPage(id: id, group: group,
                                                   limit: askedWithLimit ? Self.cataloguePageSize : nil)
         var pages = 0
         while let link = next, let url = URL(string: link) {
             pages += 1
+            // A backstop under the budget, for a `next` chain that never
+            // ends and never fills.
             if pages > Self.maxAlbumPages {
-                appLog("Spotify artist \(id): catalogue runs past \(Self.maxAlbumPages) pages — stopping there.",
+                appLog("Spotify artist \(id): the \(group) walk ran past \(Self.maxAlbumPages) pages — stopping there.",
                        level: .warning, category: Self.category)
-                break
+                return (found, true)
             }
             let data: Data
             do {
-                data = try await get(url, describing: "artist's albums")
+                data = try await get(url, describing: "artist's \(group)s")
             } catch let error as SpotifyError {
                 // Only the first page can be refused for its size — after that
                 // the URL is Spotify's own — so anything else is a real error.
-                guard case .http(400, _) = error, askedWithLimit, pages == 1 else { throw error }
+                guard case .http(400, let message) = error, askedWithLimit, pages == 1 else { throw error }
                 notePageLimitRejected()
-                appLog("Spotify: these credentials won't take an explicit page size — paging the catalogue at the server's default from here on.",
+                appLog("Spotify refused an explicit page size (400: \(message)) — paging the catalogue at the server's default from here on.",
                        level: .warning, category: Self.category)
                 askedWithLimit = false
                 pages = 0
-                next = Self.artistAlbumsPage(id: id, limit: nil)
+                next = Self.artistAlbumsPage(id: id, group: group, limit: nil)
                 continue
             }
             guard let page = try? JSONDecoder().decode(APIPage<APIAlbumSummary>.self, from: data) else {
@@ -1026,31 +1099,36 @@ struct SpotifyClient {
             }
             for item in page.items ?? [] {
                 guard let itemID = item.id, let name = item.name, !name.isEmpty else { continue }
-                albums.append(SpotifyAlbumSummary(
+                found.append(SpotifyAlbumSummary(
                     id: itemID,
                     name: name,
                     releaseDate: item.releaseDate ?? "",
-                    group: item.albumGroup ?? item.albumType ?? "album",
+                    // The group we asked for, not the one the item reports:
+                    // this walk *is* the answer to "which section", and an
+                    // item whose own label disagreed would land in no section
+                    // at all.
+                    group: group,
                     totalTracks: item.totalTracks ?? 0,
                     imageURL: item.images?.first?.url))
             }
             next = page.next
+            if found.count >= budget, next != nil {
+                // "The first N Spotify listed", not "the most recent": this
+                // endpoint's ordering within a group isn't documented, so the
+                // depth is a budget rather than a claim about which releases
+                // it kept.
+                appLog("Spotify artist \(id): more than \(budget) \(group) release(s) — the first \(found.count) Spotify listed are read and the rest left.",
+                       level: .warning, category: Self.category)
+                return (found, true)
+            }
         }
-        // The same release can be listed once per market variant under a
-        // different id; a name+year collapse keeps the list readable.
-        var seen = Set<String>()
-        let unique = albums.filter {
-            seen.insert("\($0.name.lowercased())|\($0.year)|\($0.group)").inserted
-        }
-        appLog("Spotify artist \(id): \(unique.count) release(s) in the catalogue.", category: Self.category)
-        await SpotifyMetadataCache.shared.storeAlbums(unique, forArtist: id)
-        return unique
+        return (found, false)
     }
 
     /// The first page of an artist's releases, with or without an explicit
     /// page size.
-    private static func artistAlbumsPage(id: String, limit: Int?) -> String {
-        var path = "\(apiBase)/artists/\(id)/albums?include_groups=album,single,compilation"
+    private static func artistAlbumsPage(id: String, group: String, limit: Int?) -> String {
+        var path = "\(apiBase)/artists/\(id)/albums?include_groups=\(group)"
         if let limit { path += "&limit=\(limit)" }
         return path
     }
