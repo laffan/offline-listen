@@ -1366,6 +1366,12 @@ removed when the records are discarded. It's a copy: `Documents/` stays the
 original, and a folder that's unreachable just means a stale copy until next
 time. **Stop Writing to …** forgets the folder and leaves the file where it is.
 
+(One `fileImporter` serves both this and the sync-folder button. Two of them
+attached to the same view is one too many — SwiftUI presents the outer and the
+inner never fires — so adding this picker quietly killed **Choose Sync
+Folder**, with no error and no log line: a button that did nothing. They share
+one importer and a flag saying which folder is being asked for.)
+
 This is deliberately **its own folder, not a sync folder**. The two have
 nothing to do with each other — one mirrors music you want on this phone, the
 other drops a text file somewhere a computer will see it — and tying them

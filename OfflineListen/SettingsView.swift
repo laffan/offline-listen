@@ -63,10 +63,18 @@ struct SettingsView: View {
 
     @State private var keyInput = ""
     @State private var verifyState: VerifyState = .idle
+    /// Which folder the picker is being opened *for*. One `fileImporter`
+    /// serves both buttons, because two of them on one view is one too many:
+    /// SwiftUI presents the outer and the inner never fires, so the other
+    /// button goes silently dead. That is exactly what happened to **Choose
+    /// Sync Folder** the day the Every Noise data folder got a picker of its
+    /// own — no error, no log line, just a button that did nothing.
+    private enum FolderPurpose {
+        case sync
+        case everyNoiseData
+    }
+    @State private var folderPurpose: FolderPurpose = .sync
     @State private var showFolderPicker = false
-    /// The Every Noise harvest's own folder picker — a separate concern from
-    /// the sync roots above, and a separate importer.
-    @State private var showDataFolderPicker = false
     /// Drives the share sheet that hands the collected dataset updates off
     /// the device, and the confirmation before throwing them away.
     @State private var exportingUpdates = false
@@ -156,13 +164,10 @@ struct SettingsView: View {
             .toolbar(.hidden, for: .navigationBar)
             #endif
             .fileImporter(isPresented: $showFolderPicker, allowedContentTypes: [.folder]) { result in
-                if case .success(let url) = result {
-                    localSync.addRoot(url)
-                }
-            }
-            .fileImporter(isPresented: $showDataFolderPicker, allowedContentTypes: [.folder]) { result in
-                if case .success(let url) = result {
-                    everyNoiseUpdates.chooseDataFolder(url)
+                guard case .success(let url) = result else { return }
+                switch folderPurpose {
+                case .sync: localSync.addRoot(url)
+                case .everyNoiseData: everyNoiseUpdates.chooseDataFolder(url)
                 }
             }
             .sheet(isPresented: $exportingUpdates) {
@@ -321,7 +326,8 @@ struct SettingsView: View {
                 }
             } else {
                 Button {
-                    showDataFolderPicker = true
+                    folderPurpose = .everyNoiseData
+                    showFolderPicker = true
                 } label: {
                     Label("Choose Data Folder…", systemImage: "folder")
                 }
@@ -402,6 +408,7 @@ struct SettingsView: View {
                 syncStatusRow
             }
             Button {
+                folderPurpose = .sync
                 showFolderPicker = true
             } label: {
                 Label(localSync.roots.isEmpty ? "Choose Sync Folder…" : "Add Sync Folder…",
