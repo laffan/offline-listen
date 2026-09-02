@@ -323,9 +323,21 @@ actor SpotifyRateLimiter {
 
     init() {
         let stored = UserDefaults.standard.double(forKey: Self.untilKey)
-        if stored > Date().timeIntervalSince1970 {
+        let ahead = stored - Date().timeIntervalSince1970
+        if ahead > 0, ahead <= Self.endpointBlockThreshold {
             retryAt = Date(timeIntervalSince1970: stored)
             owner = UserDefaults.standard.string(forKey: Self.ownerKey)
+        } else if ahead > 0 {
+            // An app-wide window hours long can't have come from this build:
+            // app-wide holds belong to the *rolling* window, and no rolling
+            // window takes hours to clear. So it was written by a build that
+            // scoped a daily endpoint cap app-wide, and honouring it would go
+            // on refusing every read Spotify is still answering — searches,
+            // pasted album links, artwork. Dropped on sight; the next capped
+            // read re-records it against the endpoint that earned it, which
+            // costs one request and gets the scope right.
+            UserDefaults.standard.removeObject(forKey: Self.untilKey)
+            UserDefaults.standard.removeObject(forKey: Self.ownerKey)
         }
         let saved = UserDefaults.standard.dictionary(forKey: Self.blocksKey) as? [String: Double] ?? [:]
         let now = Date().timeIntervalSince1970
