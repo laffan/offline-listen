@@ -1629,6 +1629,17 @@ every other music player already looks for, and deliberately not hidden away
 in a dot-directory the way a mixtape's style is, because a tracklist and a
 sleeve are things somebody might reasonably want to see.
 
+**Mixtapes write the same two files**, for the same reason: a mixtape is an
+order somebody chose, and alphabetical-by-filename destroys that as thoroughly
+as it destroys a running order. What tells the two apart on the way back in is
+the marker each already had — a directory holding `.mixtapedata` is a mixtape
+whatever else it holds, one holding only `tracks.json` is an album — so
+`tracks.json` restores the order, the titles and the artists either way, and
+only an album is *flagged* as one. A mixtape's top-level `cover.jpg` is a copy
+for the outside world; the authoritative one stays inside `.mixtapedata`,
+where it travels with the crop, font and colours that make it a mixtape rather
+than a picture, and that is the one an import reads.
+
 It is written through the export journal whenever the album's order, cover or
 album-ness changes, and read back on import: a directory carrying
 `tracks.json` arrives **as an album**, in the right order, with its titles,

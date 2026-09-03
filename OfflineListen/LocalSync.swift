@@ -26,7 +26,7 @@ struct SyncSnapshot {
         let coverStamp: SyncStamp?
         /// Non-nil when the directory contains `tracks.json` — it is an album,
         /// and this is its tracklist in order.
-        let album: AlbumManifest?
+        let album: TracklistManifest?
         /// Stamps of `tracks.json` / `cover.jpg` at the directory's top level.
         let albumStamp: SyncStamp?
         let albumCoverStamp: SyncStamp?
@@ -552,9 +552,9 @@ final class LocalSyncStore: ObservableObject {
         case .writeAlbumData(let dir, let folderID):
             // Snapshot the album on the main actor; obsolete if it is no
             // longer a synced album, in which case the op simply drops.
-            guard let manifest = library.albumManifest(forFolder: folderID) else { return true }
+            guard let manifest = library.tracklistManifest(forFolder: folderID) else { return true }
             guard let manifestData = try? JSONEncoder().encode(manifest) else { return true }
-            let coverData = library.albumCoverData(forFolder: folderID)
+            let coverData = library.sidecarCoverData(forFolder: folderID)
             let dirURL = root.appendingPathComponent(dir, isDirectory: true)
             return await Task.detached {
                 Self.coordinatedWriteAlbumData(into: dirURL, manifest: manifestData, cover: coverData)
@@ -562,8 +562,8 @@ final class LocalSyncStore: ObservableObject {
 
         case .removeAlbumData(let dir):
             let dirURL = root.appendingPathComponent(dir, isDirectory: true)
-            let manifest = dirURL.appendingPathComponent(AlbumManifest.fileName)
-            let cover = dirURL.appendingPathComponent(AlbumManifest.coverFileName)
+            let manifest = dirURL.appendingPathComponent(TracklistManifest.fileName)
+            let cover = dirURL.appendingPathComponent(TracklistManifest.coverFileName)
             return await Task.detached {
                 let a = Self.coordinatedDelete(at: manifest)
                 let b = Self.coordinatedDelete(at: cover)
@@ -576,8 +576,8 @@ final class LocalSyncStore: ObservableObject {
 
     private func styleKey(_ dir: String) -> String { "\(dir)/\(AppPaths.mixtapeDataDirName)/style.json" }
     private func coverKey(_ dir: String) -> String { "\(dir)/\(AppPaths.mixtapeDataDirName)/cover.jpg" }
-    private func albumKey(_ dir: String) -> String { "\(dir)/\(AlbumManifest.fileName)" }
-    private func albumCoverKey(_ dir: String) -> String { "\(dir)/\(AlbumManifest.coverFileName)" }
+    private func albumKey(_ dir: String) -> String { "\(dir)/\(TracklistManifest.fileName)" }
+    private func albumCoverKey(_ dir: String) -> String { "\(dir)/\(TracklistManifest.coverFileName)" }
 
     /// Reconciles the library against one root's replica scan: folders first,
     /// then removals, then copy-ins (each track appears as its file lands),
@@ -672,12 +672,16 @@ final class LocalSyncStore: ObservableObject {
             guard let album = dir.album,
                   adoptAlbum.contains(dir.relativePath) || filled.contains(dir.relativePath),
                   let folderID = folderIDs[dir.relativePath] else { continue }
-            library.applyAlbumManifest(album, toFolder: folderID)
+            library.applyTracklistManifest(album, toFolder: folderID)
         }
 
         // And their sleeves, on the same "changed remotely" terms as a
         // mixtape's.
-        for dir in snapshot.directories {
+        // A mixtape's top-level `cover.jpg` is a copy for the outside world;
+        // its `.mixtapedata` cover is the authoritative one and is imported
+        // below. Reading this one in as well would hand a mixtape an album's
+        // cover — and, through `setFolderArtwork`, an album's flag with it.
+        for dir in snapshot.directories where dir.mixtapeStyle == nil {
             guard dir.album != nil, let stamp = dir.albumCoverStamp,
                   let folderID = folderIDs[dir.relativePath] else { continue }
             let key = albumCoverKey(dir.relativePath)
@@ -686,7 +690,7 @@ final class LocalSyncStore: ObservableObject {
                 continue
             }
             let src = rootURL.appendingPathComponent(dir.relativePath, isDirectory: true)
-                .appendingPathComponent(AlbumManifest.coverFileName)
+                .appendingPathComponent(TracklistManifest.coverFileName)
             let dst = AppPaths.folderArtwork.appendingPathComponent("\(folderID.uuidString).jpg")
             let ok = await Task.detached { Self.coordinatedCopy(from: src, to: dst) }.value
             if ok {
@@ -760,14 +764,14 @@ final class LocalSyncStore: ObservableObject {
                 let dataDir = entry.appendingPathComponent(AppPaths.mixtapeDataDirName, isDirectory: true)
                 let styleURL = dataDir.appendingPathComponent("style.json")
                 let coverURL = dataDir.appendingPathComponent("cover.jpg")
-                let manifestURL = entry.appendingPathComponent(AlbumManifest.fileName)
-                let albumCoverURL = entry.appendingPathComponent(AlbumManifest.coverFileName)
+                let manifestURL = entry.appendingPathComponent(TracklistManifest.fileName)
+                let albumCoverURL = entry.appendingPathComponent(TracklistManifest.coverFileName)
                 snapshot.directories.append(SyncSnapshot.Directory(
                     relativePath: relative,
                     mixtapeStyle: mixtapeStyle(at: styleURL, dataDir: dataDir),
                     styleStamp: stamp(of: styleURL),
                     coverStamp: stamp(of: coverURL),
-                    album: albumManifest(at: manifestURL),
+                    album: tracklist(at: manifestURL),
                     albumStamp: stamp(of: manifestURL),
                     albumCoverStamp: stamp(of: albumCoverURL)))
                 scanDirectory(entry, root: root, into: &snapshot)
@@ -782,9 +786,9 @@ final class LocalSyncStore: ObservableObject {
     /// `tracks.json` that won't parse is treated as absent rather than as an
     /// empty album: a truncated or half-written file (a sync provider caught
     /// mid-copy) must not be read as "this record has no songs".
-    nonisolated private static func albumManifest(at url: URL) -> AlbumManifest? {
+    nonisolated private static func tracklist(at url: URL) -> TracklistManifest? {
         guard let data = try? Data(contentsOf: url),
-              let manifest = try? JSONDecoder().decode(AlbumManifest.self, from: data),
+              let manifest = try? JSONDecoder().decode(TracklistManifest.self, from: data),
               !manifest.tracks.isEmpty else { return nil }
         return manifest
     }
@@ -909,15 +913,15 @@ final class LocalSyncStore: ObservableObject {
         NSFileCoordinator().coordinate(writingItemAt: dir, options: [], error: &coordinationError) { writeURL in
             do {
                 try FileManager.default.createDirectory(at: writeURL, withIntermediateDirectories: true)
-                try manifest.write(to: writeURL.appendingPathComponent(AlbumManifest.fileName),
+                try manifest.write(to: writeURL.appendingPathComponent(TracklistManifest.fileName),
                                    options: .atomic)
                 if let cover {
-                    try cover.write(to: writeURL.appendingPathComponent(AlbumManifest.coverFileName),
+                    try cover.write(to: writeURL.appendingPathComponent(TracklistManifest.coverFileName),
                                     options: .atomic)
                 }
                 wrote = true
             } catch {
-                appLog("Couldn't write \(AlbumManifest.fileName): \(error.localizedDescription)",
+                appLog("Couldn't write \(TracklistManifest.fileName): \(error.localizedDescription)",
                        level: .warning, category: "Sync")
             }
         }

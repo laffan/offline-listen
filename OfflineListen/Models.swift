@@ -388,21 +388,28 @@ enum PlayableMedia {
     }
 }
 
-/// What an album leaves beside its audio in a sync folder, so the record
-/// survives the round trip: `tracks.json`.
+/// What an ordered folder leaves beside its audio in a sync folder, so the
+/// running order survives the round trip: `tracks.json`.
 ///
 /// A synced folder is only a directory of files, and a directory of files has
-/// no way to say "this is an album, in this order, by this artist". Without
-/// it a record that went out whole came back as a plain folder of filenames —
+/// no way to say "these songs go in this order, by this artist". Without it a
+/// record that went out whole came back as a plain folder of filenames —
 /// alphabetical, artist-less, coverless — which is the gap this closes. The
 /// companion `cover.jpg` sits beside it, deliberately under the name every
 /// other music player already looks for.
 ///
-/// It is written plainly rather than hidden away in a `.albumdata` directory
-/// (the way a mixtape's style is): a tracklist and a sleeve are things
-/// somebody might reasonably want to see, or hand to another program, and
-/// nothing about them needs concealing.
-struct AlbumManifest: Codable, Equatable {
+/// Written by **albums and mixtapes alike**, because order is exactly what
+/// both of them are: an album is a record's running order and a mixtape is a
+/// sequence somebody chose, and alphabetical-by-filename destroys each as
+/// thoroughly as the other. What tells them apart on the way back in is the
+/// marker each already had — a directory holding `.mixtapedata` is a mixtape,
+/// one holding only `tracks.json` is an album.
+///
+/// It is written plainly rather than hidden away in a dot-directory (the way
+/// a mixtape's *style* is): a tracklist and a sleeve are things somebody
+/// might reasonably want to see, or hand to another program, and nothing
+/// about them needs concealing.
+struct TracklistManifest: Codable, Equatable {
     static let fileName = "tracks.json"
     static let coverFileName = "cover.jpg"
 
@@ -419,7 +426,11 @@ struct AlbumManifest: Codable, Equatable {
     /// Bumped only if the shape changes in a way a reader must know about;
     /// an unknown version is read as far as it makes sense and no further.
     var version = 1
+    /// The folder's own name — the record's title, or the mixtape's. The key
+    /// keeps its original spelling so a file written before mixtapes shared
+    /// this format still reads.
     var album: String
+    /// The one artist the tracks agree on, when they do.
     var albumArtist: String?
     /// The tracklist **in album order** — the order is the array's, not the
     /// track numbers', so a record whose numbering is patchy still comes back
