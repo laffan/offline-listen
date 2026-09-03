@@ -379,9 +379,9 @@ actor SpotifyRateLimiter {
     /// first — what Settings lists.
     func blockedEndpoints(for clientID: String) -> [(family: String, until: Date)] {
         let prefix = "\(clientID)|"
-        return blocks.compactMap { key, until in
+        return blocks.compactMap { key, until -> (family: String, until: Date)? in
             guard key.hasPrefix(prefix), until.timeIntervalSinceNow > 0 else { return nil }
-            return (String(key.dropFirst(prefix.count)), until)
+            return (family: String(key.dropFirst(prefix.count)), until: until)
         }
         .sorted { $0.until < $1.until }
     }
@@ -1733,8 +1733,10 @@ private struct APIAlbumSummary: Decodable {
     let images: [APIImage]?
     let artists: [APIArtist]?
 
+    // Explicit keys, so every property needs one named here — including
+    // `artists`, whose key happens to match its name.
     enum CodingKeys: String, CodingKey {
-        case id, name, images
+        case id, name, images, artists
         case releaseDate = "release_date"
         case albumGroup = "album_group"
         case albumType = "album_type"
