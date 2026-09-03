@@ -7,6 +7,7 @@ import SwiftUI
 struct FolderDetailView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var playback: PlaybackManager
+    @EnvironmentObject private var spotifySettings: SpotifySettingsStore
 
     let folderID: UUID
     let onPlay: () -> Void
@@ -92,8 +93,18 @@ struct FolderDetailView: View {
                 AlbumCoverEditor(folder: folder)
             }
         }
+        // No explanatory message: three verbs, each of which says what it
+        // does, and a paragraph under them only slows down the reading.
         .confirmationDialog("Album Art", isPresented: $albumArtOptions, titleVisibility: .visible) {
-            Button("Change Album Art") { editingAlbumArt = true }
+            // The sleeve from the catalogue — one Spotify request, since the
+            // album search hit carries the cover URL itself.
+            if let client = spotifySettings.client, let folder {
+                Button("Retrieve Album Art") {
+                    let store = library
+                    Task { await AlbumConversion.retrieveArt(for: folder, library: store, client: client) }
+                }
+            }
+            Button("Custom Album Art") { editingAlbumArt = true }
             // Only offered once there's something of the user's to undo.
             if folder?.customArtworkFileName != nil {
                 Button("Reset Album Art", role: .destructive) {
@@ -101,10 +112,6 @@ struct FolderDetailView: View {
                 }
             }
             Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(folder?.artworkFileName == nil
-                 ? "The art is cropped to a square and applied to every song in the folder. Resetting drops it for a colour."
-                 : "The art is cropped to a square and applied to every song in the folder. Resetting puts back the cover this album was downloaded with.")
         }
         .alert("New Folder", isPresented: $showNewFolder) {
             TextField("Folder name", text: $newFolderName)

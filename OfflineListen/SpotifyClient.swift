@@ -143,6 +143,10 @@ struct SpotifyAlbumSummary: Sendable, Identifiable, Hashable, Codable {
     let totalTracks: Int
     /// The cover's largest image URL (Spotify orders images largest first).
     let imageURL: String?
+    /// The release's own credited artist, when the endpoint named one — album
+    /// *search* hits carry it, the artist-catalogue walk doesn't need to.
+    /// Optional so a catalogue cached before this existed still decodes.
+    var artistName: String? = nil
 
     var year: String { releaseDate.isEmpty ? "" : String(releaseDate.prefix(4)) }
     /// The open.spotify.com link — the same shape the paste path parses, so
@@ -1155,6 +1159,48 @@ struct SpotifyClient {
         }
     }
 
+    /// The best album hits for a name (and, when it's known, an artist) —
+    /// one request against `/search?type=album`.
+    ///
+    /// This is what turns a folder full of files into a *record*: the hit
+    /// carries the release's own cover URL, so identifying the album and
+    /// getting its sleeve are the same request. Its tracklist is a second one
+    /// (`albums(ids:namesOnly:)`), asked for only when the order is wanted —
+    /// and cached for good afterwards, so asking twice about the same record
+    /// costs nothing.
+    ///
+    /// `limit` is sent here, unlike on the artist-catalogue walk: `/search`
+    /// takes it (it is what `verify()` has always used), and one hit is all
+    /// this needs.
+    func searchAlbums(named name: String, artist: String? = nil,
+                      limit: Int = 3) async throws -> [SpotifyAlbumSummary] {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        // Field filters, so "Rumours" by Fleetwood Mac doesn't come back as
+        // somebody's playlist-bait single of the same name.
+        var raw = "album:\"\(trimmed)\""
+        if let artist, !artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            raw += " artist:\"\(artist.trimmingCharacters(in: .whitespacesAndNewlines))\""
+        }
+        let encoded = raw.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? raw
+        let data = try await get(path: "/search?q=\(encoded)&type=album&limit=\(limit)",
+                                 describing: "album search")
+        guard let response = try? JSONDecoder().decode(APIAlbumSearch.self, from: data) else {
+            throw SpotifyError.malformedResponse
+        }
+        return (response.albums?.items ?? []).compactMap { api in
+            guard let id = api.id, !id.isEmpty, let albumName = api.name, !albumName.isEmpty else { return nil }
+            return SpotifyAlbumSummary(
+                id: id,
+                name: albumName,
+                releaseDate: api.releaseDate ?? "",
+                group: api.albumGroup ?? api.albumType ?? "album",
+                totalTracks: api.totalTracks ?? 0,
+                imageURL: api.images?.first?.url,
+                artistName: api.artists?.first?.name)
+        }
+    }
+
     /// The top track-search hits for a free-text query. Backs the Library's
     /// **Get Album Art**: a downloaded track's artist + title comes in, the
     /// best hit's album cover goes out.
@@ -1649,6 +1695,11 @@ private struct APIArtistSearch: Decodable {
     let artists: APIPage<APIArtist>?
 }
 
+/// The `/search?type=album` envelope: a paging object under an "albums" key.
+private struct APIAlbumSearch: Decodable {
+    let albums: APIPage<APIAlbumSummary>?
+}
+
 /// The `/search?type=track` envelope: a paging object under a "tracks" key.
 private struct APITrackSearch: Decodable {
     let tracks: APIPage<APITrack>?
@@ -1669,7 +1720,9 @@ private struct APIAlbumBatch: Decodable {
     let albums: [APIAlbum?]?
 }
 
-/// A row of `/artists/{id}/albums` — the summary form, no tracklist.
+/// A row of `/artists/{id}/albums` — the summary form, no tracklist. The same
+/// shape comes back from `/search?type=album`, which additionally credits its
+/// artists.
 private struct APIAlbumSummary: Decodable {
     let id: String?
     let name: String?
@@ -1678,6 +1731,7 @@ private struct APIAlbumSummary: Decodable {
     let albumType: String?
     let totalTracks: Int?
     let images: [APIImage]?
+    let artists: [APIArtist]?
 
     enum CodingKeys: String, CodingKey {
         case id, name, images

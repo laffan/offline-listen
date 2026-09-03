@@ -1664,6 +1664,7 @@ struct FolderRowActions {
 struct FolderContextMenu: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var localSync: LocalSyncStore
+    @EnvironmentObject private var spotifySettings: SpotifySettingsStore
 
     let folder: Folder
     /// Supplied by a view with nowhere to swipe (see `FolderRowActions`).
@@ -1701,10 +1702,17 @@ struct FolderContextMenu: View {
                     Label("Convert to Mixtape", systemImage: "recordingtape")
                 }
             }
-            // An album takes a square cover — set it from the sleeve on the
-            // folder's own screen — and its songs wear it.
+            // An album takes a square cover and its songs wear it. With
+            // Spotify configured the folder is also *identified*: its files'
+            // names give the artist and title, and the catalogue gives the
+            // running order and the sleeve — two requests, and only for a
+            // folder whose name it recognises as a record.
             Button {
-                library.convertToAlbum(folder)
+                // Both read on the main actor, before the task starts.
+                let target = folder
+                let client = spotifySettings.client
+                let store = library
+                Task { await AlbumConversion.convert(target, library: store, client: client) }
             } label: {
                 Label("Convert to Album", systemImage: "square.stack")
             }
@@ -1730,9 +1738,14 @@ struct FolderContextMenu: View {
     }
 }
 
-/// The "Sync to Local" context-menu entry, root-aware: with one reachable
-/// sync folder it's a plain button; with several it becomes a submenu naming
-/// each folder. Renders nothing while no sync folder is reachable.
+/// The "Sync to Local" context-menu entry, root-aware.
+///
+/// With an **upload location** set (Settings ▸ Local Sync, touch and hold a
+/// folder) it is a plain button that sends there — "which of my sync folders?"
+/// is a question with the same answer every time, and asking it on every use
+/// was the gap that made a designated destination worth having. Only when
+/// nothing is designated, and more than one folder is reachable, does it
+/// become a submenu; the other folders stay reachable there.
 struct SyncToLocalMenu: View {
     @EnvironmentObject private var localSync: LocalSyncStore
 
@@ -1740,7 +1753,27 @@ struct SyncToLocalMenu: View {
 
     var body: some View {
         let roots = localSync.resolvedRoots
-        if roots.count == 1, let only = roots.first {
+        if let upload = localSync.uploadRoot {
+            if roots.count == 1 {
+                Button {
+                    action(upload.id)
+                } label: {
+                    Label("Sync to Local", systemImage: "arrow.triangle.2.circlepath")
+                }
+            } else {
+                // The upload location leads and is the whole-row tap; the
+                // others are still there, one level in.
+                Menu {
+                    Button("\(upload.name) (Uploads)") { action(upload.id) }
+                    Divider()
+                    ForEach(roots.filter { $0.id != upload.id }) { root in
+                        Button(root.name) { action(root.id) }
+                    }
+                } label: {
+                    Label("Sync to Local", systemImage: "arrow.triangle.2.circlepath")
+                }
+            }
+        } else if roots.count == 1, let only = roots.first {
             Button {
                 action(only.id)
             } label: {

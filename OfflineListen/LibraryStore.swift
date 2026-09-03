@@ -963,6 +963,8 @@ final class LibraryStore: ObservableObject {
             tracks[slot] = track
         }
         save()
+        // Reordering an album *is* the thing `tracks.json` records.
+        refreshAlbumSidecar(folderID)
     }
 
     /// "Moves" a track to the Inbox: back to not-yet-listened and out of any
@@ -1038,6 +1040,9 @@ final class LibraryStore: ObservableObject {
         syncContents(of: folder.id)
         saveFolders()
         save()
+        // Last, because the record names the files, and the files only just
+        // took their places in the sync store.
+        writeAlbumSidecarIfNeeded(folder.id)
         appLog("Synced folder \"\(folders[index].name)\" to local.", level: .success, category: "Sync")
     }
 
@@ -1053,6 +1058,12 @@ final class LibraryStore: ObservableObject {
         if folders[index].isMixtape {
             exportOp(.writeMixtapeData(dir: path, folderID: folders[index].id), rootID: rootID)
         }
+    }
+
+    /// Queued *after* a folder's contents have been moved into the sync store,
+    /// since an album's record names the files it ends up holding.
+    private func writeAlbumSidecarIfNeeded(_ folderID: UUID) {
+        refreshAlbumSidecar(folderID)
     }
 
     /// Recursively moves a folder's tracks and subfolders into its (already
@@ -1108,6 +1119,7 @@ final class LibraryStore: ObservableObject {
     /// membership from their paths.
     func reconcileSyncedFolders(_ dirs: [SyncSnapshot.Directory],
                                 adoptStyleFor adopt: Set<String>,
+                                adoptAlbumFor adoptAlbum: Set<String>,
                                 rootID: UUID) -> [String: UUID] {
         var foldersChanged = false
         var tracksChanged = false
@@ -1123,6 +1135,20 @@ final class LibraryStore: ObservableObject {
         }) {
             if let id = byPath[dir.relativePath],
                let index = folders.firstIndex(where: { $0.id == id }) {
+                // Album-ness is adopted on its own terms, and before the
+                // mixtape gate below returns: the two records are separate
+                // files and either can change without the other.
+                if adoptAlbum.contains(dir.relativePath), !folders[index].isMixtape {
+                    let shouldBeAlbum = dir.album != nil
+                    if folders[index].isAlbum != shouldBeAlbum {
+                        folders[index].isAlbum = shouldBeAlbum
+                        if shouldBeAlbum, folders[index].coverArtworkFileName == nil,
+                           folders[index].albumColorHex == nil {
+                            folders[index].albumColorHex = AlbumColor.randomHex(excluding: nil)
+                        }
+                        foldersChanged = true
+                    }
+                }
                 guard adopt.contains(dir.relativePath) else { continue }
                 if let style = dir.mixtapeStyle {
                     if !folders[index].isMixtape || folders[index].mixtape != style {
@@ -1141,6 +1167,10 @@ final class LibraryStore: ObservableObject {
                 }
             } else {
                 let parentPath = (dir.relativePath as NSString).deletingLastPathComponent
+                // A directory carrying `tracks.json` arrives as the album it
+                // is, rather than as a plain folder that turns into one a
+                // moment later when its record is read.
+                let isAlbum = dir.mixtapeStyle == nil && dir.album != nil
                 let newFolder = Folder(
                     name: (dir.relativePath as NSString).lastPathComponent,
                     parentID: parentPath.isEmpty ? nil : byPath[parentPath],
@@ -1148,7 +1178,9 @@ final class LibraryStore: ObservableObject {
                     syncRootID: rootID,
                     syncedPath: dir.relativePath,
                     isMixtape: dir.mixtapeStyle != nil,
-                    mixtape: dir.mixtapeStyle ?? MixtapeStyle())
+                    mixtape: dir.mixtapeStyle ?? MixtapeStyle(),
+                    isAlbum: isAlbum,
+                    albumColorHex: isAlbum ? AlbumColor.randomHex(excluding: nil) : nil)
                 folders.append(newFolder)
                 byPath[dir.relativePath] = newFolder.id
                 foldersChanged = true
@@ -1370,6 +1402,187 @@ final class LibraryStore: ObservableObject {
         !folder.isMixtape && folder.isAlbum
     }
 
+    /// Reads "Artist - Title" out of each track's **file name** and puts it on
+    /// the track, answering with the artist they agree on (nil when they
+    /// don't, or when none of them was named that way).
+    ///
+    /// This is what makes a folder of synced files look like the record it is:
+    /// a downloaded track is named by a UUID and carries its metadata in the
+    /// library, but a file that arrived through a sync folder has only its
+    /// name — and "Artist - Title" is what that name almost always says. A
+    /// file that doesn't parse is left completely alone, so this can never
+    /// turn "Track 04" into an artist called "Track 04".
+    ///
+    /// Once the tracks carry an artist, the rest follows on its own: the
+    /// folder's rows show artist under title, and the **Discography** row
+    /// appears at the foot of the album, because both of those were only ever
+    /// waiting on a single agreed artist to exist.
+    @discardableResult
+    func applyFileNameMetadata(in folderID: UUID) -> String? {
+        var changed = false
+        var named: [String] = []
+        for index in tracks.indices where tracks[index].folderID == folderID && !tracks[index].isArchived {
+            let file = (tracks[index].fileName as NSString).lastPathComponent
+            let base = (file as NSString).deletingPathExtension
+            guard let parsed = AlbumIdentifier.split(fileName: base) else { continue }
+            named.append(parsed.artist)
+            if tracks[index].artist != parsed.artist {
+                tracks[index].artist = parsed.artist
+                changed = true
+            }
+            if !parsed.title.isEmpty, tracks[index].title != parsed.title {
+                tracks[index].title = parsed.title
+                changed = true
+            }
+        }
+        if changed {
+            save()
+            appLog("Read artist and title from \(named.count) file name(s).",
+                   level: .debug, category: "Library")
+        }
+        guard let first = named.first,
+              named.allSatisfy({ $0.localizedCaseInsensitiveCompare(first) == .orderedSame }) else {
+            return nil
+        }
+        return first
+    }
+
+    /// Puts a folder's tracks into the order a tracklist gives, matching on
+    /// title. Anything the tracklist doesn't name keeps its place at the end —
+    /// a bonus track, or a song whose file was named unhelpfully, is still
+    /// part of the record.
+    func orderTracks(in folderID: UUID, byTitles titles: [String]) {
+        guard !titles.isEmpty else { return }
+        let slots = tracks.indices.filter { tracks[$0].folderID == folderID && !tracks[$0].isArchived }
+        let current = slots.map { tracks[$0] }
+        func position(of track: Track) -> Int? {
+            titles.firstIndex { discographyNamesMatch($0, track.title) }
+        }
+        let ordered = current.enumerated().sorted { left, right in
+            let a = position(of: left.element) ?? (titles.count + left.offset)
+            let b = position(of: right.element) ?? (titles.count + right.offset)
+            return a == b ? left.offset < right.offset : a < b
+        }.map(\.element)
+        guard ordered.map(\.id) != current.map(\.id) else { return }
+        for (slot, track) in zip(slots, ordered) { tracks[slot] = track }
+        save()
+        refreshAlbumSidecar(folderID)
+        appLog("Put \(ordered.count) track(s) into album order.", category: "Library")
+    }
+
+    /// The album as `tracks.json` describes it — the tracklist in the order
+    /// the folder shows it, each song by the file name it has *inside* the
+    /// album's directory, since that is the only identity that survives being
+    /// copied through somebody's Dropbox.
+    func albumManifest(forFolder id: UUID) -> AlbumManifest? {
+        guard let folder = folder(withID: id), isAlbumFolder(folder) else { return nil }
+        let ordered = tracks(in: id)
+        guard !ordered.isEmpty else { return nil }
+        let entries = ordered.enumerated().map { position, track in
+            AlbumManifest.Entry(file: (track.fileName as NSString).lastPathComponent,
+                                title: track.title,
+                                artist: track.namedArtist,
+                                trackNumber: position + 1)
+        }
+        return AlbumManifest(album: folder.name,
+                             albumArtist: folderArtist(of: id),
+                             tracks: entries)
+    }
+
+    /// The album's sleeve as bytes, for writing beside its tracks.
+    func albumCoverData(forFolder id: UUID) -> Data? {
+        guard let folder = folder(withID: id), let name = folder.coverArtworkFileName else { return nil }
+        return try? Data(contentsOf: AppPaths.folderArtwork.appendingPathComponent(name))
+    }
+
+    /// Puts an album back together from the record that came in with it: the
+    /// folder becomes an album again, its songs get their titles and artists
+    /// back, and they are returned to tracklist order.
+    ///
+    /// Matching is by **file name within the directory**, which is what a copy
+    /// through a sync folder preserves. A song the record doesn't name keeps
+    /// its place at the end rather than being dropped — a file somebody added
+    /// to the folder by hand is still theirs.
+    func applyAlbumManifest(_ manifest: AlbumManifest, toFolder id: UUID) {
+        guard let folderIndex = folders.firstIndex(where: { $0.id == id }),
+              !folders[folderIndex].isMixtape else { return }
+        if !folders[folderIndex].isAlbum {
+            folders[folderIndex].isAlbum = true
+            if folders[folderIndex].coverArtworkFileName == nil, folders[folderIndex].albumColorHex == nil {
+                folders[folderIndex].albumColorHex = AlbumColor.randomHex(excluding: nil)
+            }
+            saveFolders()
+        }
+
+        var position: [String: Int] = [:]
+        for (index, entry) in manifest.tracks.enumerated() {
+            position[entry.file.lowercased()] = index
+        }
+        var changed = false
+        for index in tracks.indices where tracks[index].folderID == id {
+            let file = (tracks[index].fileName as NSString).lastPathComponent.lowercased()
+            guard let slot = position[file] else { continue }
+            let entry = manifest.tracks[slot]
+            if !entry.title.isEmpty, tracks[index].title != entry.title {
+                tracks[index].title = entry.title
+                changed = true
+            }
+            if let artist = entry.artist, !artist.isEmpty, tracks[index].artist != artist {
+                tracks[index].artist = artist
+                changed = true
+            }
+        }
+
+        // The folder's slots are permuted into tracklist order, the way
+        // `moveTracks` does it, so every track outside this folder stays put.
+        let slots = tracks.indices.filter { tracks[$0].folderID == id && !tracks[$0].isArchived }
+        let current = slots.map { tracks[$0] }
+        let ordered = current.enumerated().sorted { left, right in
+            let a = position[(left.element.fileName as NSString).lastPathComponent.lowercased()]
+                ?? (manifest.tracks.count + left.offset)
+            let b = position[(right.element.fileName as NSString).lastPathComponent.lowercased()]
+                ?? (manifest.tracks.count + right.offset)
+            return a == b ? left.offset < right.offset : a < b
+        }.map(\.element)
+        if ordered.map(\.id) != current.map(\.id) {
+            for (slot, track) in zip(slots, ordered) { tracks[slot] = track }
+            changed = true
+        }
+        if changed {
+            save()
+            appLog("Restored album \"\(manifest.album)\" from its sync record: \(manifest.tracks.count) track(s) in order.",
+                   category: "Sync")
+        }
+    }
+
+    /// The importer has copied an album's `cover.jpg` into the folder-artwork
+    /// directory; hang it on the folder.
+    func adoptSyncedAlbumCover(folderID: UUID) {
+        let name = "\(folderID.uuidString).jpg"
+        FolderArtwork.invalidate(fileName: name)
+        setFolderArtwork(for: folderID, fileName: name)
+        coverRevision += 1
+    }
+
+    /// Queues this album's `tracks.json` and `cover.jpg` for its replica — or
+    /// their removal, once it stops being an album. A no-op for anything
+    /// that isn't a **synced** folder, which is most of the library, so it is
+    /// safe to call from anywhere an album changes.
+    ///
+    /// Deliberately *not* called when a record is applied *from* the replica:
+    /// writing back what was just read would change the file's stamp, which
+    /// the next pass would read as a remote edit, which would write it
+    /// again — a loop that never settles.
+    func refreshAlbumSidecar(_ folderID: UUID?) {
+        guard let folderID, let folder = folder(withID: folderID), folder.isSynced,
+              let path = folder.syncedPath, let rootID = folder.syncRootID else { return }
+        if isAlbumFolder(folder) {
+            exportOp(.writeAlbumData(dir: path, folderID: folderID), rootID: rootID)
+        } else {
+            exportOp(.removeAlbumData(dir: path), rootID: rootID)
+        }
+    }
+
     /// Turns a plain folder into an album. With no cover to show yet it takes
     /// a random colour, so it reads as an album in the folder grid straight
     /// away; picking an image is the next step (tap the cover).
@@ -1382,6 +1595,7 @@ final class LibraryStore: ObservableObject {
             folders[index].albumColorHex = AlbumColor.randomHex(excluding: nil)
         }
         saveFolders()
+        refreshAlbumSidecar(folder.id)
     }
 
     /// Turns an album back into a plain folder, discarding the cover the user
@@ -1402,6 +1616,7 @@ final class LibraryStore: ObservableObject {
         folders[index].albumColorHex = nil
         coverRevision += 1
         saveFolders()
+        refreshAlbumSidecar(folder.id)
     }
 
     /// Applies a square cover the user framed: it becomes the album's own art
@@ -1428,6 +1643,7 @@ final class LibraryStore: ObservableObject {
         saveFolders()
         applyArtwork(imageData, toTracksIn: folder.id)
         coverRevision += 1
+        refreshAlbumSidecar(folder.id)
         appLog("Set album art on \"\(folders[index].name)\".", level: .success, category: "Library")
     }
 
@@ -1622,6 +1838,9 @@ final class LibraryStore: ObservableObject {
         let slot = firstSiblingAfter ?? lastSiblingBefore.map { $0 + 1 } ?? 0
         tracks.insert(track, at: min(slot, tracks.count))
         save()
+        // A record downloaded into a folder that is already synced gains a
+        // track; its written tracklist has to gain one too.
+        refreshAlbumSidecar(folderID)
     }
 
     /// Inserts several tracks at the top of the library, keeping their order.
@@ -1852,6 +2071,7 @@ final class LibraryStore: ObservableObject {
         // A real cover supersedes the stand-in colour.
         folders[index].albumColorHex = nil
         saveFolders()
+        refreshAlbumSidecar(id)
     }
 
     /// Records a podcast's playhead. No-ops for tiny changes to limit churn.

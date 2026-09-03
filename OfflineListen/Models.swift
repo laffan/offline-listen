@@ -388,6 +388,45 @@ enum PlayableMedia {
     }
 }
 
+/// What an album leaves beside its audio in a sync folder, so the record
+/// survives the round trip: `tracks.json`.
+///
+/// A synced folder is only a directory of files, and a directory of files has
+/// no way to say "this is an album, in this order, by this artist". Without
+/// it a record that went out whole came back as a plain folder of filenames —
+/// alphabetical, artist-less, coverless — which is the gap this closes. The
+/// companion `cover.jpg` sits beside it, deliberately under the name every
+/// other music player already looks for.
+///
+/// It is written plainly rather than hidden away in a `.albumdata` directory
+/// (the way a mixtape's style is): a tracklist and a sleeve are things
+/// somebody might reasonably want to see, or hand to another program, and
+/// nothing about them needs concealing.
+struct AlbumManifest: Codable, Equatable {
+    static let fileName = "tracks.json"
+    static let coverFileName = "cover.jpg"
+
+    /// One track, by the file name it has *inside the album's directory* —
+    /// which is what survives being copied through a sync folder, where ids
+    /// and paths do not.
+    struct Entry: Codable, Equatable {
+        var file: String
+        var title: String
+        var artist: String?
+        var trackNumber: Int?
+    }
+
+    /// Bumped only if the shape changes in a way a reader must know about;
+    /// an unknown version is read as far as it makes sense and no further.
+    var version = 1
+    var album: String
+    var albumArtist: String?
+    /// The tracklist **in album order** — the order is the array's, not the
+    /// track numbers', so a record whose numbering is patchy still comes back
+    /// in the right sequence.
+    var tracks: [Entry]
+}
+
 /// How a mixtape folder draws its title banner: which part of the cover image
 /// shows behind the title (a non-destructive crop — the original image is kept
 /// untouched, separately framed for the tall header and the short list row),

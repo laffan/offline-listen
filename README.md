@@ -239,10 +239,14 @@ vertical space goes to the content instead.
    **Albums.** The same menu offers **Convert to Album**, the other thing a
    folder can be: a record, wearing a **square cover** its songs share. A
    folder pulled down whole from a discography already is one; this is how any
-   other folder becomes one. Tapping the sleeve on the album's own screen
-   **changes or resets** the art, and a **Discography** button at the foot of
-   its track list opens the artist's catalogue. **Convert to Folder** is the
-   way back. See [Album folders](#album-folders).
+   other folder becomes one — and with Spotify configured it does more than
+   set a flag: the files' names give up the artist and title they carry
+   ("Artist - Title.mp3"), and the catalogue supplies the **running order**
+   and the **sleeve**. Tapping the sleeve on the album's own screen offers
+   **Retrieve Album Art**, **Custom Album Art** and **Reset**, and a
+   **Discography** button at the foot of its track list opens the artist's
+   catalogue. **Convert to Folder** is the way back. See
+   [Album folders](#album-folders).
 3. **Player** — artwork, scrubber, play/pause, skip, next/previous — the same
    control suite for audio and video, and it drives the lock screen and
    Control Center. A track downloaded with **album art** (anything
@@ -1473,10 +1477,21 @@ nothing until everything else has failed and is ready if the gating changes.
 Settings ▸ **Local Sync** lets you pick folders — anything the Files app can
 reach (On My iPhone, iCloud Drive, Dropbox, any file provider) — to mirror
 with. **Several sync folders can be configured at once** (each is a *root*
-with its own id; with more than one, "Sync to Local" becomes a submenu naming
-them). Access persists across launches via security-scoped bookmarks; a root
-whose provider is unreachable shows a warning icon in Settings and simply
-pauses until it's back.
+with its own id). Access persists across launches via security-scoped
+bookmarks; a root whose provider is unreachable shows a warning icon in
+Settings and simply pauses until it's back.
+
+**One of them is the upload location** — the folder things are sent *to*.
+Every sync folder is a source, but only one of them answers "where does this
+album go?", and without a designated destination "Sync to Local" had to ask on
+every single use: a question with the same answer every time. Touch and hold a
+folder in Settings to **Set Upload Location**; its icon wears a small arrow
+through the middle of the sync ring, there is only ever one, and naming
+another moves it rather than adding to it. The first folder configured becomes
+it by default, since one folder with nothing designated is a distinction
+without a difference. "Sync to Local" then sends there without asking — the
+other folders are still reachable one level into the menu — and falls back to
+asking when the chosen folder's provider is offline.
 
 Each folder is a **replica, not live storage**: cloud providers serve
 *placeholder* files that must be downloaded through file coordination before
@@ -1534,8 +1549,23 @@ whole from a discography came back wearing the release's cover. **Convert to
 Album** (touch and hold a folder) says it in the other direction — this folder
 is a record — and everything an album gets follows from that.
 
+**It identifies itself, given half a chance.** A folder that arrived through a
+sync folder is only a directory of files — no order beyond the alphabet, no
+artist, no sleeve — but a folder *named after a record* whose files are named
+"Artist - Title" is carrying almost enough to say what it is. So Convert to
+Album reads those names onto the tracks (the first " - " splits it; a leading
+track number is dropped; a file that doesn't parse is left alone, so "Track
+04" never becomes an artist), and then asks Spotify for the rest: **two
+requests**, one to identify the release and one for its tracklist, after which
+the songs are put in album order and the cover is fetched. This is also what
+closes the formatting gap between a downloaded album and a converted one —
+artist under title on every row, and the **Discography** link at the foot of
+the list, both of which were only ever waiting on the tracks to name a single
+artist. A folder Spotify doesn't recognise is still an album; it just doesn't
+gain the extras.
+
 **Its cover is square, and its songs wear it.** Tapping the sleeve on an
-album's own screen offers **Change Album Art**: pick an image, frame it in a
+album's own screen offers **Custom Album Art**: pick an image, frame it in a
 square (drag to pan, pinch or slide to zoom), and Save crops it and writes it
 in two places — on the folder, and onto **every song in it**, so the record
 shows in the Player, on the lock screen and in the mini player, exactly as a
@@ -1590,6 +1620,26 @@ justification** for the list row, and an optional **tape chip** behind it —
 masking-tape white by default, with preset swatches and a free colour well.
 **Convert to Folder** reverts it, discarding cover and style. Mixtapes can't
 contain folders, so only childless folders offer the conversion.
+
+**An album synced to local keeps its record beside its audio.** Two files at
+the top of the album's directory in the sync folder: **`tracks.json`** (the
+tracklist in order, each song by the file name it has *inside* that directory,
+with its title and artist) and **`cover.jpg`** — deliberately under the name
+every other music player already looks for, and deliberately not hidden away
+in a dot-directory the way a mixtape's style is, because a tracklist and a
+sleeve are things somebody might reasonably want to see.
+
+It is written through the export journal whenever the album's order, cover or
+album-ness changes, and read back on import: a directory carrying
+`tracks.json` arrives **as an album**, in the right order, with its titles,
+its artists and its sleeve. That is the round trip that used to lose
+everything — delete the app, reinstall it, sync, and a record came back as an
+alphabetical folder of filenames. Records are adopted only when `tracks.json`
+actually changed remotely (or when the pass just brought that directory's
+files in, which is what a fresh install looks like), so a stale replica can't
+undo a reordering made in the app. And applying a record never writes one
+back: that would change the file's stamp, which the next pass would read as a
+remote edit, which would write it again.
 
 Style (crop, font, colours, tape, justification) persists in `folders.json`;
 the cover JPEG lives in `Documents/MixtapeCovers/<folder-id>.jpg`. A mixtape

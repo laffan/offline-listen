@@ -391,17 +391,33 @@ struct SettingsView: View {
     private var localSyncSection: some View {
         Section {
             ForEach(localSync.roots) { root in
+                let isUpload = localSync.uploadRootID == root.id
                 HStack {
-                    Label(root.name, systemImage: root.url != nil
-                          ? "arrow.triangle.2.circlepath"
-                          : "exclamationmark.triangle")
+                    syncRootIcon(root, isUpload: isUpload)
                         .foregroundStyle(root.url != nil ? Color.primary : Color.orange)
+                    Text(root.name)
                     Spacer()
                     Button("Remove", role: .destructive) {
                         localSync.removeRoot(root.id)
                     }
                     .font(.callout)
                     .buttonStyle(.borderless)
+                }
+                .contentShape(Rectangle())
+                .contextMenu {
+                    if isUpload {
+                        Button {
+                            localSync.setUploadLocation(nil)
+                        } label: {
+                            Label("Stop Uploading Here", systemImage: "xmark.circle")
+                        }
+                    } else {
+                        Button {
+                            localSync.setUploadLocation(root.id)
+                        } label: {
+                            Label("Set Upload Location", systemImage: "arrow.up.circle")
+                        }
+                    }
                 }
             }
             if !localSync.roots.isEmpty {
@@ -420,7 +436,27 @@ struct SettingsView: View {
         } header: {
             Text("Local Sync")
         } footer: {
-            Text("Pick folders (in Files, iCloud Drive, Dropbox, …) to mirror with. \"Sync to Local\" copies a track or folder into one of them, and playable files in a sync folder are copied into the app — so everything keeps playing offline — appearing with the sync icon and disappearing when removed from the folder. Removing a sync folder removes its synced items from your library; the folder's own files are untouched.\n\nGrouping is a display choice only: it collects the synced folders behind a single \"Synced\" row in the Library instead of listing them among your own folders. Nothing moves, and switching it back puts them where they were.")
+            Text("Pick folders (in Files, iCloud Drive, Dropbox, …) to mirror with. Touch and hold one to make it the **upload location** — the folder \"Sync to Local\" sends to without asking, marked with an arrow through its icon. There is only one, and naming another moves it.\n\n\"Sync to Local\" copies a track or folder into one of them, and playable files in a sync folder are copied into the app — so everything keeps playing offline — appearing with the sync icon and disappearing when removed from the folder. Removing a sync folder removes its synced items from your library; the folder's own files are untouched.\n\nGrouping is a display choice only: it collects the synced folders behind a single \"Synced\" row in the Library instead of listing them among your own folders. Nothing moves, and switching it back puts them where they were.")
+        }
+    }
+
+    /// A sync folder's glyph, wearing a small arrow through the middle when
+    /// it is the **upload location** — the folder things are sent *to*. The
+    /// circlepath is a ring with a hole in it, which is exactly the space an
+    /// arrow needs, so the two read as one mark rather than as a badge stuck
+    /// on the side of another.
+    @ViewBuilder
+    private func syncRootIcon(_ root: SyncRootState, isUpload: Bool) -> some View {
+        if root.url == nil {
+            Image(systemName: "exclamationmark.triangle")
+        } else {
+            ZStack {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                if isUpload {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 8, weight: .heavy))
+                }
+            }
         }
     }
 

@@ -158,3 +158,138 @@ private struct IndexedEntry: Sendable {
     let index: Int
     let entry: PlaylistEntry?
 }
+
+// MARK: - Turning a folder of files into a record
+
+/// What the catalogue can tell us about a folder that looks like an album.
+///
+/// A synced folder arrives as a directory of files: no order beyond the
+/// alphabet, no artist, no sleeve. But a folder named after a record whose
+/// files are named "Artist - Title" is carrying almost enough to identify
+/// itself, and Spotify supplies the rest — the real tracklist order and the
+/// cover — for **one or two requests**, which is the whole budget this is
+/// allowed. The album search hit already carries the sleeve, so art alone is
+/// a single request; the tracklist is the second, and it is cached for good
+/// afterwards.
+enum AlbumIdentifier {
+    /// What a matched release says about itself.
+    struct Match {
+        let name: String
+        let artist: String?
+        let coverURL: String?
+        /// Song titles in album order — empty when only the sleeve was asked
+        /// for, or when the tracklist read failed (the cover is still worth
+        /// having on its own).
+        let titles: [String]
+    }
+
+    /// Splits "Artist - Title" — the naming scheme a folder of files most
+    /// often arrives in — into its halves.
+    ///
+    /// The **first** separator wins, because a title may well contain another
+    /// ("Marvin Gaye - Ain't No Mountain High Enough - Single Version") while
+    /// an artist rarely does. A leading track number is stripped first: "03
+    /// Artist - Title" and "03. Artist - Title" and "1-03 Artist - Title" are
+    /// all the same thing wearing a different prefix. Anything without a
+    /// separator returns nil rather than a guess — a file called "Track 04"
+    /// is not telling us the artist is "Track 04".
+    static func split(fileName: String) -> (artist: String, title: String)? {
+        var text = fileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        text = strippingTrackNumber(from: text)
+        for separator in [" - ", " – ", " — "] {
+            guard let range = text.range(of: separator) else { continue }
+            let artist = String(text[text.startIndex..<range.lowerBound])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let title = String(text[range.upperBound...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !artist.isEmpty, !title.isEmpty else { return nil }
+            return (artist, title)
+        }
+        return nil
+    }
+
+    /// Drops a leading "03", "03.", "03 -", "1-03" and the space after it.
+    private static func strippingTrackNumber(from text: String) -> String {
+        let pattern = "^\\s*\\d{1,2}([-.]\\d{1,2})?\\s*[.)-]?\\s+"
+        guard let range = text.range(of: pattern, options: .regularExpression) else { return text }
+        let rest = String(text[range.upperBound...])
+        // Only when something recognisable is left: a track *named* "03" keeps
+        // its name.
+        return rest.isEmpty ? text : rest
+    }
+
+    /// Finds the release, and reads its tracklist when the order is wanted.
+    /// Nil when nothing credible came back — a miss leaves the folder exactly
+    /// as it was, which is the right outcome for a folder that only looked
+    /// like an album.
+    static func find(album: String, artist: String?, client: SpotifyClient,
+                     wantsTracklist: Bool) async -> Match? {
+        let hits: [SpotifyAlbumSummary]
+        do {
+            hits = try await client.searchAlbums(named: album, artist: artist)
+        } catch {
+            if isCancellation(error) { return nil }
+            appLog("Album lookup for \"\(album)\" failed: \(error.localizedDescription)",
+                   level: .warning, category: "Spotify")
+            return nil
+        }
+        // The name has to actually match. Spotify answers *something* for
+        // nearly any query, and a record silently retitled after somebody
+        // else's album is worse than one left alone.
+        guard let hit = hits.first(where: { discographyNamesMatch($0.name, album) }) else {
+            appLog("No album on Spotify matches \"\(album)\" — leaving it as it is.",
+                   level: .warning, category: "Spotify")
+            return nil
+        }
+
+        var titles: [String] = []
+        if wantsTracklist {
+            // Titles only: the ISRC re-read this skips is for matching a
+            // recording on YouTube, and nothing here is being matched to a
+            // video. One request, cached for good.
+            let read = try? await client.albums(ids: [hit.id], namesOnly: true)
+            if let collection = read?[hit.id] {
+                titles = collection.tracks.map(\.name)
+            }
+        }
+        let credited = hit.artistName ?? "unnamed artist"
+        let tracklist = titles.isEmpty ? "" : " (\(titles.count) track(s))"
+        appLog("\"\(album)\" identified as \(hit.name) by \(credited)\(tracklist).",
+               level: .success, category: "Spotify")
+        return Match(name: hit.name, artist: hit.artistName,
+                     coverURL: hit.imageURL, titles: titles)
+    }
+}
+
+/// The **Convert to Album** and **Retrieve Album Art** actions, in one place
+/// because they are the same errand at two depths.
+@MainActor
+enum AlbumConversion {
+    /// Makes a folder an album: it becomes one immediately (the UI should not
+    /// wait on a network round trip to redraw), its files' names are read for
+    /// the artist and title they carry, and then — if Spotify is configured —
+    /// the catalogue supplies the running order and the sleeve.
+    ///
+    /// Every step past the first is best-effort. A folder whose files aren't
+    /// named "Artist - Title", or whose name isn't a record Spotify knows, is
+    /// still an album; it just doesn't gain anything else.
+    static func convert(_ folder: Folder, library: LibraryStore, client: SpotifyClient?) async {
+        library.convertToAlbum(folder)
+        let artist = library.applyFileNameMetadata(in: folder.id)
+        guard let client else { return }
+        guard let match = await AlbumIdentifier.find(album: folder.name, artist: artist,
+                                                     client: client, wantsTracklist: true) else { return }
+        library.orderTracks(in: folder.id, byTitles: match.titles)
+        ArtworkFetcher.attach(match.coverURL, toFolder: folder.id, library: library)
+    }
+
+    /// The sleeve alone, for a record that already is one — one request, since
+    /// the search hit carries the cover URL.
+    static func retrieveArt(for folder: Folder, library: LibraryStore, client: SpotifyClient) async {
+        let artist = library.folderArtist(of: folder.id)
+        guard let match = await AlbumIdentifier.find(album: folder.name, artist: artist,
+                                                     client: client, wantsTracklist: false),
+              let cover = match.coverURL else { return }
+        ArtworkFetcher.attach(cover, toFolder: folder.id, library: library)
+    }
+}
