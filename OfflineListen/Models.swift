@@ -119,6 +119,20 @@ enum AppPaths {
     /// and style in, so the mixtape travels with the files.
     static let mixtapeDataDirName = ".mixtapedata"
 
+    /// True for the mixtape sidecar directory — under the name it is written
+    /// with, or under one a file provider has given it.
+    ///
+    /// `.mixtapedata` is a name with no base and nothing but an extension,
+    /// which not every provider is willing to store: some hand the item a
+    /// display name instead and the directory comes back as
+    /// "Unknown file.mixtapedata". It is the app's own bookkeeping either way
+    /// — never library content, never something to walk into — and it is still
+    /// the marker that says the folder around it is a mixtape, so the scan has
+    /// to recognise it under whichever name it is wearing.
+    static func isMixtapeDataDirectory(_ name: String) -> Bool {
+        name.lowercased().hasSuffix(mixtapeDataDirName)
+    }
+
     /// A file name based on `base` that doesn't collide with anything already
     /// in `directory`, disambiguating with " (2)", " (3)", … if needed.
     /// `ext` may be empty for a directory name.

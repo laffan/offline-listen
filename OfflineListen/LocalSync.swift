@@ -18,13 +18,11 @@ struct SyncSnapshot {
 
     struct Directory {
         let relativePath: String
-        /// True when the directory holds a `.mixtapedata` directory — the
-        /// marker that has always said "mixtape". Deliberately separate from
-        /// the style below: whether the marker is *there* and whether its
-        /// style is *readable* are two different questions, and answering the
-        /// first with the second is how an evicted `style.json` used to reset
-        /// somebody's font, colours and crop to the defaults.
-        let hasMixtapeData: Bool
+        /// The sidecar directory's name as it actually appears on disk, when
+        /// the directory has one — normally `.mixtapedata`, but recorded
+        /// rather than assumed because a file provider may have renamed it
+        /// (see `AppPaths.isMixtapeDataDirectory`).
+        let mixtapeDataName: String?
         /// The banner style, when `.mixtapedata/style.json` could actually be
         /// read. Nil when it is absent or unreadable.
         let mixtapeStyle: MixtapeStyle?
@@ -37,6 +35,13 @@ struct SyncSnapshot {
         /// Stamps of `tracks.json` / `cover.jpg` at the directory's top level.
         let albumStamp: SyncStamp?
         let albumCoverStamp: SyncStamp?
+
+        /// The marker that has always said "mixtape". Deliberately separate
+        /// from the style below: whether the marker is *there* and whether its
+        /// style is *readable* are two different questions, and answering the
+        /// first with the second is how an evicted `style.json` used to reset
+        /// somebody's font, colours and crop to the defaults.
+        var hasMixtapeData: Bool { mixtapeDataName != nil }
 
         /// Whether this directory is a mixtape. **Two independent witnesses**,
         /// because either can be missing on its own: the hidden
@@ -554,16 +559,25 @@ final class LocalSyncStore: ObservableObject {
                   folder.isMixtape, folder.isSynced else { return true }
             guard let styleData = try? JSONEncoder().encode(folder.mixtape) else { return true }
             let coverData = folder.coverURL.flatMap { try? Data(contentsOf: $0) }
-            let dataDir = root.appendingPathComponent(dir, isDirectory: true)
-                .appendingPathComponent(AppPaths.mixtapeDataDirName, isDirectory: true)
-            return await Task.detached {
-                Self.coordinatedWriteMixtapeData(into: dataDir, style: styleData, cover: coverData)
+            let dirURL = root.appendingPathComponent(dir, isDirectory: true)
+            return await Task.detached { () -> Bool in
+                // Into the sidecar that is already there, whatever it is
+                // called — writing to the canonical name beside a renamed one
+                // would leave two, and the provider would rename the new one
+                // too, and so on.
+                let dataDir = Self.existingMixtapeData(in: dirURL)
+                    ?? dirURL.appendingPathComponent(AppPaths.mixtapeDataDirName, isDirectory: true)
+                return Self.coordinatedWriteMixtapeData(into: dataDir, style: styleData, cover: coverData)
             }.value
 
         case .removeMixtapeData(let dir):
-            let dataDir = root.appendingPathComponent(dir, isDirectory: true)
-                .appendingPathComponent(AppPaths.mixtapeDataDirName, isDirectory: true)
-            return await Task.detached { Self.coordinatedDelete(at: dataDir) }.value
+            let dirURL = root.appendingPathComponent(dir, isDirectory: true)
+            return await Task.detached { () -> Bool in
+                // Nothing there under any name is the op's own success: the
+                // point is that no marker remains.
+                guard let dataDir = Self.existingMixtapeData(in: dirURL) else { return true }
+                return Self.coordinatedDelete(at: dataDir)
+            }.value
 
         case .writeAlbumData(let dir, let folderID):
             // Snapshot the album on the main actor; obsolete if it is no
@@ -748,7 +762,8 @@ final class LocalSyncStore: ObservableObject {
             }
             let dirURL = rootURL.appendingPathComponent(dir.relativePath, isDirectory: true)
             let src = ownCover
-                ? dirURL.appendingPathComponent(AppPaths.mixtapeDataDirName, isDirectory: true)
+                ? dirURL.appendingPathComponent(dir.mixtapeDataName ?? AppPaths.mixtapeDataDirName,
+                                                isDirectory: true)
                         .appendingPathComponent("cover.jpg")
                 : dirURL.appendingPathComponent(TracklistManifest.coverFileName)
             let dst = AppPaths.mixtapeCovers.appendingPathComponent("\(folderID.uuidString).jpg")
@@ -778,46 +793,83 @@ final class LocalSyncStore: ObservableObject {
     // MARK: - Scanning (replica)
 
     /// Walks a replica tree off the main actor (a cloud-backed directory can
-    /// block on the network while listing). Hidden entries are skipped, except
-    /// that `.mixtapedata` marks its parent as a mixtape and contributes its
-    /// style + stamps.
+    /// block on the network while listing).
+    ///
+    /// **What is not library content**: hidden entries, anything that isn't a
+    /// playable file, and the app's own `.mixtapedata` sidecar — which is the
+    /// *marker* for the directory holding it (contributing its style and
+    /// stamps) and never a folder in its own right. It is recognised by name
+    /// rather than by its leading dot, because a file provider that won't
+    /// store a name with no base gives it one, and a directory called
+    /// "Unknown file.mixtapedata" is not hidden at all: it was walking
+    /// straight into the library as a subfolder of the mixtape, which then
+    /// stopped being convertible (mixtapes can't contain folders) and lost
+    /// its marker in the same stroke.
     nonisolated private static func scan(root: URL) -> SyncSnapshot {
         var snapshot = SyncSnapshot()
-        scanDirectory(root, root: root, into: &snapshot)
+        // The root mirrors the sync folder itself, not a library folder, so it
+        // records no directory of its own — hence the nil relative path.
+        scanDirectory(root, relative: nil, root: root, into: &snapshot)
         return snapshot
     }
 
-    nonisolated private static func scanDirectory(_ dir: URL, root: URL, into snapshot: inout SyncSnapshot) {
+    /// Records `dir`'s playable files and — unless it is the root — `dir`
+    /// itself, then walks its subdirectories.
+    ///
+    /// A directory records *itself* rather than being recorded by its parent,
+    /// because its sidecar is found in the listing it already pays for: having
+    /// the parent look for it would mean listing every directory in the tree
+    /// twice on every pass, over a folder that can be somebody's Dropbox.
+    nonisolated private static func scanDirectory(_ dir: URL, relative: String?, root: URL,
+                                                  into snapshot: inout SyncSnapshot) {
         let fm = FileManager.default
         guard let entries = try? fm.contentsOfDirectory(
             at: dir, includingPropertiesForKeys: [.isDirectoryKey],
             options: []) else { return }
+        var dataDir: URL?
+        var children: [URL] = []
         for entry in entries.sorted(by: { $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending }) {
             let name = entry.lastPathComponent
+            let isDir = (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+            if AppPaths.isMixtapeDataDirectory(name) {
+                // This directory's own bookkeeping: its marker, and nothing
+                // the library should ever see or walk into.
+                if isDir { dataDir = entry }
+                continue
+            }
             if name.hasPrefix(".") { continue }
-            let isDirectory = (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-            let relative = relativePath(of: entry, from: root)
-            if isDirectory {
-                let dataDir = entry.appendingPathComponent(AppPaths.mixtapeDataDirName, isDirectory: true)
-                let styleURL = dataDir.appendingPathComponent("style.json")
-                let coverURL = dataDir.appendingPathComponent("cover.jpg")
-                let manifestURL = entry.appendingPathComponent(TracklistManifest.fileName)
-                let albumCoverURL = entry.appendingPathComponent(TracklistManifest.coverFileName)
-                snapshot.directories.append(SyncSnapshot.Directory(
-                    relativePath: relative,
-                    hasMixtapeData: isDirectory(dataDir),
-                    mixtapeStyle: mixtapeStyle(at: styleURL),
-                    styleStamp: stamp(of: styleURL),
-                    coverStamp: stamp(of: coverURL),
-                    album: tracklist(at: manifestURL),
-                    albumStamp: stamp(of: manifestURL),
-                    albumCoverStamp: stamp(of: albumCoverURL)))
-                scanDirectory(entry, root: root, into: &snapshot)
+            if isDir {
+                children.append(entry)
             } else if PlayableMedia.isPlayable(extension: entry.pathExtension) {
                 guard let stamp = stamp(of: entry) else { continue }
-                snapshot.files.append(SyncSnapshot.File(relativePath: relative, stamp: stamp))
+                snapshot.files.append(SyncSnapshot.File(relativePath: relativePath(of: entry, from: root),
+                                                       stamp: stamp))
             }
         }
+        if let relative {
+            snapshot.directories.append(record(at: dir, relative: relative, dataDir: dataDir))
+        }
+        for child in children {
+            scanDirectory(child, relative: relativePath(of: child, from: root), root: root, into: &snapshot)
+        }
+    }
+
+    /// One directory's record: its two sidecars, read and stamped.
+    nonisolated private static func record(at dir: URL, relative: String,
+                                           dataDir: URL?) -> SyncSnapshot.Directory {
+        let styleURL = dataDir?.appendingPathComponent("style.json")
+        let coverURL = dataDir?.appendingPathComponent("cover.jpg")
+        let manifestURL = dir.appendingPathComponent(TracklistManifest.fileName)
+        let albumCoverURL = dir.appendingPathComponent(TracklistManifest.coverFileName)
+        return SyncSnapshot.Directory(
+            relativePath: relative,
+            mixtapeDataName: dataDir?.lastPathComponent,
+            mixtapeStyle: styleURL.flatMap { mixtapeStyle(at: $0) },
+            styleStamp: styleURL.flatMap { stamp(of: $0) },
+            coverStamp: coverURL.flatMap { stamp(of: $0) },
+            album: tracklist(at: manifestURL),
+            albumStamp: stamp(of: manifestURL),
+            albumCoverStamp: stamp(of: albumCoverURL))
     }
 
     /// The album record beside a directory's audio, when there is one. A
@@ -831,11 +883,22 @@ final class LocalSyncStore: ObservableObject {
         return manifest
     }
 
-    /// The `.mixtapedata` marker: the folder is what says "mixtape", whether
-    /// or not the style inside it can be read.
     nonisolated private static func isDirectory(_ url: URL) -> Bool {
         var isDir: ObjCBool = false
         return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) && isDir.boolValue
+    }
+
+    /// The mixtape sidecar inside a replica directory, whatever name it is
+    /// wearing — the canonical one first (one `stat`, and the answer almost
+    /// every time), and only failing that a listing to find a renamed one.
+    nonisolated private static func existingMixtapeData(in dir: URL) -> URL? {
+        let canonical = dir.appendingPathComponent(AppPaths.mixtapeDataDirName, isDirectory: true)
+        if isDirectory(canonical) { return canonical }
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: [.isDirectoryKey], options: []) else { return nil }
+        return entries.first {
+            AppPaths.isMixtapeDataDirectory($0.lastPathComponent) && isDirectory($0)
+        }
     }
 
     /// The banner style, or nil when there isn't one to read.

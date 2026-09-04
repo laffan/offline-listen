@@ -1539,9 +1539,19 @@ folders it's still connected to, so that root's tracks and folders leave the
 library and its local store is deleted — the sync folder's own files are
 never touched. Playable types:
 `m4a`/`mp3`/`aac`/`wav`/`aiff` audio and `mp4`/`mov`/`m4v` video; hidden
-files and folders are ignored. The trade-off of the copy model is deliberate:
-each synced file exists twice (app copy + provider copy) — that's what makes
-playback offline-proof.
+files and folders are ignored, and **nothing that isn't a playable file ever
+reaches the library** — not the `tracks.json` and `cover.jpg` a record leaves
+beside its audio, and not the app's own `.mixtapedata`, which is recognised by
+name rather than by its leading dot. That last part is a fix, not a nicety: a
+name with no base and nothing but an extension is one some file providers
+won't store, and they hand the item a display name instead — at which point
+`Unknown file.mixtapedata` is not a hidden entry at all, and it was walking
+into the library as a subfolder of the very mixtape it belonged to. A mixtape
+can't contain folders, so the folder stopped offering **Convert to Mixtape**
+and lost its marker in the same stroke. The sidecar is now found — and
+written, and removed — under whichever name it is wearing. The trade-off of
+the copy model is deliberate: each synced file exists twice (app copy +
+provider copy) — that's what makes playback offline-proof.
 
 ## Album folders
 
