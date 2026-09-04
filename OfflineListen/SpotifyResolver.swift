@@ -261,8 +261,14 @@ enum AlbumIdentifier {
     }
 }
 
-/// The **Convert to Album** and **Retrieve Album Art** actions, in one place
-/// because they are the same errand at two depths.
+/// **Convert to Album**: the flag, the file names, and — when Spotify is
+/// configured — the release the catalogue recognises behind them.
+///
+/// The sleeve alone used to be here too, as the same one-shot lookup at a
+/// shallower depth. It isn't any more: **Retrieve Album Art** puts the
+/// catalogue to the user instead (`AlbumArtFinder`), because guessing from a
+/// folder's name is the right caution when a folder is *becoming* a record and
+/// the wrong one when somebody is asking for its cover by hand.
 @MainActor
 enum AlbumConversion {
     /// Makes a folder an album: it becomes one immediately (the UI should not
@@ -281,15 +287,5 @@ enum AlbumConversion {
                                                      client: client, wantsTracklist: true) else { return }
         library.orderTracks(in: folder.id, byTitles: match.titles)
         ArtworkFetcher.attach(match.coverURL, toFolder: folder.id, library: library)
-    }
-
-    /// The sleeve alone, for a record that already is one — one request, since
-    /// the search hit carries the cover URL.
-    static func retrieveArt(for folder: Folder, library: LibraryStore, client: SpotifyClient) async {
-        let artist = library.folderArtist(of: folder.id)
-        guard let match = await AlbumIdentifier.find(album: folder.name, artist: artist,
-                                                     client: client, wantsTracklist: false),
-              let cover = match.coverURL else { return }
-        ArtworkFetcher.attach(cover, toFolder: folder.id, library: library)
     }
 }

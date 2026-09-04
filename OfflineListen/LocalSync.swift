@@ -18,18 +18,34 @@ struct SyncSnapshot {
 
     struct Directory {
         let relativePath: String
-        /// Non-nil when the directory contains `.mixtapedata` — the directory
-        /// is a mixtape and this is its banner style.
+        /// True when the directory holds a `.mixtapedata` directory — the
+        /// marker that has always said "mixtape". Deliberately separate from
+        /// the style below: whether the marker is *there* and whether its
+        /// style is *readable* are two different questions, and answering the
+        /// first with the second is how an evicted `style.json` used to reset
+        /// somebody's font, colours and crop to the defaults.
+        let hasMixtapeData: Bool
+        /// The banner style, when `.mixtapedata/style.json` could actually be
+        /// read. Nil when it is absent or unreadable.
         let mixtapeStyle: MixtapeStyle?
         /// Stamps of `.mixtapedata/style.json` / `cover.jpg`, when present.
         let styleStamp: SyncStamp?
         let coverStamp: SyncStamp?
-        /// Non-nil when the directory contains `tracks.json` — it is an album,
-        /// and this is its tracklist in order.
+        /// Non-nil when the directory contains `tracks.json` — the running
+        /// order of an album *or* a mixtape; the record says which.
         let album: TracklistManifest?
         /// Stamps of `tracks.json` / `cover.jpg` at the directory's top level.
         let albumStamp: SyncStamp?
         let albumCoverStamp: SyncStamp?
+
+        /// Whether this directory is a mixtape. **Two independent witnesses**,
+        /// because either can be missing on its own: the hidden
+        /// `.mixtapedata` may not have travelled through somebody's cloud
+        /// folder, and a `tracks.json` written before records named themselves
+        /// doesn't say. What must never happen is the pair being read as an
+        /// album merely because the hidden half is out of sight — every
+        /// mixtape protection on the import side hangs off this answer.
+        var isMixtape: Bool { hasMixtapeData || album?.isMixtape == true }
     }
 
     var files: [File] = []
@@ -675,13 +691,24 @@ final class LocalSyncStore: ObservableObject {
             library.applyTracklistManifest(album, toFolder: folderID)
         }
 
+        // A mixtape whose record was written before records named themselves
+        // still leans on `.mixtapedata` alone to say what it is. Restate it
+        // now, while the marker is in sight, so the folder keeps its identity
+        // the next time the hidden directory isn't — one rewrite per folder,
+        // since the condition stops holding once `kind` is in the file.
+        for dir in snapshot.directories where dir.hasMixtapeData && dir.album != nil && dir.album?.kind == nil {
+            guard let folderID = folderIDs[dir.relativePath],
+                  library.folder(withID: folderID)?.isMixtape == true else { continue }
+            library.refreshTracklistSidecar(folderID)
+        }
+
         // And their sleeves, on the same "changed remotely" terms as a
         // mixtape's.
         // A mixtape's top-level `cover.jpg` is a copy for the outside world;
-        // its `.mixtapedata` cover is the authoritative one and is imported
-        // below. Reading this one in as well would hand a mixtape an album's
-        // cover — and, through `setFolderArtwork`, an album's flag with it.
-        for dir in snapshot.directories where dir.mixtapeStyle == nil {
+        // its own cover is imported below. Reading this one in as well would
+        // hand a mixtape an album's cover — and, through `setFolderArtwork`,
+        // an album's flag with it.
+        for dir in snapshot.directories where !dir.isMixtape {
             guard dir.album != nil, let stamp = dir.albumCoverStamp,
                   let folderID = folderIDs[dir.relativePath] else { continue }
             let key = albumCoverKey(dir.relativePath)
@@ -703,17 +730,27 @@ final class LocalSyncStore: ObservableObject {
         }
 
         // Mixtape covers: copy in when new or changed remotely.
-        for dir in snapshot.directories {
-            let key = coverKey(dir.relativePath)
-            guard let stamp = dir.coverStamp else { continue }
+        //
+        // `.mixtapedata/cover.jpg` is the authoritative one — it travels with
+        // the crop that frames it. The `cover.jpg` beside the tracks is the
+        // fallback, and it is only reached by a mixtape whose hidden directory
+        // didn't arrive: a picture is better than the gradient placeholder,
+        // and reading it here (rather than through the album path above) is
+        // what keeps it from bringing an album's flag with it.
+        for dir in snapshot.directories where dir.isMixtape {
             guard let folderID = folderIDs[dir.relativePath] else { continue }
+            let ownCover = dir.coverStamp != nil
+            guard let stamp = ownCover ? dir.coverStamp : dir.albumCoverStamp else { continue }
+            let key = ownCover ? coverKey(dir.relativePath) : albumCoverKey(dir.relativePath)
             if rootManifest[key] == stamp {
                 newManifest[key] = stamp
                 continue
             }
-            let src = rootURL.appendingPathComponent(dir.relativePath, isDirectory: true)
-                .appendingPathComponent(AppPaths.mixtapeDataDirName, isDirectory: true)
-                .appendingPathComponent("cover.jpg")
+            let dirURL = rootURL.appendingPathComponent(dir.relativePath, isDirectory: true)
+            let src = ownCover
+                ? dirURL.appendingPathComponent(AppPaths.mixtapeDataDirName, isDirectory: true)
+                        .appendingPathComponent("cover.jpg")
+                : dirURL.appendingPathComponent(TracklistManifest.coverFileName)
             let dst = AppPaths.mixtapeCovers.appendingPathComponent("\(folderID.uuidString).jpg")
             let ok = await Task.detached { Self.coordinatedCopy(from: src, to: dst) }.value
             if ok {
@@ -768,7 +805,8 @@ final class LocalSyncStore: ObservableObject {
                 let albumCoverURL = entry.appendingPathComponent(TracklistManifest.coverFileName)
                 snapshot.directories.append(SyncSnapshot.Directory(
                     relativePath: relative,
-                    mixtapeStyle: mixtapeStyle(at: styleURL, dataDir: dataDir),
+                    hasMixtapeData: isDirectory(dataDir),
+                    mixtapeStyle: mixtapeStyle(at: styleURL),
                     styleStamp: stamp(of: styleURL),
                     coverStamp: stamp(of: coverURL),
                     album: tracklist(at: manifestURL),
@@ -793,18 +831,23 @@ final class LocalSyncStore: ObservableObject {
         return manifest
     }
 
-    /// A present `.mixtapedata` with an unreadable style still counts as a
-    /// mixtape (default style) — the marker is the folder.
-    nonisolated private static func mixtapeStyle(at styleURL: URL, dataDir: URL) -> MixtapeStyle? {
+    /// The `.mixtapedata` marker: the folder is what says "mixtape", whether
+    /// or not the style inside it can be read.
+    nonisolated private static func isDirectory(_ url: URL) -> Bool {
         var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: dataDir.path, isDirectory: &isDir), isDir.boolValue else {
-            return nil
-        }
-        if let data = try? Data(contentsOf: styleURL),
-           let style = try? JSONDecoder().decode(MixtapeStyle.self, from: data) {
-            return style
-        }
-        return MixtapeStyle()
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) && isDir.boolValue
+    }
+
+    /// The banner style, or nil when there isn't one to read.
+    ///
+    /// Nil means *unknown*, never "the default". A missing or half-written
+    /// `style.json` — a cloud provider that evicted it, or was caught
+    /// mid-copy — used to come back as a fresh `MixtapeStyle()`, which the
+    /// importer then adopted over the crop, font and colours the user had
+    /// chosen. An answer of nil leaves them alone.
+    nonisolated private static func mixtapeStyle(at styleURL: URL) -> MixtapeStyle? {
+        guard let data = try? Data(contentsOf: styleURL) else { return nil }
+        return try? JSONDecoder().decode(MixtapeStyle.self, from: data)
     }
 
     nonisolated private static func stamp(of url: URL) -> SyncStamp? {

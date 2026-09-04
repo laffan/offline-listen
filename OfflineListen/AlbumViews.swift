@@ -371,3 +371,335 @@ struct AlbumCoverEditor: View {
         dismiss()
     }
 }
+
+// MARK: - Retrieving a sleeve from the catalogue
+
+/// The artist searches this session has already paid for.
+///
+/// `/search?type=artist` isn't cached on disk the way a catalogue read is, and
+/// shouldn't be: it's a live look at what Spotify has *now*, which is the whole
+/// point of asking. But somebody sizing up a sleeve backs out of one artist and
+/// tries another, closes the sheet and opens it again — and every one of those
+/// is a request against an endpoint the app rations carefully (see
+/// `SpotifyRateLimiter`, and the daily count `SpotifyUsageMeter` keeps). Asking
+/// the same question twice in one sitting is the cheapest request to not make.
+@MainActor
+enum ArtistSearchMemo {
+    private static var answers: [String: [SpotifyArtistHit]] = [:]
+    /// Small: this is a convenience for one sitting, not a second cache.
+    private static let cap = 40
+
+    static func hits(for query: String) -> [SpotifyArtistHit]? { answers[key(query)] }
+
+    static func store(_ hits: [SpotifyArtistHit], for query: String) {
+        if answers.count >= cap { answers.removeAll() }
+        answers[key(query)] = hits
+    }
+
+    private static func key(_ query: String) -> String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+}
+
+/// **Retrieve Album Art**: the sleeve, found in Spotify's catalogue by hand.
+///
+/// The menu item used to re-run the one-shot lookup **Convert to Album** makes:
+/// folder name plus derived artist, first hit that matches the name closely
+/// enough, and nothing at all when none did. That is the right caution for a
+/// *conversion*, where a wrong sleeve is worse than no sleeve — and the wrong
+/// posture for somebody who has come here to ask for the cover, because they
+/// know which record this is and the folder's name may not. So this asks them:
+/// search for the artist, pick them out of the hits, then pick the sleeve out
+/// of their catalogue.
+///
+/// Both reads look in the cache first. The catalogue is the expensive one — two
+/// paged walks against the endpoint Spotify caps hardest — and
+/// `SpotifyMetadataCache` keeps it for good, so a second visit to the same
+/// artist spends nothing; the artist search is memoized for the session
+/// (`ArtistSearchMemo`). And nothing here searches as you type: the sheet spends
+/// one request on opening — the same one the old menu item spent, on the same
+/// name — and every one after that is asked for by hand.
+struct AlbumArtFinder: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let folder: Folder
+    let client: SpotifyClient
+    /// What the field opens on: the artist the folder's tracks agree on, or
+    /// its name — the same two things the old one-shot lookup went in with.
+    let suggestion: String
+
+    @State private var query = ""
+    @State private var hits: [SpotifyArtistHit] = []
+    @State private var searching = false
+    @State private var failure: String?
+    /// The query the results on screen belong to. Also the "have we searched
+    /// yet" flag the opening search checks, so a redraw can't re-run it.
+    @State private var answered: String?
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    searchField
+                } footer: {
+                    Text("Search Spotify for the artist, then pick this record's sleeve from their covers.")
+                }
+                resultsSection
+            }
+            .navigationTitle("Album Art")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+        .task {
+            guard answered == nil else { return }
+            query = suggestion
+            await search(suggestion.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+    }
+
+    private var trimmed: String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField("Artist", text: $query)
+                .textInputAutocapitalization(.words)
+                .submitLabel(.search)
+                .onSubmit { let wanted = trimmed; Task { await search(wanted) } }
+            if searching {
+                ProgressView()
+            } else {
+                Button("Search") { let wanted = trimmed; Task { await search(wanted) } }
+                    .buttonStyle(.borderless)
+                    .disabled(trimmed.isEmpty || trimmed == answered)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var resultsSection: some View {
+        if let failure {
+            Section {
+                Label(failure, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.secondary)
+                    .font(.callout)
+            }
+        } else if !hits.isEmpty {
+            Section("Artists") {
+                ForEach(hits, id: \.id) { artist in
+                    NavigationLink {
+                        AlbumArtCoverGrid(folder: folder, client: client, artist: artist) {
+                            dismiss()
+                        }
+                    } label: {
+                        ArtistHitRow(artist: artist)
+                    }
+                }
+            }
+        } else if let answered, !searching {
+            Section {
+                Text("No artists matched \u{201C}\(answered)\u{201D}.")
+                    .foregroundStyle(.secondary)
+                    .font(.callout)
+            }
+        }
+    }
+
+    @MainActor
+    private func search(_ wanted: String) async {
+        guard !wanted.isEmpty, !searching else { return }
+        failure = nil
+        // Asked already this session: answer from memory rather than spending
+        // the request again.
+        if let remembered = ArtistSearchMemo.hits(for: wanted) {
+            hits = remembered
+            answered = wanted
+            return
+        }
+        searching = true
+        defer { searching = false }
+        do {
+            let found = try await client.searchArtists(named: wanted)
+            ArtistSearchMemo.store(found, for: wanted)
+            hits = found
+            answered = wanted
+        } catch {
+            if isCancellation(error) { return }
+            hits = []
+            answered = wanted
+            failure = error.localizedDescription
+        }
+    }
+}
+
+/// One artist in the finder's list: portrait, name, and the genres Spotify
+/// files them under — enough to tell two acts of the same name apart.
+private struct ArtistHitRow: View {
+    let artist: SpotifyArtistHit
+
+    var body: some View {
+        HStack(spacing: 12) {
+            AsyncImage(url: artist.imageURL.flatMap(URL.init(string:))) { phase in
+                if let image = phase.image {
+                    image.resizable().scaledToFill()
+                } else {
+                    Color.secondary.opacity(0.12)
+                }
+            }
+            .frame(width: 40, height: 40)
+            .clipShape(Circle())
+            VStack(alignment: .leading, spacing: 2) {
+                Text(artist.name)
+                    .lineLimit(1)
+                if !artist.genres.isEmpty {
+                    Text(artist.genres.prefix(2).joined(separator: " · "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+    }
+}
+
+/// The chosen artist's covers, as a grid. Tapping one is the whole point:
+/// that image becomes the folder's sleeve, through the same best-effort
+/// fetcher every other piece of artwork in the app arrives by.
+private struct AlbumArtCoverGrid: View {
+    @EnvironmentObject private var library: LibraryStore
+
+    let folder: Folder
+    let client: SpotifyClient
+    let artist: SpotifyArtistHit
+    /// Closes the whole sheet — a pushed screen's own `dismiss` would only pop
+    /// back to the artist list, and the errand is finished.
+    let onPicked: () -> Void
+
+    @State private var releases: [SpotifyAlbumSummary] = []
+    @State private var loading = true
+    @State private var truncated = false
+    @State private var failure: String?
+
+    private let columns = [GridItem(.adaptive(minimum: 104, maximum: 180), spacing: 12, alignment: .top)]
+
+    var body: some View {
+        ScrollView {
+            if loading {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 40)
+            } else if let failure {
+                ContentUnavailableViewCompat(
+                    title: "Couldn't read the catalogue",
+                    systemImage: "exclamationmark.triangle",
+                    description: failure)
+                    .padding(.top, 40)
+            } else if releases.isEmpty {
+                ContentUnavailableViewCompat(
+                    title: "No covers",
+                    systemImage: "photo",
+                    description: "Spotify lists no releases with artwork for \(artist.name).")
+                    .padding(.top, 40)
+            } else {
+                LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
+                    ForEach(releases) { release in
+                        Button {
+                            pick(release)
+                        } label: {
+                            cell(release)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                if truncated {
+                    Text("A long catalogue — read as far as the request budget goes.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.bottom, 12)
+                }
+            }
+        }
+        .navigationTitle(artist.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+    }
+
+    private func cell(_ release: SpotifyAlbumSummary) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Color.clear
+                .aspectRatio(1, contentMode: .fit)
+                .overlay {
+                    AsyncImage(url: release.imageURL.flatMap(URL.init(string:))) { phase in
+                        if let image = phase.image {
+                            image.resizable().scaledToFill()
+                        } else {
+                            Color.secondary.opacity(0.12)
+                        }
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .shadow(radius: 3, y: 2)
+            Text(release.name)
+                .font(.caption)
+                .lineLimit(2)
+            if !release.year.isEmpty {
+                Text(release.year)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .contentShape(Rectangle())
+    }
+
+    /// Cache first, always. `artistAlbums(id:)` checks the same store itself,
+    /// but reading it here keeps the "no request unless there has to be one"
+    /// promise visible at the point somebody would look for it.
+    @MainActor
+    private func load() async {
+        if let cached = await SpotifyMetadataCache.shared.albums(forArtist: artist.id) {
+            show(cached)
+            loading = false
+            return
+        }
+        do {
+            show(try await client.artistAlbums(id: artist.id))
+        } catch {
+            if isCancellation(error) { return }
+            failure = error.localizedDescription
+        }
+        loading = false
+    }
+
+    /// Only releases that actually carry a cover — this is a grid of sleeves,
+    /// and an entry with nothing to show is a hole in it. Records first, then
+    /// newest to oldest, which is the order somebody looking for *the* album
+    /// scans in.
+    private func show(_ catalogue: SpotifyCatalogue) {
+        releases = catalogue.releases
+            .filter { $0.imageURL != nil }
+            .sorted { left, right in
+                let leftIsAlbum = left.group == "album"
+                let rightIsAlbum = right.group == "album"
+                if leftIsAlbum != rightIsAlbum { return leftIsAlbum }
+                if left.year != right.year { return left.year > right.year }
+                return left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
+            }
+        truncated = catalogue.truncated
+    }
+
+    private func pick(_ release: SpotifyAlbumSummary) {
+        ArtworkFetcher.attach(release.imageURL, toFolder: folder.id, library: library)
+        appLog("Album art for \"\(folder.name)\" taken from \(artist.name) — \(release.name).",
+               level: .success, category: "Library")
+        onPicked()
+    }
+}

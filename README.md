@@ -243,7 +243,9 @@ vertical space goes to the content instead.
    set a flag: the files' names give up the artist and title they carry
    ("Artist - Title.mp3"), and the catalogue supplies the **running order**
    and the **sleeve**. Tapping the sleeve on the album's own screen offers
-   **Retrieve Album Art**, **Custom Album Art** and **Reset**, and a
+   **Retrieve Album Art** (search Spotify for the artist, then pick the
+   record's cover out of a grid of theirs), **Custom Album Art** and
+   **Reset**, and a
    **Discography** button at the foot of its track list opens the artist's
    catalogue. **Convert to Folder** is the way back. See
    [Album folders](#album-folders).
@@ -1564,8 +1566,22 @@ the list, both of which were only ever waiting on the tracks to name a single
 artist. A folder Spotify doesn't recognise is still an album; it just doesn't
 gain the extras.
 
-**Its cover is square, and its songs wear it.** Tapping the sleeve on an
-album's own screen offers **Custom Album Art**: pick an image, frame it in a
+**Its cover can come from the catalogue.** Tapping the sleeve on an album's
+own screen offers **Retrieve Album Art**, which opens Spotify's catalogue
+rather than guessing at it: search for the **artist**, pick them out of the
+hits, and their releases appear as a **grid of covers** to choose the record's
+sleeve from. It used to re-run the one-shot lookup Convert to Album makes —
+folder name in, first close-enough hit out, nothing at all when none matched —
+which is the right caution for a folder that is *becoming* a record and the
+wrong one for somebody who has come to ask for the cover by hand: they know
+which record it is and the folder's name may not. Both reads are cache-first:
+an artist's catalogue is kept for good in the Spotify cache, so a second visit
+spends nothing, and a search already made this session is answered from memory.
+The sheet spends **one** request on opening (on the album's own artist, the
+same name the old lookup used) and none after that unless you ask for one.
+
+**Its cover is square, and its songs wear it.** The same menu offers **Custom
+Album Art**: pick an image, frame it in a
 square (drag to pan, pinch or slide to zoom), and Save crops it and writes it
 in two places — on the folder, and onto **every song in it**, so the record
 shows in the Player, on the lock screen and in the mini player, exactly as a
@@ -1631,14 +1647,22 @@ sleeve are things somebody might reasonably want to see.
 
 **Mixtapes write the same two files**, for the same reason: a mixtape is an
 order somebody chose, and alphabetical-by-filename destroys that as thoroughly
-as it destroys a running order. What tells the two apart on the way back in is
-the marker each already had — a directory holding `.mixtapedata` is a mixtape
-whatever else it holds, one holding only `tracks.json` is an album — so
-`tracks.json` restores the order, the titles and the artists either way, and
-only an album is *flagged* as one. A mixtape's top-level `cover.jpg` is a copy
-for the outside world; the authoritative one stays inside `.mixtapedata`,
-where it travels with the crop, font and colours that make it a mixtape rather
-than a picture, and that is the one an import reads.
+as it destroys a running order. **The record says which of the two wrote it**
+(a `kind` in `tracks.json`), so `tracks.json` restores the order, the titles
+and the artists either way, and only an album is *flagged* as one. It used to
+be inferred instead, from whether a `.mixtapedata` sat beside the file — which
+put the one fact that decides what a folder *is* inside a **hidden** directory
+in somebody else's cloud folder, free to be withheld, delivered late, or never
+created at all. Whenever it wasn't in sight the same directory read as an
+unambiguous album, and the importer took the mixtape flag straight back off a
+folder that had just been converted. Both markers are still read, and either
+one is enough; neither one's absence is taken for a denial. A mixtape's
+top-level `cover.jpg` is a copy for the outside world; the authoritative one
+stays inside `.mixtapedata`, where it travels with the crop, font and colours
+that make it a mixtape rather than a picture, and that is the one an import
+reads — falling back to the outward-facing copy for a mixtape whose hidden
+directory didn't travel, so it arrives wearing its picture rather than a
+placeholder.
 
 It is written through the export journal whenever the album's order, cover or
 album-ness changes, and read back on import: a directory carrying
@@ -1709,7 +1733,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `SpotifyRef.swift` | Parses `spotify:` URIs / `open.spotify.com` links into a (kind, id) pair; resolves `spotify.link` short links by redirect. |
 | `SpotifyClient.swift` | Spotify Web API client: Client Credentials token (cached, 401-refreshing) + the track/album/playlist/artist metadata reads, paginated and **batched** (`/albums?ids=`, cross-album `/tracks?ids=`), plus `searchArtists(genre:)` — the one request the Every Noise dataset harvest makes — and `searchArtists(named:)` behind that browser's Spotify Find mode. Also `SpotifyRateLimiter` (the persisted, per-client-id `Retry-After` window, plus the rolling 30-second pacer every request claims a slot in), `SpotifyUsageMeter` (the day's request count, per endpoint), `SpotifyMetadataCache` (the catalogue kept for good in `Documents/spotify-catalogue.json`), and the popularity-ranked `derivedTopTracks`. |
 | `SpotifySettings.swift` | `SpotifySettingsStore` — the Keychain-backed client id/secret (mirrors `AISettingsStore`). |
-| `SpotifyResolver.swift` | Spotify metadata → `ResolvedPlaylist`: ISRC-first YouTube matching with a duration gate, bounded and concurrent. |
+| `SpotifyResolver.swift` | Spotify metadata → `ResolvedPlaylist`: ISRC-first YouTube matching with a duration gate, bounded and concurrent; plus `AlbumIdentifier` (the "Artist - Title" split and the album-search identification) and `AlbumConversion`, which is what **Convert to Album** runs. |
 | `AIOrganizer.swift` | Builds the prompt, calls the API, writes music/podcast + clean metadata back to the library. |
 | `BrowseModels.swift` | `BrowseSourceKind`, `BrowseSource`, `BrowseItem` + status — the Browse tab's data model. `BrowseItem.naming` is the shared "Artist — Song" split the rows, the preview modal's lock-screen metadata and the download queue all name items by. |
 | `BrowseStore.swift` | Persists sources/items to `Documents/browse.json`; orchestrates refreshes and the new/downloaded/saved/discarded lifecycle. |
@@ -1731,7 +1755,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `*View.swift` | The five SwiftUI screens, in tab order (Browse, Library, Player, Download, Settings — which embeds the Log); none of them sets a navigation title. `DownloadView.swift` also holds the queue's album grouping — the collapsible record with its cover, count and whole-album bar. `LibraryView.swift` also holds `LibraryTab`, the Recent/Folders/Inbox/Watch/All strip, and the Folders tab's two shapes (the list, and the cover view's album grid). `PlayerView.swift` also holds the tap-to-seek scrubber, the caption overlay (and its own 5 Hz playhead clock), the `MiniPlayerBar` the other tabs inset above the tab bar, and the album-art loaders (`TrackArtwork`, `FolderArtwork`, `FolderCover`) — each a bounded `ImageCache` with a full decode for the big slots and an ImageIO thumbnail for the row-sized ones. |
 | `FolderView.swift` | Folder detail (tap-to-play, reorder, subfolders, mixtape header/Edit Cover, the album sleeve that opens its art options and the Discography row beneath its tracks), the discography push a library album makes, plus the Library's Inbox and Recent tabs — the latter including the pinned folder and the row-by-row frame that draws its border. |
 | `MixtapeViews.swift` | Mixtape banner rendering (non-destructive crop), the shared folder-row label, and the Edit Cover sheet (PhotosPicker + drag/pinch + font picker). |
-| `AlbumViews.swift` | The album side of a folder: the stand-in colour palette, the square sleeve (cover or colour) the folder screen and the cover grid draw, the grid's own cell, and the Album Art sheet — PhotosPicker, square framing, and the crop that turns the framing into the JPEG copied onto every song. |
+| `AlbumViews.swift` | The album side of a folder: the stand-in colour palette, the square sleeve (cover or colour) the folder screen and the cover grid draw, the grid's own cell, the Custom Album Art sheet — PhotosPicker, square framing, and the crop that turns the framing into the JPEG copied onto every song — and **Retrieve Album Art**'s finder: the artist search (memoized for the session), the chosen artist's covers as a grid, and the pick that hands one to `ArtworkFetcher`. |
 | `WatchFolderView.swift` | The phone's Library **Watch** tab (manage what's been sent to the watch). |
 | `WatchManifest.swift` | Wire format shared by the iPhone and watch targets (the sync manifest, the remote-control `RemoteNowPlaying`/`RemoteCommand` types, + WC keys). |
 | `WatchSync.swift` | Phone-side WatchConnectivity bridge: pushes the manifest + audio files, handles the watch's "Clear all". |

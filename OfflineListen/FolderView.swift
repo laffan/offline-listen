@@ -24,9 +24,11 @@ struct FolderDetailView: View {
     /// The subfolder a swipe-Delete is asking about (see `DeleteFolderConfirm`).
     @State private var deletingFolder: Folder?
     @State private var editingCover = false
-    /// The album-art sheet, and the change/reset dialog a tap on the sleeve
-    /// opens first.
+    /// The album-art sheets, and the change/reset dialog a tap on the sleeve
+    /// opens first: one for a cover of the user's own, one for finding the
+    /// record's sleeve in Spotify's catalogue.
     @State private var editingAlbumArt = false
+    @State private var findingAlbumArt = false
     @State private var albumArtOptions = false
     /// The artist a track's **View Discography** asked for.
     @State private var discographyRequest: DiscographyRequest?
@@ -93,16 +95,20 @@ struct FolderDetailView: View {
                 AlbumCoverEditor(folder: folder)
             }
         }
+        .sheet(isPresented: $findingAlbumArt) {
+            if let folder, let client = spotifySettings.client {
+                AlbumArtFinder(folder: folder, client: client,
+                               suggestion: library.folderArtist(of: folderID) ?? folder.name)
+            }
+        }
         // No explanatory message: three verbs, each of which says what it
         // does, and a paragraph under them only slows down the reading.
         .confirmationDialog("Album Art", isPresented: $albumArtOptions, titleVisibility: .visible) {
-            // The sleeve from the catalogue — one Spotify request, since the
-            // album search hit carries the cover URL itself.
-            if let client = spotifySettings.client, let folder {
-                Button("Retrieve Album Art") {
-                    let store = library
-                    Task { await AlbumConversion.retrieveArt(for: folder, library: store, client: client) }
-                }
+            // The sleeve from the catalogue, chosen rather than guessed: the
+            // folder's name is what a one-shot search had to go on, and the
+            // person asking for the cover knows the record better than it does.
+            if spotifySettings.isConfigured {
+                Button("Retrieve Album Art") { findingAlbumArt = true }
             }
             Button("Custom Album Art") { editingAlbumArt = true }
             // Only offered once there's something of the user's to undo.

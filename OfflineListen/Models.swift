@@ -401,9 +401,9 @@ enum PlayableMedia {
 /// Written by **albums and mixtapes alike**, because order is exactly what
 /// both of them are: an album is a record's running order and a mixtape is a
 /// sequence somebody chose, and alphabetical-by-filename destroys each as
-/// thoroughly as the other. What tells them apart on the way back in is the
-/// marker each already had — a directory holding `.mixtapedata` is a mixtape,
-/// one holding only `tracks.json` is an album.
+/// thoroughly as the other. Which one wrote it is written down (`kind`) rather
+/// than inferred from the hidden `.mixtapedata` sitting beside it — see the
+/// note on `Kind`.
 ///
 /// It is written plainly rather than hidden away in a dot-directory (the way
 /// a mixtape's *style* is): a tracklist and a sleeve are things somebody
@@ -412,6 +412,21 @@ enum PlayableMedia {
 struct TracklistManifest: Codable, Equatable {
     static let fileName = "tracks.json"
     static let coverFileName = "cover.jpg"
+
+    /// Which of the two the record came from.
+    ///
+    /// It used to go unwritten, and be inferred on the way back in from
+    /// whether a `.mixtapedata` directory sat beside the file. That put the
+    /// one fact that decides what a folder *is* inside a **hidden** directory
+    /// in somebody else's cloud folder — which a provider is free to withhold,
+    /// deliver late, or refuse to create at all. Whenever it wasn't there the
+    /// same directory read as an unambiguous album (a `tracks.json`, and
+    /// nothing to contradict it), and the importer duly took the mixtape flag
+    /// off a folder the user had just converted. The visible file says so
+    /// itself now; `.mixtapedata` remains a marker, but no longer the only one.
+    enum Kind: String, Codable {
+        case album, mixtape
+    }
 
     /// One track, by the file name it has *inside the album's directory* —
     /// which is what survives being copied through a sync folder, where ids
@@ -426,6 +441,10 @@ struct TracklistManifest: Codable, Equatable {
     /// Bumped only if the shape changes in a way a reader must know about;
     /// an unknown version is read as far as it makes sense and no further.
     var version = 1
+    /// What wrote this record. Optional so a `tracks.json` written before the
+    /// field existed still decodes — such a file simply doesn't say, and
+    /// `.mixtapedata` decides for it exactly as it used to.
+    var kind: Kind?
     /// The folder's own name — the record's title, or the mixtape's. The key
     /// keeps its original spelling so a file written before mixtapes shared
     /// this format still reads.
@@ -436,6 +455,11 @@ struct TracklistManifest: Codable, Equatable {
     /// track numbers', so a record whose numbering is patchy still comes back
     /// in the right sequence.
     var tracks: [Entry]
+
+    /// True when the record names itself a mixtape. A file that doesn't say
+    /// is not a mixtape *on its own evidence* — the caller still weighs
+    /// `.mixtapedata` alongside this.
+    var isMixtape: Bool { kind == .mixtape }
 }
 
 /// How a mixtape folder draws its title banner: which part of the cover image

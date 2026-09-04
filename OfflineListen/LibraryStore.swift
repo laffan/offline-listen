@@ -1139,11 +1139,13 @@ final class LibraryStore: ObservableObject {
                 // mixtape gate below returns: the two records are separate
                 // files and either can change without the other.
                 // Judged on the directory's own markers rather than on what
-                // the folder currently is: a directory carrying
-                // `.mixtapedata` is a mixtape whatever else it holds, and one
-                // arriving as both in the same pass mustn't come out wearing
-                // both flags.
-                if adoptAlbum.contains(dir.relativePath), dir.mixtapeStyle == nil {
+                // the folder currently is — and "mixtape" is the answer
+                // whenever *either* marker says so (`Directory.isMixtape`), so
+                // a directory arriving as both in the same pass can't come out
+                // wearing both flags, and one whose hidden `.mixtapedata`
+                // isn't in sight can't be read as the album its `tracks.json`
+                // would otherwise make it.
+                if adoptAlbum.contains(dir.relativePath), !dir.isMixtape {
                     let shouldBeAlbum = dir.album != nil
                     if folders[index].isAlbum != shouldBeAlbum {
                         folders[index].isAlbum = shouldBeAlbum
@@ -1155,14 +1157,24 @@ final class LibraryStore: ObservableObject {
                     }
                 }
                 guard adopt.contains(dir.relativePath) else { continue }
-                if let style = dir.mixtapeStyle {
-                    if !folders[index].isMixtape || folders[index].mixtape != style {
+                if dir.isMixtape {
+                    if !folders[index].isMixtape {
                         folders[index].isMixtape = true
+                        // One thing or the other, never both.
+                        folders[index].isAlbum = false
+                        foldersChanged = true
+                    }
+                    // Only a style that actually read back: nil means the
+                    // remote style is unknown (absent, evicted, half-written),
+                    // and the one the user framed stands until something
+                    // legible replaces it.
+                    if let style = dir.mixtapeStyle, folders[index].mixtape != style {
                         folders[index].mixtape = style
                         foldersChanged = true
                     }
                 } else if folders[index].isMixtape {
-                    // .mixtapedata was removed remotely — plain folder again.
+                    // Both markers gone — Convert to Folder, on some other
+                    // device. A plain folder again.
                     if let cover = folders[index].coverURL {
                         try? FileManager.default.removeItem(at: cover)
                     }
@@ -1174,15 +1186,16 @@ final class LibraryStore: ObservableObject {
                 let parentPath = (dir.relativePath as NSString).deletingLastPathComponent
                 // A directory carrying `tracks.json` arrives as the album it
                 // is, rather than as a plain folder that turns into one a
-                // moment later when its record is read.
-                let isAlbum = dir.mixtapeStyle == nil && dir.album != nil
+                // moment later when its record is read — unless the record
+                // says it is a mixtape, in which case it arrives as that.
+                let isAlbum = !dir.isMixtape && dir.album != nil
                 let newFolder = Folder(
                     name: (dir.relativePath as NSString).lastPathComponent,
                     parentID: parentPath.isEmpty ? nil : byPath[parentPath],
                     isSynced: true,
                     syncRootID: rootID,
                     syncedPath: dir.relativePath,
-                    isMixtape: dir.mixtapeStyle != nil,
+                    isMixtape: dir.isMixtape,
                     mixtape: dir.mixtapeStyle ?? MixtapeStyle(),
                     isAlbum: isAlbum,
                     albumColorHex: isAlbum ? AlbumColor.randomHex(excluding: nil) : nil)
@@ -1350,6 +1363,11 @@ final class LibraryStore: ObservableObject {
               !folders[index].isMixtape,
               !hasSubfolders(folder.id) else { return }
         folders[index].isMixtape = true
+        // A folder is a mixtape or a record, never both: an album that becomes
+        // a mixtape stops being an album, so Convert to Folder later lands on
+        // a plain folder rather than springing back into the album grid.
+        folders[index].isAlbum = false
+        folders[index].albumColorHex = nil
         if folders[index].isSynced, let path = folders[index].syncedPath {
             exportOp(.writeMixtapeData(dir: path, folderID: folders[index].id),
                      rootID: folders[index].syncRootID)
@@ -1499,9 +1517,11 @@ final class LibraryStore: ObservableObject {
                                 artist: track.namedArtist,
                                 trackNumber: position + 1)
         }
-        return TracklistManifest(album: folder.name,
-                             albumArtist: folderArtist(of: id),
-                             tracks: entries)
+        let kind: TracklistManifest.Kind = folder.isMixtape ? .mixtape : .album
+        return TracklistManifest(kind: kind,
+                                 album: folder.name,
+                                 albumArtist: folderArtist(of: id),
+                                 tracks: entries)
     }
 
     /// The sleeve as bytes, for writing beside the tracks: an album's cover,
@@ -1534,9 +1554,10 @@ final class LibraryStore: ObservableObject {
         guard let folderIndex = folders.firstIndex(where: { $0.id == id }) else { return }
         // A mixtape gets its order and its names back exactly as an album
         // does — it is the same loss either way. Only the album *flag* is
-        // withheld: what a directory *is* comes from its markers, and
-        // `.mixtapedata` outranks `tracks.json` on that question.
-        if !folders[folderIndex].isMixtape, !folders[folderIndex].isAlbum {
+        // withheld, and on the record's own word: a manifest that names itself
+        // a mixtape never makes one, whatever the folder currently thinks it
+        // is (a fresh import has not been told yet).
+        if !manifest.isMixtape, !folders[folderIndex].isMixtape, !folders[folderIndex].isAlbum {
             folders[folderIndex].isAlbum = true
             if folders[folderIndex].coverArtworkFileName == nil, folders[folderIndex].albumColorHex == nil {
                 folders[folderIndex].albumColorHex = AlbumColor.randomHex(excluding: nil)
