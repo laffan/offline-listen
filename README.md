@@ -37,7 +37,7 @@ vertical space goes to the content instead.
    **Audio/Video toggle** atop the Sources screen — the same one the Download
    tab has — sets which mode both buttons (and the bulk download) act in.
 2. **Library** — downloaded tracks; tap to play. Five **tabs** across the top
-   divide it — **Recent**, **Folders**, **Inbox**, **Watch**, **All** — so each
+   divide it — **Recent**, **Folders**, **Added**, **Watch**, **All** — so each
    section is one tap from the others rather than a screen you push into and
    come back out of. It opens on **Folders**: the library's own shape — the
    records and mixtapes you filed — is what you come to it for, and what you
@@ -71,18 +71,18 @@ vertical space goes to the content instead.
    the same list and keeps going to the end — it doesn't loop. (What makes
    that dependable, including with the phone locked, is described in
    [Why autoplay keeps going](#why-autoplay-keeps-going).) In the
-   **auto-aggregated** lists (the **All** tab and the Inbox), where media types
+   **auto-aggregated** lists (the **All** and **Added** tabs), where media types
    are mixed together, autoplay **stays within the media type** you started: pick
    a song and only songs play on (podcasts and videos are skipped until the next
    song or the list ends), and likewise for podcasts and videos. A **folder is a
    curated playlist**, though, so it **plays straight through in list order**
    regardless of type — tap any track and the whole folder plays in sequence.
 
-   **Recent.** A tab of its own — the mirror image of the Inbox — listing what
-   you've **played**, most recent first, with each row showing when and, where
-   the track has one, its **album cover** in place of the media glyph (the
-   playing/unplayed colour moves to a dot on the sleeve's corner, so nothing is
-   lost by showing a picture). It's the one list that earns the artwork: a list
+   **Recent.** A tab of its own — what **Added** is for arrivals, this is for
+   listening — showing what you've **played**, most recent first, each row
+   showing when and, where the track has one, its **album cover** in place of
+   the media glyph (the playing colour moves to a dot on the sleeve's corner,
+   so nothing is lost by showing a picture). It's the one list that earns the artwork: a list
    you scan for a title reads fastest as text, but a list of things you've
    *heard* is recognised fastest by its sleeves. A track
    joins it the moment playback *starts*; it doesn't have to finish. It's a
@@ -136,16 +136,32 @@ vertical space goes to the content instead.
    has. It's derived from the tracks rather than stored on the folder, so an
    album you assembled by hand earns it too, an Edit Metadata fix moves it, and
    a folder of unrelated songs (which agrees on nobody) shows nothing extra. The three virtual folders that used to sit pinned above them
-   — **Inbox** (every track you haven't listened to yet; starting playback — or
-   a **Mark Played** swipe — clears it from the Inbox), **Recent** and
-   **Watch** — are tabs now; the **Archive** is still pinned to
-   the bottom. The Inbox has a **Select** button of its own beside Mark All
-   Played: tick several tracks and the corner menu will **Move to Folder**,
-   **Mark Played**, **Share** or **Delete** the lot. An inbox is filled by
-   batch downloads, so it's cleared in batches too — and while selecting, a tap
-   ticks a row rather than starting it. Create folders with the Folders tab's folder button; move tracks in
-   via touch-and-hold → **Move to Folder** (or the bulk Select menu). The Inbox
-   is itself a move target — moving a track there returns it to unlistened.
+   — **Added**, **Recent** and **Watch** — are tabs now; the **Archive** is
+   still pinned to the bottom.
+
+   **Added** lists the **last 200 tracks to arrive**, newest first, whether
+   they came from a download, a Browse save or a sync folder. It was an
+   *Inbox* — everything you hadn't listened to yet, emptying itself as you
+   played it — and an inbox is a thing you're meant to clear, which turned out
+   not to be what the list was wanted for. "What did I add lately?" is the
+   question, and playing a track is no answer to it: nothing leaves for having
+   been played. (The green glyph that used to flag an unheard track went with
+   the idea; **Mark Played** and **Mark All Played** with it.) It keeps its
+   **Select** button: tick several tracks and the corner menu will **Move to
+   Folder**, **Share** or **Delete** the lot — a batch download arrives in a
+   batch and is usually filed in one — and while selecting, a tap ticks a row
+   rather than starting it. Create folders with the Folders tab's folder
+   button; move tracks in via touch-and-hold → **Move to Folder** (or the bulk
+   Select menu), and **Remove from Folder** in the same menu is the way back
+   out to the main list.
+
+   **Copy to Folder**, beneath it, puts a *second* copy of a song somewhere —
+   its own file, its own row — which is how a track joins a mixtape without
+   leaving the record it came from. A copy rather than a shared reference
+   because everything else about a track is per-track: rename one, give it
+   different art, send it to the watch, sync it to a local folder, and none of
+   that should reach the other. It lands at the end of the folder it joins,
+   where adding something to a playlist puts it.
    Touch-and-hold also offers **Edit Metadata**, a modal for hand-editing the
    track **title and artist** (handy when AI Organize doesn't get it quite
    right), with **Reset to Original Title** to restore the download title —
@@ -157,7 +173,27 @@ vertical space goes to the content instead.
    Audio**: the file is re-downloaded from its source in the other format,
    into the same folder, and the original is replaced only once the fresh
    download has fully landed — a failed conversion costs nothing (the
-   attempt shows in the Download tab like any job). Tracks with no source
+   attempt shows in the Download tab like any job).
+
+   **Find Alternative** is the way out of a copy that turned out to be the
+   wrong one — a live version, a lyric video with a minute of intro, eight
+   minutes of hiss. It searches YouTube for the track's own artist and title
+   (the field is editable, because the library's name for a song is usually
+   the best query there is and sometimes isn't) and lists the hits with their
+   channel and length. **Preview** plays one through the same listen-first
+   modal Browse uses — it downloads the file once, so auditioning costs a
+   download and no more — and its Save button reads **Use This**; **Use This**
+   on the row itself queues the pick without listening.
+
+   Either way the swap is the same, and it is a swap rather than an addition:
+   the replacement **inherits the original's name, artist and classification**
+   (its own download title is kept as the "original", so Reset still works),
+   joins the folder the original was in, and takes **its place in it** — the
+   slot in the album or mixtape, not the top of the list. Only then does the
+   original, file and all, leave. A download that fails costs nothing; the
+   original is still there. Offered for any track that came from a link, which
+   is every download and every Browse save — a synced file has no source, and
+   is somebody's own file besides. Tracks with no source
    link (local-sync imports) don't offer it. A track that **names an artist**
    offers **View Discography**, which opens that artist's live Spotify
    catalogue in a sheet — the same browser the Every Noise map pushes, reached
@@ -650,8 +686,8 @@ atop the Sources screen:
   and still gets the AI organizer's go at it. Browse downloads are filed into a
   **library folder named
   after the source** (a "Brian Eno" Discography lands in a "Brian Eno"
-  folder), so everything from one source stays together; those tracks, being
-  unlistened, still surface in the **Inbox** until you play them. Once the
+  folder), so everything from one source stays together — and, being fresh
+  arrivals, they show at the top of **Added** as well. Once the
   download **lands in the library**, the row's button becomes a **green play
   button**: tapping it starts that track *in the background*, leaving you on
   the list you were working through (tap again to pause). Until then it's the
@@ -726,13 +762,14 @@ atop the Sources screen:
   Artist source for it on the spot (first refresh included) — hear something
   you like, select the name, and their catalogue starts filling in. Save
   files the already-downloaded audio into the library as a normal track (it
-  lands in the Inbox and gets the same best-effort AI organization as any
-  download) — and saving **mid-listen doesn't cut the song off**: playback
-  hands off to the main Player at the same position and keeps going in the
-  background while you carry on browsing. The handoff deliberately does
-  **not** count as listening — auditioning a track in the preview is how you
-  decided to keep it, so the saved track stays in the Inbox until you play
-  it from the library. Discard deletes the file and hides
+  gets the same best-effort AI organization as any download) — and saving
+  **mid-listen doesn't cut the song off**: playback hands off to the main
+  Player at the same position and keeps going in the background while you
+  carry on browsing. The handoff deliberately does **not** count as listening
+  — auditioning a track in the preview is how you decided to keep it, not a
+  play of it. Opened from **Find Alternative**, the same
+  modal's Save reads **Use This** and swaps the audition in for the track it
+  was opened against. Discard deletes the file and hides
   the item for good. Dismissing
   the modal without deciding deletes the temp file and leaves the item
   untouched.
@@ -1108,7 +1145,7 @@ in the row; when the search settles, the **matched tracks light up with
 Download and Preview beside them** (Preview is the standard Browse
 listen-first modal, walking the rest of the release) and misses dim to "no
 match" — no picker popup. A single-track pick goes in **unfiled**: it shows
-in the Library's **All** tab (and the Inbox) rather than an album folder.
+in the Library's **All** and **Added** tabs rather than an album folder.
 **Download Album** is the opposite case and files the whole record into a
 folder of its own, cover art and all — and its jobs arrive in the Download tab
 as a **single collapsible group** wearing that cover, rather than as a dozen
@@ -1762,8 +1799,8 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `EveryNoiseData/` | Bundled (folder reference): `genres.json` index + per-genre artist shards from the one-time `tools/everynoise/scrape.py`, plus the derived `artists.idx.z` from `build_artist_index.py`. |
 | `BrowseSourceView.swift` | One source's items with per-row Download/Preview/Discard, plus a **Select** mode for bulk download; also `BrowseTrackStatusButton`, the green play button every browse list shows once a download is in the library. |
 | `BrowsePreviewView.swift` | The preview modal: pipeline download, mini player with prev/play-pause/next over the queue it was opened with (auto-advancing at the end of each track — off its own frozen-playhead watchdog, not just the end notification — phone locked or not), the lock-screen metadata it borrows while it plays, Save/Discard. |
-| `*View.swift` | The five SwiftUI screens, in tab order (Browse, Library, Player, Download, Settings — which embeds the Log); none of them sets a navigation title. `DownloadView.swift` also holds the queue's album grouping — the collapsible record with its cover, count and whole-album bar. `LibraryView.swift` also holds `LibraryTab`, the Recent/Folders/Inbox/Watch/All strip, and the Folders tab's two shapes (the list, and the cover view's album grid). `PlayerView.swift` also holds the tap-to-seek scrubber, the caption overlay (and its own 5 Hz playhead clock), the `MiniPlayerBar` the other tabs inset above the tab bar, and the album-art loaders (`TrackArtwork`, `FolderArtwork`, `FolderCover`) — each a bounded `ImageCache` with a full decode for the big slots and an ImageIO thumbnail for the row-sized ones. |
-| `FolderView.swift` | Folder detail (tap-to-play, reorder, subfolders, mixtape header/Edit Cover, the album sleeve that opens its art options and the Discography row beneath its tracks), the discography push a library album makes, plus the Library's Inbox and Recent tabs — the latter including the pinned folder and the row-by-row frame that draws its border. |
+| `*View.swift` | The five SwiftUI screens, in tab order (Browse, Library, Player, Download, Settings — which embeds the Log); none of them sets a navigation title. `DownloadView.swift` also holds the queue's album grouping — the collapsible record with its cover, count and whole-album bar. `LibraryView.swift` also holds `LibraryTab`, the Recent/Folders/Added/Watch/All strip, the Folders tab's two shapes (the list, and the cover view's album grid), the shared track-menu entries every list drops into its `contextMenu` (Sync to Local, Send to Watch, View Discography, **Copy to Folder**, **Find Alternative**, AI Organize, Get Album Art, Get Subtitles, Convert Format), and Find Alternative's own search screen. `PlayerView.swift` also holds the tap-to-seek scrubber, the caption overlay (and its own 5 Hz playhead clock), the `MiniPlayerBar` the other tabs inset above the tab bar, and the album-art loaders (`TrackArtwork`, `FolderArtwork`, `FolderCover`) — each a bounded `ImageCache` with a full decode for the big slots and an ImageIO thumbnail for the row-sized ones. |
+| `FolderView.swift` | Folder detail (tap-to-play, reorder, subfolders, mixtape header/Edit Cover, the album sleeve that opens its art options and the Discography row beneath its tracks), the discography push a library album makes, plus the Library's Added and Recent tabs — the latter including the pinned folder and the row-by-row frame that draws its border. |
 | `MixtapeViews.swift` | Mixtape banner rendering (non-destructive crop), the shared folder-row label, and the Edit Cover sheet (PhotosPicker + drag/pinch + font picker). |
 | `AlbumViews.swift` | The album side of a folder: the stand-in colour palette, the square sleeve (cover or colour) the folder screen and the cover grid draw, the grid's own cell, the Custom Album Art sheet — PhotosPicker, square framing, and the crop that turns the framing into the JPEG copied onto every song — and **Retrieve Album Art**'s finder: the artist search (memoized for the session), the chosen artist's covers as a grid, and the pick that hands one to `ArtworkFetcher`. |
 | `WatchFolderView.swift` | The phone's Library **Watch** tab (manage what's been sent to the watch). |

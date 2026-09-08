@@ -32,6 +32,8 @@ struct FolderDetailView: View {
     @State private var albumArtOptions = false
     /// The artist a track's **View Discography** asked for.
     @State private var discographyRequest: DiscographyRequest?
+    /// The track **Find Alternative** was asked for.
+    @State private var alternativeRequest: AlternativeRequest?
 
     private var folder: Folder? {
         library.folders.first { $0.id == folderID }
@@ -82,6 +84,7 @@ struct FolderDetailView: View {
         .editMetadataSheet(for: $editingTrack)
         .breakChaptersConfirm(for: $splittingTrack)
         .discographySheet(for: $discographyRequest)
+        .findAlternativeSheet(for: $alternativeRequest)
         .sheet(item: $chapterContext) { context in
             ChapterListView(track: context.track, queue: context.queue, onPlay: onPlay)
         }
@@ -354,11 +357,6 @@ struct FolderDetailView: View {
                     Label("Edit Metadata", systemImage: "pencil")
                 }
                 Menu {
-                    Button {
-                        library.moveToInbox(track)
-                    } label: {
-                        Label("Inbox", systemImage: "tray")
-                    }
                     ForEach(library.activeFolders.filter { $0.id != folderID }) { other in
                         Button {
                             library.setFolder(track, other.id)
@@ -367,16 +365,18 @@ struct FolderDetailView: View {
                         }
                     }
                     Button(role: .destructive) {
-                        library.setFolder(track, nil)
+                        library.removeFromFolder(track)
                     } label: {
                         Label("Remove from Folder", systemImage: "folder.badge.minus")
                     }
                 } label: {
                     Label("Move to Folder", systemImage: "folder")
                 }
+                CopyToFolderMenu(track: track)
                 SyncToLocalButton(track: track)
                 SendToWatchButton(track: track)
                 ViewDiscographyButton(track: track, request: $discographyRequest)
+                FindAlternativeButton(track: track, request: $alternativeRequest)
                 AIOrganizeButton(track: track)
                 GetAlbumArtButton(track: track)
                 ConvertFormatButton(track: track)
@@ -452,9 +452,17 @@ struct LibraryDiscographyView: View {
     }
 }
 
-/// The Library's **Inbox** tab: every active track that hasn't been listened to
-/// yet. Tracks leave automatically once playback starts, or via Mark Played.
-struct InboxView: View {
+/// The Library's **Added** tab: the most recently added tracks, newest first,
+/// capped at `LibraryStore.recentlyAddedLimit`.
+///
+/// It used to be an **Inbox** — everything not yet listened to, emptying itself
+/// as you played it and offering Mark Played and Mark All Played to empty it
+/// faster. An inbox is a thing you are meant to clear, and that turned out not
+/// to be what this list was wanted for: "what did I add lately?" is the
+/// question, and playing a track is no answer to it. So nothing leaves for
+/// having been played, and the unplayed-green the rows carried has gone with
+/// the idea (see `TrackRow.iconColor`).
+struct RecentlyAddedView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var playback: PlaybackManager
 
@@ -466,22 +474,24 @@ struct InboxView: View {
     @State private var splittingTrack: Track?
     /// The artist a track's **View Discography** asked for.
     @State private var discographyRequest: DiscographyRequest?
-    /// Multi-select, the same shape the **All** tab has: an inbox filled by a
-    /// batch download is cleared in batches too.
+    /// The track **Find Alternative** was asked for.
+    @State private var alternativeRequest: AlternativeRequest?
+    /// Multi-select, the same shape the **All** tab has: a batch download
+    /// lands here in a batch and is usually filed in one too.
     @State private var editMode: EditMode = .inactive
     @State private var selection = Set<Track.ID>()
 
     private var tracks: [Track] {
-        library.inboxTracks
+        library.recentlyAddedTracks
     }
 
     var body: some View {
         Group {
             if tracks.isEmpty {
                 ContentUnavailableViewCompat(
-                    title: "Inbox zero",
-                    systemImage: "tray",
-                    description: "New downloads land here until you listen to them."
+                    title: "Nothing added yet",
+                    systemImage: "tray.and.arrow.down",
+                    description: "Downloads and synced files show up here, newest first."
                 )
             } else {
                 List(selection: $selection) {
@@ -504,12 +514,6 @@ struct InboxView: View {
                                     Label("Share", systemImage: "square.and.arrow.up")
                                 }
                                 .tint(.blue)
-                                Button {
-                                    library.markPlayed(track.id)
-                                } label: {
-                                    Label("Mark Played", systemImage: "checkmark.circle")
-                                }
-                                .tint(.green)
                             }
                             .contextMenu {
                                 Button {
@@ -519,14 +523,17 @@ struct InboxView: View {
                                 }
                                 if !library.activeFolders.isEmpty {
                                     Menu {
+                                        if track.folderID != nil {
+                                            Button(role: .destructive) {
+                                                library.removeFromFolder(track)
+                                            } label: {
+                                                Label("Remove from Folder",
+                                                      systemImage: "folder.badge.minus")
+                                            }
+                                        }
                                         ForEach(library.activeFolders) { folder in
                                             Button {
-                                                // Leaving the Inbox for a folder also
-                                                // clears the unlistened flag — the track
-                                                // has been filed, so it shouldn't show
-                                                // in both places.
                                                 library.setFolder(track, folder.id)
-                                                library.markPlayed(track.id)
                                             } label: {
                                                 Label(folder.name, systemImage: "folder")
                                             }
@@ -535,9 +542,11 @@ struct InboxView: View {
                                         Label("Move to Folder", systemImage: "folder")
                                     }
                                 }
+                                CopyToFolderMenu(track: track)
                                 SyncToLocalButton(track: track)
                                 SendToWatchButton(track: track)
                                 ViewDiscographyButton(track: track, request: $discographyRequest)
+                                FindAlternativeButton(track: track, request: $alternativeRequest)
                                 AIOrganizeButton(track: track)
                                 GetAlbumArtButton(track: track)
                                 ConvertFormatButton(track: track)
@@ -572,10 +581,11 @@ struct InboxView: View {
         .editMetadataSheet(for: $editingTrack)
         .breakChaptersConfirm(for: $splittingTrack)
         .discographySheet(for: $discographyRequest)
+        .findAlternativeSheet(for: $alternativeRequest)
         .sheet(item: $chapterContext) { context in
             ChapterListView(track: context.track, queue: context.queue, onPlay: onPlay)
         }
-        // Emptying the Inbox from under an open selection would leave a Done
+        // The list emptying from under an open selection would leave a Done
         // button over nothing.
         .onChange(of: tracks.isEmpty) { empty in
             if empty, editMode.isEditing { endEditing() }
@@ -602,11 +612,6 @@ struct InboxView: View {
                             Label("Move to Folder", systemImage: "folder")
                         }
                     }
-                    Button {
-                        markSelectedPlayed()
-                    } label: {
-                        Label("Mark Played", systemImage: "checkmark.circle")
-                    }
                     Button(role: .destructive) {
                         deleteSelected()
                     } label: {
@@ -620,11 +625,6 @@ struct InboxView: View {
         }
         if !tracks.isEmpty {
             ToolbarItemGroup(placement: .navigationBarTrailing) {
-                if !editMode.isEditing {
-                    Button("Mark All Played") {
-                        library.markAllPlayed()
-                    }
-                }
                 Button(editMode.isEditing ? "Done" : "Select") {
                     withAnimation {
                         if editMode.isEditing {
@@ -664,18 +664,7 @@ struct InboxView: View {
 
     private func moveSelected(to folderID: UUID) {
         applyToSelection { picks in
-            for track in picks {
-                // Filing a track is deciding about it, so it leaves the Inbox
-                // — the same rule the single-track menu follows.
-                library.setFolder(track, folderID)
-                library.markPlayed(track.id)
-            }
-        }
-    }
-
-    private func markSelectedPlayed() {
-        applyToSelection { picks in
-            for track in picks { library.markPlayed(track.id) }
+            for track in picks { library.setFolder(track, folderID) }
         }
     }
 
@@ -716,6 +705,8 @@ struct RecentTracksView: View {
     @State private var confirmingClear = false
     /// The artist a track's **View Discography** asked for.
     @State private var discographyRequest: DiscographyRequest?
+    /// The track **Find Alternative** was asked for.
+    @State private var alternativeRequest: AlternativeRequest?
     /// Whether the pinned folder is twirled open. Persisted like the Library's
     /// other display choices, so the tab looks the way you left it.
     @AppStorage("recentPinsExpanded") private var pinsExpanded = true
@@ -740,9 +731,10 @@ struct RecentTracksView: View {
                 list
             }
         }
-        // See InboxView: a tab of the Library, so no title of its own.
+        // See RecentlyAddedView: a tab of the Library, so no title of its own.
         .editMetadataSheet(for: $editingTrack)
         .discographySheet(for: $discographyRequest)
+        .findAlternativeSheet(for: $alternativeRequest)
         .sheet(item: $chapterContext) { context in
             ChapterListView(track: context.track, queue: context.queue, onPlay: onPlay)
         }
@@ -909,8 +901,12 @@ struct RecentTracksView: View {
                     Label(isPinned ? "Unpin" : "Pin to Top",
                           systemImage: isPinned ? "pin.slash" : "pin")
                 }
+                CopyToFolderMenu(track: track)
                 SendToWatchButton(track: track)
                 ViewDiscographyButton(track: track, request: $discographyRequest)
+                // Recent is where a bad copy announces itself — you have just
+                // listened to it.
+                FindAlternativeButton(track: track, request: $alternativeRequest)
                 AIOrganizeButton(track: track)
                 GetAlbumArtButton(track: track)
                 ConvertFormatButton(track: track)
@@ -920,7 +916,7 @@ struct RecentTracksView: View {
 
     /// Pins or unpins, on the **next** main-actor turn.
     ///
-    /// The same order `InboxView`'s bulk actions follow, and for the same
+    /// The same order `RecentlyAddedView`'s bulk actions follow, and for the same
     /// reason. A pin moves a row between the two sections of this list, and at
     /// the edges it moves a whole *section*: pinning the first track inserts the
     /// Pinned section (header and all), unpinning the last one removes it.

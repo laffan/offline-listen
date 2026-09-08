@@ -34,10 +34,16 @@ struct BrowsePreviewView: View {
     let items: [BrowseItem]
     /// Audio (the default) or video — the Browse toggle / Download tab mode.
     let mode: DownloadMode
+    /// The library track this preview is auditioning a replacement for, when
+    /// it was opened from **Find Alternative**. Save then *replaces* that
+    /// track — same name, same folder, same place in it — instead of filing a
+    /// new one beside it, and the buttons say so.
+    let replaces: Track?
     /// Where in `items` the tapped item sits.
     private let startIndex: Int
 
-    init(item: BrowseItem, mode: DownloadMode = .audio, queue: [BrowseItem] = []) {
+    init(item: BrowseItem, mode: DownloadMode = .audio, queue: [BrowseItem] = [],
+         replaces: Track? = nil) {
         // Membership by id *or* url: the discography browser mints its items on
         // the fly (a `BrowseItem` takes a fresh id each time it's built), so an
         // album's queue and the track tapped in it can be equal in every way
@@ -47,6 +53,7 @@ struct BrowsePreviewView: View {
             ? queue : [item]
         self.items = walkable
         self.mode = mode
+        self.replaces = replaces
         self.startIndex = walkable.firstIndex(where: { $0.id == item.id })
             ?? walkable.firstIndex(where: { $0.url == item.url })
             ?? 0
@@ -365,7 +372,8 @@ struct BrowsePreviewView: View {
             Button {
                 save()
             } label: {
-                Label("Save", systemImage: "checkmark")
+                Label(replaces == nil ? "Save" : "Use This",
+                      systemImage: replaces == nil ? "checkmark" : "arrow.triangle.2.circlepath")
                     .fontWeight(.semibold)
                     .frame(maxWidth: .infinity)
             }
@@ -374,8 +382,9 @@ struct BrowsePreviewView: View {
         }
     }
 
-    /// Files the previewed audio into the library as a normal track (it lands
-    /// in the Inbox like any fresh download) and lets the AI organizer at it.
+    /// Files the previewed audio into the library as a normal track — or, in
+    /// **Find Alternative**'s replacement mode, over the track it was opened
+    /// against — and lets the AI organizer at it.
     /// Saving mid-listen doesn't cut the song off: playback hands off to the
     /// main player at the same position (now in the background, like any
     /// library track), so browsing continues with the music still going.
@@ -384,14 +393,24 @@ struct BrowsePreviewView: View {
         let handoffTime = model.currentTime
         let wasPlaying = model.isPlaying
         guard let track = model.saveToLibrary(as: saved, library: library) else { return }
+        // Find Alternative: the file that was just auditioned takes the place
+        // of the one it was auditioned against, rather than landing beside it.
+        if let replaces {
+            library.replaceTrack(originalID: replaces.id, with: track.id)
+        }
         browse.markSaved(saved)
-        if wasPlaying {
-            // The handoff doesn't count as listening — the saved track still
-            // lands in the Inbox like any fresh download.
-            playback.play(track, in: library.activeTracks, startAt: handoffTime,
+        if wasPlaying, let live = library.track(withID: track.id) {
+            // Re-read from the library: a replacement has taken the original's
+            // name and place by now, and handing the player the pre-swap copy
+            // would put the old title back on the lock screen.
+            playback.play(live, in: library.activeTracks, startAt: handoffTime,
                           countsAsListened: false)
         }
-        Task { await aiOrganizer.organizeIfEnabled(track.id) }
+        // A replacement already wears the original's title, artist and kind;
+        // handing it to the organizer would only undo that.
+        if replaces == nil {
+            Task { await aiOrganizer.organizeIfEnabled(track.id) }
+        }
         dismiss()
     }
 }

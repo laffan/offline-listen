@@ -26,8 +26,9 @@ final class DownloadJob: ObservableObject, Identifiable {
     let artworkURL: String?
     /// The library track this download **replaces** once it lands — set by
     /// the Library's Convert to Video/Audio, which re-downloads a track's
-    /// source in the other format. Replacement happens only on success, so a
-    /// failed conversion never costs the original.
+    /// source in the other format, and by **Find Alternative**, which swaps a
+    /// recording for a different one of the same song. Replacement happens
+    /// only on success, so a failed job never costs the original.
     let replacesTrackID: UUID?
     /// Track metadata already known when the job was queued. A discography
     /// download knows the release's real song title and artist from Spotify,
@@ -1439,11 +1440,12 @@ final class DownloadManager: ObservableObject {
             // lands instead.
             ChapterFetcher.attach(from: url, to: track.id,
                                   alreadyKnown: !chapters.isEmpty, library: library)
-            // A format conversion (Library ▸ Convert to Video/Audio): only
-            // now that the replacement has fully landed does the original —
-            // file and all — leave the library.
+            // A replacement — a format conversion (Library ▸ Convert to
+            // Video/Audio) or a Find Alternative pick: only now that it has
+            // fully landed does the original — file and all — leave the
+            // library, and the replacement takes its name and its place.
             if let replacedID = job.replacesTrackID {
-                library.replaceAfterConversion(originalID: replacedID, with: track.id)
+                library.replaceTrack(originalID: replacedID, with: track.id)
             }
             job.trackID = track.id
             job.title = track.title

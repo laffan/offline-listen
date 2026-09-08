@@ -86,6 +86,7 @@ final class LibraryStore: ObservableObject {
     private var cachedFolderArtists: [UUID: String]?
     private var cachedSearchKeys: [UUID: String]?
     private var cachedTrackIDsBySource: [String: UUID]?
+    private var cachedRecentlyAdded: [Track]?
     /// The Recently Played folder order, and the log state it was built from.
     private var cachedLastPlayed: [UUID: Date]?
     private var cachedLastPlayedStamp: String?
@@ -98,6 +99,7 @@ final class LibraryStore: ObservableObject {
         cachedFolderArtists = nil
         cachedSearchKeys = nil
         cachedTrackIDsBySource = nil
+        cachedRecentlyAdded = nil
         // A track moving folders changes which folder a logged play belongs to.
         cachedLastPlayed = nil
     }
@@ -106,6 +108,7 @@ final class LibraryStore: ObservableObject {
         cachedArchivedFolderIDs = nil
         // Which tracks are active depends on which folders are archived.
         cachedActiveTracks = nil
+        cachedRecentlyAdded = nil
     }
 
     /// Every folder id that is archived, directly or by inheritance — the
@@ -302,8 +305,32 @@ final class LibraryStore: ObservableObject {
     var archivedTracks: [Track] { tracks.filter { $0.isArchived } }
     /// Active tracks not assigned to any folder — the main library list.
     var unfiledActiveTracks: [Track] { activeTracks.filter { $0.folderID == nil } }
-    /// Active tracks that haven't been listened to yet — the Inbox.
-    var inboxTracks: [Track] { activeTracks.filter { !$0.hasBeenPlayed } }
+    /// How far back the **Added** tab looks. A cap rather than a window: the
+    /// tab is for finding what arrived recently, and a list that runs to
+    /// thousands stops being that long before it stops being expensive.
+    static let recentlyAddedLimit = 200
+
+    /// The Library's **Added** tab: the most recently added tracks, newest
+    /// first.
+    ///
+    /// A *log*, not a queue. It used to be an Inbox — everything not yet
+    /// listened to, which emptied itself as you played it — and an inbox is
+    /// a thing you are meant to clear, which turned out not to be what this
+    /// list was wanted for. Nothing leaves for having been played; a track
+    /// leaves only by being deleted, archived, or falling past the cap.
+    ///
+    /// Sorted on `dateAdded` rather than on the master array's order, because
+    /// the two disagree: a download inserts at the top, a sync import appends
+    /// at the bottom, and a reorder inside a folder moves tracks around
+    /// wholesale. Memoized like every other derived list — this is read on
+    /// each redraw of the tab.
+    var recentlyAddedTracks: [Track] {
+        if let cached = cachedRecentlyAdded { return cached }
+        let value = Array(activeTracks.sorted { $0.dateAdded > $1.dateAdded }
+            .prefix(Self.recentlyAddedLimit))
+        cachedRecentlyAdded = value
+        return value
+    }
 
     /// The **Recent** folder: one row per logged play, newest first, resolved
     /// against the live library so a deleted track simply drops out. Repeats
@@ -967,15 +994,16 @@ final class LibraryStore: ObservableObject {
         refreshTracklistSidecar(folderID)
     }
 
-    /// "Moves" a track to the Inbox: back to not-yet-listened and out of any
-    /// folder (the Inbox is its own location in the UI). A synced track leaves
-    /// the sync folder in the process, like any move out of the synced tree.
-    func moveToInbox(_ track: Track) {
-        guard let index = tracks.firstIndex(where: { $0.id == track.id }) else { return }
-        guard relocateFile(at: index, toFolder: nil) else { return }
-        tracks[index].folderID = nil
-        tracks[index].hasBeenPlayed = false
-        save()
+    /// Takes a track out of whatever folder it is in, back to the main
+    /// library list. A synced track leaves the sync folder in the process,
+    /// like any move out of the synced tree.
+    ///
+    /// This used to be "Move to Inbox", and additionally marked the track
+    /// unlistened — which is what put it back in a list of things not yet
+    /// heard. That list is now a log of what was recently *added*, so the
+    /// second half of the action had nothing left to mean.
+    func removeFromFolder(_ track: Track) {
+        setFolder(track, nil)
     }
 
     // MARK: - Local sync
@@ -1833,24 +1861,17 @@ final class LibraryStore: ObservableObject {
         WatchSync.shared.push(tracks: watchTracks, folderNames: folderNames)
     }
 
-    // MARK: - Played state (Inbox)
+    // MARK: - Played state
 
-    /// Marks a track as listened-to (or not), moving it out of (or into) the Inbox.
+    /// Records that a track has been listened to. Nothing in the library is
+    /// filed by this any more — the Inbox that used to empty itself on it is
+    /// now a log of what was recently added — but playback still writes it
+    /// down, and it costs a boolean.
     func markPlayed(_ id: UUID, _ played: Bool = true) {
         guard let index = tracks.firstIndex(where: { $0.id == id }),
               tracks[index].hasBeenPlayed != played else { return }
         tracks[index].hasBeenPlayed = played
         save()
-    }
-
-    /// Empties the Inbox in one go.
-    func markAllPlayed() {
-        var changed = false
-        for index in tracks.indices where !tracks[index].hasBeenPlayed {
-            tracks[index].hasBeenPlayed = true
-            changed = true
-        }
-        if changed { save() }
     }
 
     /// Adds a freshly downloaded track to the top of the library.
@@ -2148,17 +2169,27 @@ final class LibraryStore: ObservableObject {
         save()
     }
 
-    /// Finishes a **Convert to Video/Audio** re-download: the replacement
-    /// track — already added, and filed into the original's folder at enqueue
-    /// time — inherits the original's album art, and the original (file and
-    /// all) leaves the library. Called only after the fresh download has
-    /// fully landed, so a failed conversion never costs the original.
-    func replaceAfterConversion(originalID: UUID, with newID: UUID) {
+    /// Swaps one track for another that has just arrived: **Convert to
+    /// Video/Audio**, which re-downloads the same source in the other format,
+    /// and **Find Alternative**, which brings back a different recording of
+    /// the same song.
+    ///
+    /// The replacement inherits everything that describes the *song* rather
+    /// than the file — name, artist, classification, album art — joins the
+    /// folder the original was in, and takes its place in it. Only then does
+    /// the original, file and all, leave the library: called after the new
+    /// file is on disk, so a download that failed never costs the original.
+    ///
+    /// The name and the place are what the caller cannot supply. A conversion
+    /// used to come back wearing the raw video title, throwing away a rename
+    /// or an AI-cleaned name; and either kind of replacement, added at the top
+    /// of the library like any download, arrived at the *head* of the record
+    /// it joined rather than in the slot the song it replaced was sitting in.
+    func replaceTrack(originalID: UUID, with newID: UUID) {
         guard originalID != newID,
               let original = tracks.first(where: { $0.id == originalID }),
-              tracks.contains(where: { $0.id == newID }) else { return }
-        if let artworkName = original.artworkFileName,
-           tracks.first(where: { $0.id == newID })?.artworkFileName == nil {
+              let arriving = tracks.first(where: { $0.id == newID }) else { return }
+        if let artworkName = original.artworkFileName, arriving.artworkFileName == nil {
             // Copy (not move): `delete` below removes the original's file.
             let newName = "\(newID.uuidString).jpg"
             let source = AppPaths.artwork.appendingPathComponent(artworkName)
@@ -2168,9 +2199,115 @@ final class LibraryStore: ObservableObject {
                 setArtwork(for: newID, fileName: newName)
             }
         }
+        guard let newIndex = tracks.firstIndex(where: { $0.id == newID }) else { return }
+        // The replacement is the same song in a different file, so it wears
+        // the name, artist and classification the original had rather than
+        // whatever the download happened to be called. The download's own
+        // title is kept as the "original" so Edit Metadata ▸ Reset still has
+        // somewhere to go back to.
+        let downloadedAs = tracks[newIndex].title
+        tracks[newIndex].title = original.title
+        tracks[newIndex].artist = original.artist
+        tracks[newIndex].kind = original.kind
+        if tracks[newIndex].originalTitle == nil, downloadedAs != original.title {
+            tracks[newIndex].originalTitle = downloadedAs
+        }
+        // It joins the folder the original was in. The queue path already
+        // filed it there (the job carried the folder), but a replacement saved
+        // straight out of the preview modal arrives unfiled — and when the
+        // destination is a synced folder, filing it is also what moves its
+        // file into the sync store.
+        if tracks[newIndex].folderID != original.folderID {
+            setFolder(tracks[newIndex], original.folderID)
+        }
+        // And it takes the original's *place*. A folder shows its tracks in
+        // the order they sit in the master array, so a replacement left at the
+        // top of the library would arrive at the head of the record it joined
+        // — which is not where the song it replaced was.
+        if let liveIndex = tracks.firstIndex(where: { $0.id == newID }) {
+            let moving = tracks.remove(at: liveIndex)
+            let slot = tracks.firstIndex(where: { $0.id == originalID }) ?? 0
+            tracks.insert(moving, at: slot)
+        }
         delete(original)
-        appLog("Converted \"\(original.title)\" to \(original.isVideo ? "audio" : "video") — the \(original.isVideo ? "video" : "audio") original was replaced.",
+        refreshTracklistSidecar(original.folderID)
+        appLog("Replaced \"\(original.title)\" with the new download, in the same place.",
                level: .success, category: "Queue")
+    }
+
+    /// Puts a **second copy** of a track into another folder: its own file,
+    /// its own id, its own row — so the same song can sit in a mixtape and on
+    /// the record it came from without either being a reference to the other.
+    ///
+    /// A copy rather than a shared reference because everything else about a
+    /// track is per-track: rename one, give it different art, send it to the
+    /// watch, sync it to a local folder, and none of that should reach the
+    /// other. The cost is a duplicated file, which for a song is a few
+    /// megabytes and for the alternative — a library where deleting a track
+    /// from one playlist silently guts another — is not a cost at all.
+    ///
+    /// The copy lands at the **end** of the destination folder, which is where
+    /// adding something to a playlist puts it.
+    @discardableResult
+    func copy(_ track: Track, toFolder folderID: UUID) -> Track? {
+        guard let source = tracks.first(where: { $0.id == track.id }),
+              folder(withID: folderID) != nil else { return nil }
+        let last = (source.fileName as NSString).lastPathComponent
+        let base = (last as NSString).deletingPathExtension
+        let ext = (last as NSString).pathExtension
+        let fileName = AppPaths.uniqueDocumentName(base: base, ext: ext)
+        do {
+            try FileManager.default.copyItem(at: source.fileURL,
+                                             to: AppPaths.documents.appendingPathComponent(fileName))
+        } catch {
+            appLog("Couldn't copy \"\(source.title)\": \(error.localizedDescription)",
+                   level: .error, category: "Library")
+            return nil
+        }
+        var duplicate = Track(
+            title: source.title,
+            artist: source.artist,
+            fileName: fileName,
+            sourceURL: source.sourceURL,
+            duration: source.duration,
+            kind: source.kind,
+            isVideo: source.isVideo,
+            folderID: folderID,
+            originalTitle: source.originalTitle,
+            chapters: source.chapters)
+        // Artwork and captions are per-track files named after the id, so the
+        // copy gets its own of each rather than pointing at the original's —
+        // deleting either track has to be able to take its own files with it.
+        duplicate.artworkFileName = copiedSidecar(source.artworkFileName,
+                                                  in: AppPaths.artwork, for: duplicate.id, ext: "jpg")
+        duplicate.subtitleFileName = copiedSidecar(source.subtitleFileName,
+                                                   in: AppPaths.subtitles, for: duplicate.id, ext: "vtt")
+        // At the end of the destination folder, and nowhere near the tracks
+        // that merely happen to sit next to it in the array.
+        let slot = (tracks.lastIndex { $0.folderID == folderID }).map { $0 + 1 } ?? 0
+        tracks.insert(duplicate, at: min(slot, tracks.count))
+        save()
+        // A synced destination wants the file in its own store, and the move
+        // across that boundary is the one `setFolder` already knows how to do.
+        setFolder(duplicate, folderID)
+        refreshTracklistSidecar(folderID)
+        appLog("Copied \"\(source.title)\" into \"\(folder(withID: folderID)?.name ?? "a folder")\".",
+               level: .success, category: "Library")
+        return tracks.first { $0.id == duplicate.id }
+    }
+
+    /// Duplicates one of a track's app-local sidecar files (artwork, captions)
+    /// under the copy's own id. Nil when there was nothing to copy, or when
+    /// the copy failed — both of which just leave the duplicate without it.
+    private func copiedSidecar(_ name: String?, in directory: URL,
+                               for id: UUID, ext: String) -> String? {
+        guard let name else { return nil }
+        let newName = "\(id.uuidString).\(ext)"
+        let destination = directory.appendingPathComponent(newName)
+        try? FileManager.default.removeItem(at: destination)
+        guard (try? FileManager.default.copyItem(at: directory.appendingPathComponent(name),
+                                                 to: destination)) != nil else { return nil }
+        return newName
     }
 
     /// Removes a track from the library and deletes its audio file from disk.

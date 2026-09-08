@@ -302,7 +302,9 @@ enum LibraryTab: String, CaseIterable, Identifiable {
     /// What you've played, newest first.
     case recent
     case folders
-    /// What you haven't listened to yet.
+    /// What arrived recently, newest first. The raw value stays `inbox` — it
+    /// is what the persisted tab selection is written as, and this tab is the
+    /// same tab, doing a job it turned out to be wanted for instead.
     case inbox
     /// What's been pushed to the Apple Watch.
     case watch
@@ -315,7 +317,7 @@ enum LibraryTab: String, CaseIterable, Identifiable {
         switch self {
         case .recent: return "Recent"
         case .folders: return "Folders"
-        case .inbox: return "Inbox"
+        case .inbox: return "Added"
         case .watch: return "Watch"
         case .all: return "All"
         }
@@ -351,6 +353,8 @@ struct LibraryView: View {
     @State private var splittingTrack: Track?
     /// The artist a track's **View Discography** asked for.
     @State private var discographyRequest: DiscographyRequest?
+    /// The track **Find Alternative** was asked for.
+    @State private var alternativeRequest: AlternativeRequest?
 
     /// What's in the search field.
     @State private var searchText = ""
@@ -490,6 +494,7 @@ struct LibraryView: View {
             .breakChaptersConfirm(for: $splittingTrack)
             .deleteFolderConfirm(for: $deletingFolder)
             .discographySheet(for: $discographyRequest)
+            .findAlternativeSheet(for: $alternativeRequest)
         }
     }
 
@@ -566,7 +571,7 @@ struct LibraryView: View {
         case .folders:
             folderList
         case .inbox:
-            InboxView(onPlay: onPlay, share: $share)
+            RecentlyAddedView(onPlay: onPlay, share: $share)
         case .watch:
             WatchFolderView(onPlay: onPlay)
         case .all:
@@ -1045,10 +1050,12 @@ struct LibraryView: View {
                     Label("Edit Metadata", systemImage: "pencil")
                 }
                 Menu {
-                    Button {
-                        library.moveToInbox(track)
-                    } label: {
-                        Label("Inbox", systemImage: "tray")
+                    if track.folderID != nil {
+                        Button(role: .destructive) {
+                            library.removeFromFolder(track)
+                        } label: {
+                            Label("Remove from Folder", systemImage: "folder.badge.minus")
+                        }
                     }
                     ForEach(library.activeFolders) { folder in
                         Button {
@@ -1060,9 +1067,11 @@ struct LibraryView: View {
                 } label: {
                     Label("Move to Folder", systemImage: "folder")
                 }
+                CopyToFolderMenu(track: track)
                 SyncToLocalButton(track: track)
                 SendToWatchButton(track: track)
                 ViewDiscographyButton(track: track, request: $discographyRequest)
+                FindAlternativeButton(track: track, request: $alternativeRequest)
                 AIOrganizeButton(track: track)
                 GetAlbumArtButton(track: track)
                 GetSubtitlesButton(track: track)
@@ -1103,10 +1112,10 @@ struct LibraryView: View {
                         Label("Archive", systemImage: "archivebox")
                     }
                     Menu {
-                        Button {
-                            moveSelectedToInbox()
+                        Button(role: .destructive) {
+                            removeSelectedFromFolders()
                         } label: {
-                            Label("Inbox", systemImage: "tray")
+                            Label("Remove from Folder", systemImage: "folder.badge.minus")
                         }
                         ForEach(library.activeFolders) { folder in
                             Button(folder.name) {
@@ -1138,8 +1147,8 @@ struct LibraryView: View {
 
         // Each tab brings its own actions: the folder controls where the folders
         // are, Select where the tracks are — in the All tab, and in a search's
-        // results, which are tracks too. (Inbox and Recent carry their own —
-        // Mark All Played and Clear — from the views themselves.)
+        // results, which are tracks too. (Added and Recent carry their own —
+        // Select and Clear — from the views themselves.)
         ToolbarItemGroup(placement: .navigationBarTrailing) {
             // New Folder also has to survive the empty-library welcome, which
             // stands in for the tabs — otherwise a fresh install has no way to
@@ -1199,9 +1208,9 @@ struct LibraryView: View {
         endEditing()
     }
 
-    private func moveSelectedToInbox() {
+    private func removeSelectedFromFolders() {
         for track in selectedTracks() {
-            library.moveToInbox(track)
+            library.removeFromFolder(track)
         }
         endEditing()
     }
@@ -1439,12 +1448,14 @@ struct TrackRow: View {
         return track.kind == .podcast ? "mic.fill" : "music.note"
     }
 
-    /// Red marks the currently-playing track; green flags a track that hasn't
-    /// been listened to yet (the Inbox set); everything else is neutral.
+    /// Red marks the currently-playing track; everything else is neutral.
+    ///
+    /// A green glyph used to flag a track nobody had listened to yet, which
+    /// was the Inbox's set. That list is now a log of what was recently
+    /// *added* and keeps its tracks after they're played, so the colour had
+    /// nothing left to pick out.
     private var iconColor: Color {
-        if isCurrent { return .accentColor }
-        if !track.hasBeenPlayed { return .green }
-        return .secondary
+        isCurrent ? .accentColor : .secondary
     }
 
     /// Podcasts and videos resume, so they show a progress bar; songs don't.
@@ -1509,9 +1520,9 @@ struct TrackRow: View {
 
     /// The row's leading mark: the cover, where one is asked for and there is
     /// one, otherwise the media glyph. The artwork takes the same slot at a
-    /// size that reads as a sleeve, and the playing/unplayed colours the glyph
-    /// carries move to a small dot on its corner, so nothing is lost by
-    /// showing a picture instead.
+    /// size that reads as a sleeve, and the playing colour the glyph carries
+    /// moves to a small dot on its corner, so nothing is lost by showing a
+    /// picture instead.
     @ViewBuilder
     private var leading: some View {
         if showsArtwork, let cover = TrackArtwork.thumbnail(for: track) {
@@ -1521,7 +1532,7 @@ struct TrackRow: View {
                 .frame(width: 38, height: 38)
                 .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
                 .overlay(alignment: .bottomTrailing) {
-                    if isCurrent || !track.hasBeenPlayed {
+                    if isCurrent {
                         Circle()
                             .fill(iconColor)
                             .frame(width: 9, height: 9)
@@ -2029,5 +2040,320 @@ struct GetAlbumArtButton: View {
                        level: .warning, category: "Spotify")
             }
         }
+    }
+}
+
+// MARK: - Copying a track into a folder
+
+/// A context-menu entry that puts a **second copy** of a track into another
+/// folder — the way a song joins a mixtape without leaving the record it came
+/// from. Distinct from Move to Folder above it, which relocates the one copy
+/// there is. Renders nothing when there is nowhere to copy to. Safe to drop
+/// into any track's `contextMenu`.
+struct CopyToFolderMenu: View {
+    @EnvironmentObject private var library: LibraryStore
+
+    let track: Track
+
+    /// Everywhere the track isn't already: copying a song into the folder it
+    /// is currently in would make two identical rows side by side, which is
+    /// never what somebody meant by "copy".
+    private var destinations: [Folder] {
+        library.activeFolders.filter { $0.id != track.folderID }
+    }
+
+    var body: some View {
+        if !destinations.isEmpty {
+            Menu {
+                ForEach(destinations) { folder in
+                    Button {
+                        library.copy(track, toFolder: folder.id)
+                    } label: {
+                        Label(folder.name, systemImage: folder.isMixtape ? "recordingtape" : "folder")
+                    }
+                }
+            } label: {
+                Label("Copy to Folder", systemImage: "plus.rectangle.on.folder")
+            }
+        }
+    }
+}
+
+// MARK: - Find Alternative
+
+/// A track whose replacement is being looked for, so the screen showing it can
+/// present the search via `.sheet(item:)`.
+struct AlternativeRequest: Identifiable {
+    let id = UUID()
+    let track: Track
+}
+
+/// Presents the Find Alternative search for the bound request. A sheet for the
+/// same reason the discography one is: every list that offers it sits somewhere
+/// different in the navigation stack, and looking for a better copy of a song
+/// is a lookaside, not a place you were heading.
+struct FindAlternativeSheet: ViewModifier {
+    @Binding var request: AlternativeRequest?
+
+    func body(content: Content) -> some View {
+        content.sheet(item: $request) { asked in
+            FindAlternativeView(track: asked.track)
+        }
+    }
+}
+
+extension View {
+    func findAlternativeSheet(for request: Binding<AlternativeRequest?>) -> some View {
+        modifier(FindAlternativeSheet(request: request))
+    }
+}
+
+/// A context-menu entry that goes looking for a **different recording of the
+/// same song** on YouTube — the way out of a copy that turned out to be a live
+/// version, a lyric video with an intro, or eight minutes of hiss.
+///
+/// Offered only for a track that came from a link, which is every download and
+/// every Browse save. A local-sync import has no source and, more to the
+/// point, is somebody's own file: replacing it would delete it from their sync
+/// folder, which is not what "find another version" should ever mean.
+struct FindAlternativeButton: View {
+    let track: Track
+    @Binding var request: AlternativeRequest?
+
+    var body: some View {
+        if track.sourceURL.lowercased().hasPrefix("http") {
+            Button {
+                request = AlternativeRequest(track: track)
+            } label: {
+                Label("Find Alternative", systemImage: "arrow.triangle.2.circlepath")
+            }
+        }
+    }
+}
+
+/// **Find Alternative**: search YouTube for other copies of a song already in
+/// the library, listen to them, and swap one in.
+///
+/// The search opens on the track's own artist and title and can be edited —
+/// the library's name for a song is usually the best query there is, and when
+/// it isn't, the person looking knows what to type instead. Each hit offers
+/// **Preview**, which is the Browse preview modal (it downloads the file once
+/// and plays it, so auditioning costs the same as a download and no more), and
+/// **Use This**, which queues it.
+///
+/// Either route ends the same way, in `LibraryStore.replaceTrack`: the
+/// replacement inherits the original's name, artist and classification, takes
+/// its place in whatever folder it was in, and only then does the original —
+/// file and all — go. A failed download costs nothing; the original is still
+/// there.
+struct FindAlternativeView: View {
+    @EnvironmentObject private var downloads: DownloadManager
+    @EnvironmentObject private var library: LibraryStore
+    @Environment(\.dismiss) private var dismiss
+
+    let track: Track
+
+    @State private var query = ""
+    @State private var results: [YouTubeSearchResult] = []
+    @State private var searching = false
+    /// The query the results on screen belong to, and the "have we searched
+    /// yet" flag the opening search checks so a redraw can't re-run it.
+    @State private var answered: String?
+    /// The hit being auditioned, and the whole result set as the preview's
+    /// queue — so previewing the first can run down the rest.
+    @State private var previewItem: BrowseItem?
+    @State private var previewQueue: [BrowseItem] = []
+    /// The hit sent to the download queue, if any: the row says so, and the
+    /// rest stop offering to be picked, because only one of them can win.
+    @State private var picked: String?
+
+    /// Audio for an audio track, video for a video one — a replacement that
+    /// changed format would be a conversion, which is its own menu item.
+    private var mode: DownloadMode { track.isVideo ? .video : .audio }
+
+    private var trimmed: String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// What the search opens on: the artist and title the library shows, which
+    /// is what somebody would have typed anyway.
+    private var suggestion: String {
+        track.namedArtist.map { "\($0) \(track.title)" } ?? track.title
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    searchField
+                } footer: {
+                    Text("Replaces “\(track.title)” with the copy you pick — same place in the library, same name. The original goes only once the new one has landed.")
+                }
+                resultsSection
+            }
+            .listStyle(.plain)
+            .navigationTitle("Find Alternative")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+        .sheet(item: $previewItem) { item in
+            BrowsePreviewView(item: item, mode: mode, queue: previewQueue, replaces: track)
+        }
+        .task {
+            guard answered == nil else { return }
+            query = suggestion
+            await search(suggestion.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        // The swap has happened — from the preview, or from a queued pick that
+        // has since landed. There is nothing left on this screen to replace,
+        // and a second pick would quietly become an ordinary download.
+        .onChange(of: library.track(withID: track.id) == nil) { gone in
+            if gone { dismiss() }
+        }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField("Search YouTube", text: $query)
+                .submitLabel(.search)
+                .onSubmit { let wanted = trimmed; Task { await search(wanted) } }
+            if searching {
+                ProgressView()
+            } else {
+                Button("Search") { let wanted = trimmed; Task { await search(wanted) } }
+                    .buttonStyle(.borderless)
+                    .disabled(trimmed.isEmpty || trimmed == answered)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var resultsSection: some View {
+        if !results.isEmpty {
+            Section {
+                ForEach(results) { result in
+                    AlternativeResultRow(result: result,
+                                         picked: picked == result.videoID,
+                                         disabled: picked != nil && picked != result.videoID,
+                                         onUse: { use(result) },
+                                         onPreview: { preview(result) })
+                }
+            } header: {
+                Text("\(results.count) result(s) · \(mode.displayName)")
+            }
+        } else if let answered, !searching {
+            Section {
+                Text("Nothing came back for “\(answered)”. Try a different wording.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @MainActor
+    private func search(_ wanted: String) async {
+        guard !wanted.isEmpty, !searching else { return }
+        searching = true
+        defer { searching = false }
+        // Ten rather than the Download tab's five: the whole point here is
+        // that the obvious copy was the wrong one.
+        let found = await YouTubeSearchResolver.topVideos(matching: wanted, limit: 10)
+        results = found
+        answered = wanted
+        previewQueue = found.map(browseItem(for:))
+    }
+
+    /// Queues the pick as a replacement. The swap itself happens in the
+    /// download pipeline, once the file is actually on disk.
+    private func use(_ result: YouTubeSearchResult) {
+        downloads.enqueue(urlString: result.url, mode: mode,
+                          folderID: track.folderID,
+                          replacesTrackID: track.id,
+                          queuedTitle: result.title,
+                          queuedArtist: result.channel.isEmpty ? nil : result.channel)
+        picked = result.videoID
+    }
+
+    /// Opens the preview on this result with the rest of the hits behind it.
+    /// The queue's own entry is used where there is one, so the tapped row
+    /// keeps its place in the walk (a freshly minted item carries a new id).
+    private func preview(_ result: YouTubeSearchResult) {
+        previewItem = previewQueue.first { $0.url == result.url } ?? browseItem(for: result)
+    }
+
+    /// Wraps a search result as a transient `BrowseItem` so the shared preview
+    /// modal can play it. It lives nowhere in the Browse store — its
+    /// save/discard bookkeeping there is a harmless no-op.
+    private func browseItem(for result: YouTubeSearchResult) -> BrowseItem {
+        BrowseItem(sourceID: UUID(),
+                   title: result.title,
+                   detail: result.channel,
+                   url: result.url,
+                   videoID: result.videoID)
+    }
+}
+
+/// One candidate replacement: title, channel, length, and the Preview / Use
+/// This pair. Once one has been picked the others stop offering themselves —
+/// two replacements for one track would leave a duplicate behind.
+private struct AlternativeResultRow: View {
+    let result: YouTubeSearchResult
+    let picked: Bool
+    let disabled: Bool
+    let onUse: () -> Void
+    let onPreview: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(result.title)
+                .font(.subheadline.weight(.medium))
+                .lineLimit(2)
+
+            HStack(spacing: 6) {
+                if !result.channel.isEmpty {
+                    Text(result.channel)
+                        .lineLimit(1)
+                }
+                if let seconds = result.durationSeconds {
+                    if !result.channel.isEmpty {
+                        Text("·")
+                    }
+                    Text(seconds.asPlaybackTime)
+                        .monospacedDigit()
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            if picked {
+                Label("Downloading the replacement…", systemImage: "arrow.down.circle")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            } else {
+                HStack(spacing: 10) {
+                    Button(action: onUse) {
+                        Label("Use This", systemImage: "arrow.triangle.2.circlepath")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Button(action: onPreview) {
+                        Label("Preview", systemImage: "play.circle")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                .disabled(disabled)
+            }
+        }
+        .padding(.vertical, 4)
     }
 }
