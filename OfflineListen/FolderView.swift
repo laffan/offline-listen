@@ -452,6 +452,98 @@ struct LibraryDiscographyView: View {
     }
 }
 
+/// One day's worth of the **Added** tab: the day it stands for, and what
+/// arrived on it, in arrival order.
+private struct AddedDay: Identifiable {
+    /// The start of the day, which is both the section's identity and what its
+    /// heading is written from.
+    let id: Date
+    let items: [AddedListItem]
+
+    /// Everything under the heading, groups unfolded — the day's contribution
+    /// to the playback queue.
+    var tracks: [Track] {
+        items.flatMap { item -> [Track] in
+            switch item {
+            case .track(let track): return [track]
+            case .album(let group): return group.tracks
+            }
+        }
+    }
+
+    /// **Today** and **Yesterday** by name, because that is how somebody
+    /// thinks of them; a weekday and date within the year, and the year too
+    /// once it is no longer this one.
+    var title: String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(id) { return "Today" }
+        if calendar.isDateInYesterday(id) { return "Yesterday" }
+        if calendar.isDate(id, equalTo: Date(), toGranularity: .year) {
+            return id.formatted(.dateTime.weekday(.wide).day().month(.wide))
+        }
+        return id.formatted(.dateTime.day().month(.wide).year())
+    }
+}
+
+/// One row under a day's heading: a track on its own, or a whole record —
+/// the same two shapes the Download tab's queue has.
+private enum AddedListItem: Identifiable {
+    case track(Track)
+    case album(AddedAlbumGroup)
+
+    var id: String {
+        switch self {
+        case .track(let track): return track.id.uuidString
+        case .album(let group): return group.id
+        }
+    }
+}
+
+/// A record as it arrived on one day: the album folder its tracks are in, and
+/// the tracks of it that landed that day. Identified by day *and* folder, so a
+/// download that ran past midnight twirls open on each side independently.
+private struct AddedAlbumGroup: Identifiable {
+    let id: String
+    let folder: Folder
+    let tracks: [Track]
+}
+
+/// The header of a record's group in the **Added** tab: its sleeve, its name,
+/// its artist and how much of it landed — the Library's own album row at the
+/// size the Download tab's group header uses.
+private struct AddedAlbumHeader: View {
+    @EnvironmentObject private var library: LibraryStore
+
+    let folder: Folder
+    let count: Int
+
+    var body: some View {
+        HStack(spacing: 12) {
+            AlbumCoverArt(folder: folder,
+                          image: FolderCover.thumbnail(for: folder,
+                                                       tracks: library.tracks(in: folder.id)),
+                          cornerRadius: 5)
+                .frame(width: 40, height: 40)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(folder.name)
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var subtitle: String {
+        let tally = "\(count) track\(count == 1 ? "" : "s")"
+        guard let artist = library.folderArtist(of: folder.id) else { return tally }
+        return "\(artist) · \(tally)"
+    }
+}
+
 /// The Library's **Added** tab: the most recently added tracks, newest first,
 /// capped at `LibraryStore.recentlyAddedLimit`.
 ///
@@ -480,14 +572,21 @@ struct RecentlyAddedView: View {
     /// lands here in a batch and is usually filed in one too.
     @State private var editMode: EditMode = .inactive
     @State private var selection = Set<Track.ID>()
+    /// Which album groups are twirled open, by group id. Empty by default, for
+    /// the reason the Download tab's are: a record that arrived whole is *one*
+    /// thing that happened, and a dozen rows of it burying the rest of the day
+    /// is what the grouping is for.
+    @State private var expandedAlbums: Set<String> = []
 
     private var tracks: [Track] {
         library.recentlyAddedTracks
     }
 
     var body: some View {
-        Group {
-            if tracks.isEmpty {
+        let days = self.days
+        let queue = days.flatMap(\.tracks)
+        return Group {
+            if days.isEmpty {
                 ContentUnavailableViewCompat(
                     title: "Nothing added yet",
                     systemImage: "tray.and.arrow.down",
@@ -495,78 +594,22 @@ struct RecentlyAddedView: View {
                 )
             } else {
                 List(selection: $selection) {
-                    ForEach(tracks) { track in
-                        let row = TrackRow(
-                            track: track,
-                            isCurrent: playback.currentTrack?.id == track.id,
-                            onShowChapters: { chapterContext = ChapterContext(track: track, queue: tracks) }
-                        )
-                            .contentShape(Rectangle())
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                Button(role: .destructive) {
-                                    library.delete(track)
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
-                                }
-                                Button {
-                                    share = SharePayload(urls: [track.fileURL])
-                                } label: {
-                                    Label("Share", systemImage: "square.and.arrow.up")
-                                }
-                                .tint(.blue)
-                            }
-                            .contextMenu {
-                                Button {
-                                    editingTrack = track
-                                } label: {
-                                    Label("Edit Metadata", systemImage: "pencil")
-                                }
-                                if !library.activeFolders.isEmpty {
-                                    Menu {
-                                        if track.folderID != nil {
-                                            Button(role: .destructive) {
-                                                library.removeFromFolder(track)
-                                            } label: {
-                                                Label("Remove from Folder",
-                                                      systemImage: "folder.badge.minus")
-                                            }
-                                        }
-                                        ForEach(library.activeFolders) { folder in
-                                            Button {
-                                                library.setFolder(track, folder.id)
-                                            } label: {
-                                                Label(folder.name, systemImage: "folder")
-                                            }
+                    ForEach(days) { day in
+                        Section(day.title) {
+                            ForEach(day.items) { item in
+                                switch item {
+                                case .track(let track):
+                                    row(for: track, queue: queue)
+                                case .album(let group):
+                                    DisclosureGroup(isExpanded: expansion(of: group.id)) {
+                                        ForEach(group.tracks) { track in
+                                            row(for: track, queue: queue)
                                         }
                                     } label: {
-                                        Label("Move to Folder", systemImage: "folder")
+                                        AddedAlbumHeader(folder: group.folder,
+                                                         count: group.tracks.count)
                                     }
                                 }
-                                CopyToFolderMenu(track: track)
-                                SyncToLocalButton(track: track)
-                                SendToWatchButton(track: track)
-                                ViewDiscographyButton(track: track, request: $discographyRequest)
-                                FindAlternativeButton(track: track, request: $alternativeRequest)
-                                AIOrganizeButton(track: track)
-                                GetAlbumArtButton(track: track)
-                                ConvertFormatButton(track: track)
-                                if track.hasChapters {
-                                    Button {
-                                        splittingTrack = track
-                                    } label: {
-                                        Label("Break Chapters into Playlist", systemImage: "list.bullet.indent")
-                                    }
-                                }
-                                TrackSourceButtons(track: track)
-                            }
-                        // Selecting is a mode you're in *instead* of playing:
-                        // a tap ticks the row rather than starting the track.
-                        if editMode.isEditing {
-                            row
-                        } else {
-                            row.onTapGesture {
-                                playback.play(track, in: tracks)
-                                onPlay()
                             }
                         }
                     }
@@ -591,6 +634,159 @@ struct RecentlyAddedView: View {
             if empty, editMode.isEditing { endEditing() }
         }
         .toolbar { toolbarContent }
+    }
+
+    /// One track's row, wherever it sits — loose under its day, or inside the
+    /// record it arrived with. `queue` is the whole list in the order the
+    /// screen shows it, so playing a track carries on down what you can see.
+    @ViewBuilder
+    private func row(for track: Track, queue: [Track]) -> some View {
+        let base = TrackRow(
+            track: track,
+            isCurrent: playback.currentTrack?.id == track.id,
+            onShowChapters: { chapterContext = ChapterContext(track: track, queue: queue) }
+        )
+            .contentShape(Rectangle())
+            // The list is a `ForEach` over days and items, not over tracks, so
+            // the selection value has to be said out loud.
+            .tag(track.id)
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(role: .destructive) {
+                    library.delete(track)
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+                Button {
+                    share = SharePayload(urls: [track.fileURL])
+                } label: {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+                .tint(.blue)
+            }
+            .contextMenu {
+                Button {
+                    editingTrack = track
+                } label: {
+                    Label("Edit Metadata", systemImage: "pencil")
+                }
+                if !library.activeFolders.isEmpty {
+                    Menu {
+                        if track.folderID != nil {
+                            Button(role: .destructive) {
+                                library.removeFromFolder(track)
+                            } label: {
+                                Label("Remove from Folder",
+                                      systemImage: "folder.badge.minus")
+                            }
+                        }
+                        ForEach(library.activeFolders) { folder in
+                            Button {
+                                library.setFolder(track, folder.id)
+                            } label: {
+                                Label(folder.name, systemImage: "folder")
+                            }
+                        }
+                    } label: {
+                        Label("Move to Folder", systemImage: "folder")
+                    }
+                }
+                CopyToFolderMenu(track: track)
+                SyncToLocalButton(track: track)
+                SendToWatchButton(track: track)
+                ViewDiscographyButton(track: track, request: $discographyRequest)
+                FindAlternativeButton(track: track, request: $alternativeRequest)
+                AIOrganizeButton(track: track)
+                GetAlbumArtButton(track: track)
+                ConvertFormatButton(track: track)
+                if track.hasChapters {
+                    Button {
+                        splittingTrack = track
+                    } label: {
+                        Label("Break Chapters into Playlist", systemImage: "list.bullet.indent")
+                    }
+                }
+                TrackSourceButtons(track: track)
+            }
+        // Selecting is a mode you're in *instead* of playing: a tap ticks the
+        // row rather than starting the track.
+        if editMode.isEditing {
+            base
+        } else {
+            base.onTapGesture {
+                playback.play(track, in: queue)
+                onPlay()
+            }
+        }
+    }
+
+    /// The list as it is shown: **a section per day**, and within a day, a
+    /// record that arrived that day folded into one collapsible group.
+    ///
+    /// The day is the outer division because that is the question the tab
+    /// answers — what arrived, and when — and it means everything under a
+    /// heading really did arrive on that date. A record whose downloads
+    /// straddled midnight therefore appears under both, each with the tracks
+    /// that landed then, rather than picking one day and lying about the rest.
+    ///
+    /// Grouping needs **two** tracks to be worth doing: a group exists to
+    /// collapse a crowd, and putting a lone arrival behind a twirl only hides
+    /// it. Albums only — a mixtape or a plain folder is a place you file
+    /// things over time rather than a thing that arrives, and its cover isn't
+    /// a sleeve.
+    private var days: [AddedDay] {
+        let calendar = Calendar.current
+        var albums: [UUID: Folder] = [:]
+        for folder in library.folders where library.isAlbumFolder(folder) {
+            albums[folder.id] = folder
+        }
+
+        var result: [AddedDay] = []
+        // `recentlyAddedTracks` is already newest-first, so a day ends exactly
+        // where the next one starts and no sorting is needed here.
+        for (start, arrivals) in consecutiveDays(of: tracks, calendar: calendar) {
+            var members: [UUID: [Track]] = [:]
+            for track in arrivals {
+                guard let id = track.folderID, albums[id] != nil else { continue }
+                members[id, default: []].append(track)
+            }
+            var items: [AddedListItem] = []
+            var placed: Set<UUID> = []
+            for track in arrivals {
+                guard let id = track.folderID, let folder = albums[id],
+                      let group = members[id], group.count > 1 else {
+                    items.append(.track(track))
+                    continue
+                }
+                guard placed.insert(id).inserted else { continue }
+                items.append(.album(AddedAlbumGroup(
+                    id: "\(start.timeIntervalSinceReferenceDate)|\(id.uuidString)",
+                    folder: folder, tracks: group)))
+            }
+            result.append(AddedDay(id: start, items: items))
+        }
+        return result
+    }
+
+    /// Splits an already newest-first list into runs that share a calendar day.
+    private func consecutiveDays(of list: [Track],
+                                 calendar: Calendar) -> [(Date, [Track])] {
+        var runs: [(Date, [Track])] = []
+        for track in list {
+            let start = calendar.startOfDay(for: track.dateAdded)
+            if runs.last?.0 == start {
+                runs[runs.count - 1].1.append(track)
+            } else {
+                runs.append((start, [track]))
+            }
+        }
+        return runs
+    }
+
+    private func expansion(of id: String) -> Binding<Bool> {
+        Binding(get: { expandedAlbums.contains(id) },
+                set: { open in
+                    if open { expandedAlbums.insert(id) } else { expandedAlbums.remove(id) }
+                })
     }
 
     @ToolbarContentBuilder

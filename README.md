@@ -146,7 +146,22 @@ vertical space goes to the content instead.
    not to be what the list was wanted for. "What did I add lately?" is the
    question, and playing a track is no answer to it: nothing leaves for having
    been played. (The green glyph that used to flag an unheard track went with
-   the idea; **Mark Played** and **Mark All Played** with it.) It keeps its
+   the idea; **Mark Played** and **Mark All Played** with it.)
+
+   It's divided **by day** — *Today*, *Yesterday*, then the date — because
+   when a thing arrived is half of what the tab is for, and a heading makes
+   that readable without a timestamp on every row. Within a day, a **record
+   that arrived that day folds into one collapsible group** wearing its
+   sleeve, its artist and its track count — the same shape the Download tab
+   gives a record in the queue, and for the same reason: an album arriving is
+   *one* thing that happened, and a dozen rows of it would bury the rest of
+   the day. Groups start closed. Two tracks are needed to make one, since a
+   group exists to collapse a crowd and putting a lone arrival behind a twirl
+   only hides it; and a download that ran past midnight appears under both
+   days, each holding the tracks that actually landed then, rather than
+   picking one and lying about the rest. Albums only — a mixtape or a plain
+   folder is somewhere you file things over time rather than a thing that
+   arrives. It keeps its
    **Select** button: tick several tracks and the corner menu will **Move to
    Folder**, **Share** or **Delete** the lot — a batch download arrives in a
    batch and is usually filed in one — and while selecting, a tap ticks a row
@@ -1800,7 +1815,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `BrowseSourceView.swift` | One source's items with per-row Download/Preview/Discard, plus a **Select** mode for bulk download; also `BrowseTrackStatusButton`, the green play button every browse list shows once a download is in the library. |
 | `BrowsePreviewView.swift` | The preview modal: pipeline download, mini player with prev/play-pause/next over the queue it was opened with (auto-advancing at the end of each track — off its own frozen-playhead watchdog, not just the end notification — phone locked or not), the lock-screen metadata it borrows while it plays, Save/Discard. |
 | `*View.swift` | The five SwiftUI screens, in tab order (Browse, Library, Player, Download, Settings — which embeds the Log); none of them sets a navigation title. `DownloadView.swift` also holds the queue's album grouping — the collapsible record with its cover, count and whole-album bar. `LibraryView.swift` also holds `LibraryTab`, the Recent/Folders/Added/Watch/All strip, the Folders tab's two shapes (the list, and the cover view's album grid), the shared track-menu entries every list drops into its `contextMenu` (Sync to Local, Send to Watch, View Discography, **Copy to Folder**, **Find Alternative**, AI Organize, Get Album Art, Get Subtitles, Convert Format), and Find Alternative's own search screen. `PlayerView.swift` also holds the tap-to-seek scrubber, the caption overlay (and its own 5 Hz playhead clock), the `MiniPlayerBar` the other tabs inset above the tab bar, and the album-art loaders (`TrackArtwork`, `FolderArtwork`, `FolderCover`) — each a bounded `ImageCache` with a full decode for the big slots and an ImageIO thumbnail for the row-sized ones. |
-| `FolderView.swift` | Folder detail (tap-to-play, reorder, subfolders, mixtape header/Edit Cover, the album sleeve that opens its art options and the Discography row beneath its tracks), the discography push a library album makes, plus the Library's Added and Recent tabs — the latter including the pinned folder and the row-by-row frame that draws its border. |
+| `FolderView.swift` | Folder detail (tap-to-play, reorder, subfolders, mixtape header/Edit Cover, the album sleeve that opens its art options and the Discography row beneath its tracks), the discography push a library album makes, plus the Library's Added and Recent tabs — Added including its day sections and the collapsible album group each day folds a record into (`AddedDay`/`AddedListItem`/`AddedAlbumGroup`), Recent including the pinned folder and the row-by-row frame that draws its border. |
 | `MixtapeViews.swift` | Mixtape banner rendering (non-destructive crop), the shared folder-row label, and the Edit Cover sheet (PhotosPicker + drag/pinch + font picker). |
 | `AlbumViews.swift` | The album side of a folder: the stand-in colour palette, the square sleeve (cover or colour) the folder screen and the cover grid draw, the grid's own cell, the Custom Album Art sheet — PhotosPicker, square framing, and the crop that turns the framing into the JPEG copied onto every song — and **Retrieve Album Art**'s finder: the artist search (memoized for the session), the chosen artist's covers as a grid, and the pick that hands one to `ArtworkFetcher`. |
 | `WatchFolderView.swift` | The phone's Library **Watch** tab (manage what's been sent to the watch). |
