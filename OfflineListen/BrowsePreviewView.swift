@@ -918,7 +918,7 @@ final class BrowsePreviewModel: ObservableObject, RemoteAudioSource {
         if duration <= 0 {
             // Extractor metadata can lack a duration; read it off the file.
             Task { [weak self] in
-                let real = await mediaDuration(of: media.fileURL)
+                let real = await mediaDuration(of: media.fileURL, isVideo: media.isVideo)
                 guard let self else { return }
                 self.duration = real
                 self.playback?.remoteAudioDidChange(self)

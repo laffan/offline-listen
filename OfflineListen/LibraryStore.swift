@@ -460,6 +460,11 @@ final class LibraryStore: ObservableObject {
         return cachedTracksByFolder?[folderID] ?? []
     }
 
+    /// Set once the library has been swept for doubled durations recorded
+    /// before `MediaDuration` existed. Versioned, so a later correction can
+    /// ask for the sweep again.
+    private static let durationsRecheckedKey = "durationsRechecked.v1"
+
     init() {
         if let raw = UserDefaults.standard.string(forKey: Self.folderSortKey),
            let sort = FolderSort(rawValue: raw) {
@@ -471,6 +476,7 @@ final class LibraryStore: ObservableObject {
         }
         groupSyncedFolders = UserDefaults.standard.bool(forKey: Self.groupSyncedKey)
         load()
+        recheckDurationsIfNeeded()
     }
 
     func load() {
@@ -1370,15 +1376,69 @@ final class LibraryStore: ObservableObject {
             var changed = false
             for id in ids {
                 guard let index = tracks.firstIndex(where: { $0.id == id }) else { continue }
-                let asset = AVURLAsset(url: tracks[index].fileURL)
-                guard let duration = try? await asset.load(.duration).seconds,
-                      duration.isFinite, duration > 0,
+                let url = tracks[index].fileURL
+                let isVideo = tracks[index].isVideo
+                guard let duration = await MediaDuration.measure(at: url, isVideo: isVideo),
                       let liveIndex = tracks.firstIndex(where: { $0.id == id }) else { continue }
                 tracks[liveIndex].duration = duration
                 changed = true
             }
             if changed { save() }
         }
+    }
+
+    /// Re-reads the durations of tracks recorded before the over-read was
+    /// checked for, once, and corrects the ones that were doubled.
+    ///
+    /// A track that came in through a sync folder has no source metadata to
+    /// take a length from, so its duration *is* AVFoundation's reading of the
+    /// container — which is the reading that doubles on HE-AAC/SBR audio (see
+    /// `MediaDuration`). The Player's over-read defence works by catching the
+    /// file claiming far more than the recorded figure, so a recorded figure
+    /// taken *from* the file leaves nothing to catch: the scrubber showed
+    /// twice the length and the track played out a song's worth of silence
+    /// before the queue moved on.
+    ///
+    /// Newly imported tracks are measured properly now. This is for the ones
+    /// already in the library: one pass, at launch, off the main actor, asking
+    /// only the cheap question (the decoder's own length, no asset load) and
+    /// writing back only where the stored figure is about double it.
+    private func recheckDurationsIfNeeded() {
+        guard !UserDefaults.standard.bool(forKey: Self.durationsRecheckedKey) else { return }
+        let candidates = tracks.map {
+            (id: $0.id, url: $0.fileURL, stored: $0.duration, isVideo: $0.isVideo)
+        }
+        guard !candidates.isEmpty else {
+            UserDefaults.standard.set(true, forKey: Self.durationsRecheckedKey)
+            return
+        }
+        Task.detached(priority: .utility) { [weak self] in
+            var corrections: [UUID: Double] = [:]
+            for candidate in candidates {
+                guard let fixed = MediaDuration.correction(for: candidate.stored,
+                                                           at: candidate.url,
+                                                           isVideo: candidate.isVideo) else { continue }
+                corrections[candidate.id] = fixed
+            }
+            await MainActor.run {
+                self?.applyDurationCorrections(corrections, checked: candidates.count)
+            }
+        }
+    }
+
+    private func applyDurationCorrections(_ corrections: [UUID: Double], checked: Int) {
+        UserDefaults.standard.set(true, forKey: Self.durationsRecheckedKey)
+        guard !corrections.isEmpty else { return }
+        var changed = false
+        for (id, duration) in corrections {
+            guard let index = tracks.firstIndex(where: { $0.id == id }),
+                  tracks[index].duration != duration else { continue }
+            tracks[index].duration = duration
+            changed = true
+        }
+        if changed { save() }
+        appLog("Re-read \(checked) track length(s): \(corrections.count) had been recorded at about double and are corrected.",
+               level: .success, category: "Library")
     }
 
     // MARK: - Mixtapes

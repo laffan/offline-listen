@@ -1772,7 +1772,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `DownloadManager.swift` | Download queue (two concurrent slots) + `DownloadJob` + persisted history; `enqueueAlbum`, which files a whole release into one folder in tracklist order with the catalogue's own titles/artists and marks its jobs so the Download tab groups them; `AlbumDownloadProgress`, the per-record tally the group's header reads (the jobs publish only to their own rows); `ArtworkFetcher`, the best-effort album-art fetch a finished download (or an album folder) triggers; and `VideoQualityChooser`, which puts the source's real rendition list to the user mid-extraction (once per video, hand-queued downloads only). |
 | `PythonGate.swift` | App-wide async mutex serializing every embedded-Python call, so the two-slot pipeline never runs concurrent interpreter work. |
 | `ExtractionMemory.swift` | What the pipeline learned *this session* about which route actually produces a file — the native extractor's rest, the default path's skip, and the player-client order the forced sweep leads with (see [What the pipeline remembers](#what-the-pipeline-remembers)). |
-| `YouTubeExtractor.swift` | `MediaExtractor` protocol + YoutubeDL-iOS impl + a mock. |
+| `YouTubeExtractor.swift` | `MediaExtractor` protocol + YoutubeDL-iOS impl + a mock; also `MediaVerifier` (a finished download has to be decodable before it counts as one) and `MediaDuration`, the two-reader length check that catches AVFoundation's HE-AAC over-read. |
 | `YouTubeKitExtractor.swift` | Native-Swift (b5i/YouTubeKit) primary extractor. |
 | `VimeoExtractor.swift` | Native-Swift Vimeo extractor: finds the (signed) player config for the title, progressive MP4s and HLS playlist — no Python. |
 | `CompositeExtractor.swift` | Tries the native extractor, falls back to yt-dlp. |
@@ -2255,15 +2255,41 @@ a track and never moved on.
 
 **The duration recorded at download wins that argument**, and it's worth being
 precise about why: it comes from the source's own metadata, while the other
-figure is AVFoundation's reading of a container it is known to misread. (When a
-duration *is* read off the file — a local-sync import — the two are literally
-the same number, so there's no disagreement to have.) A playhead past the
+figure is AVFoundation's reading of a container it is known to misread. A
+playhead past the
 recorded end, on a file claiming far more than that, is the audio being over
 whatever the container says is left, and the track ends there. The gap has to be
 large before the recorded figure is allowed to end a track early — a quarter as
 long again, and at least ten seconds — so ordinary slop between a container and
 its metadata never clips anything. An over-read is around double; nothing else
 comes close.
+
+**Which leaves the file that has no source metadata to be measured against.**
+The parenthesis that used to sit in that last paragraph — *when a duration is
+read off the file, the two are literally the same number, so there's no
+disagreement to have* — was true, and reading it as "so there's nothing to go
+wrong" was the mistake. A track that arrives through a **sync folder** has no
+download metadata; its recorded duration *is* the container's figure. Agreement
+on a wrong number is not agreement on a right one, and the defence above, which
+works by catching the file claiming far more than the record, had nothing to
+catch. Those tracks showed twice their length on the scrubber and played out a
+song's worth of silence before the queue moved on — the original bug, surviving
+in exactly the case the original fix had excused. The same went for downloads
+through the native extractor, which verifies the file it just wrote and records
+*that* length when the source didn't state one.
+
+So a duration read off a file is now **read twice** (`MediaDuration`).
+`AVURLAsset` gives the container's account; `AVAudioFile` reaches the same file
+through ExtAudioFile and gives its length in **decoded frames** — the audio a
+decoder will actually produce, which is the audio you will actually hear. On an
+ordinary file the two are the same number and nothing happens. When the
+container's figure is between 1.75× and 2.25× the decoder's, it is the over-read
+and the decoder's figure is recorded instead, with a line in the Log saying so.
+Nothing else is touched: a disagreement of any other shape leaves the container's
+figure standing, and a file `AVAudioFile` won't open (a video container) has no
+second opinion to offer and keeps its first. Libraries recorded before this get
+one pass at launch that asks only the cheap half of the question — the decoder's
+length against the stored one — and corrects what was doubled.
 
 The scrubber follows the same rule, and for one revision it didn't: letting the
 display switch to the file's clock mid-play is what sent the bar jumping back to

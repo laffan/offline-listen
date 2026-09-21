@@ -119,11 +119,98 @@ enum PlayableVideoCodec {
     }
 }
 
+/// Reading a local media file's real playing length.
+///
+/// `AVURLAsset.duration` is the obvious answer and is right almost every time.
+/// It is not right for some **HE-AAC/SBR** audio, which it over-reports by
+/// almost exactly double — 306 seconds for a 153-second song, in the case that
+/// first turned this up. Such a file codes its core at half the output rate and
+/// rebuilds the top half on the way out; a container that counts its samples at
+/// one of those rates and declares its timescale at the other lands on twice
+/// the truth, and nothing in the container says which of the two it meant.
+///
+/// A **second reader** settles it. `AVAudioFile` reaches the same file through
+/// ExtAudioFile and reports its length in *decoded* frames — the audio a
+/// decoder will actually produce, which is also the audio you will actually
+/// hear. On an ordinary file the two readings are the same number. When they
+/// differ by a factor of two, the short one is the music and the long one is
+/// the container's arithmetic.
+///
+/// Why it matters beyond a wrong number on a scrubber: the Player's defence
+/// against the over-read (`PlaybackManager.isPastRecordedEnd`) works by
+/// noticing the *file* claiming far more than the *recorded* duration. A
+/// download records the source's own metadata, so the disagreement is there to
+/// notice. A track read off disk — anything that came in through a sync folder
+/// — used to record the container's figure verbatim, leaving the two numbers
+/// in perfect agreement on the wrong one, and the defence with nothing to
+/// catch: the scrubber read double and the track played out a song's length of
+/// silence before the queue moved on.
+enum MediaDuration {
+    /// How far apart the two readings have to be before the container is
+    /// judged wrong, and how far apart they can be before the disagreement
+    /// stops looking like the doubling and starts looking like something this
+    /// doesn't understand. An over-read is *about* double; ordinary slop
+    /// between a container and its media is a fraction of a second.
+    private static let lowerFactor = 1.75
+    private static let upperFactor = 2.25
+
+    /// The file's length, both readings reconciled. Nil only when neither
+    /// reader could make anything of the file.
+    ///
+    /// **Audio only.** A video is measured by its container and left alone: the
+    /// over-read is an audio-codec quirk, and a video's audio track is under no
+    /// obligation to run the length of its picture — a film that ends on a
+    /// silent minute would look exactly like a doubled container and be cut
+    /// short for it.
+    static func measure(at url: URL, isVideo: Bool) async -> Double? {
+        let asset = AVURLAsset(url: url)
+        var claimed: Double?
+        if let seconds = try? await asset.load(.duration).seconds, seconds.isFinite, seconds > 0 {
+            claimed = seconds
+        }
+        guard !isVideo else { return claimed }
+        // Off the main actor: this one opens the file and walks its packet
+        // table, and it is called in a loop over a whole sync import.
+        let decoded = await Task.detached(priority: .utility) { Self.decodedSeconds(at: url) }.value
+        guard let decoded else { return claimed }
+        guard let claimed else { return decoded }
+        guard isOverRead(claimed: claimed, decoded: decoded) else { return claimed }
+        appLog("\(url.lastPathComponent): the container claims \(Int(claimed))s, the audio runs \(Int(decoded))s — taking the audio's.",
+               level: .warning, category: "Library")
+        return decoded
+    }
+
+    /// The correction a duration **already recorded** needs, or nil when it
+    /// needs none.
+    ///
+    /// Deliberately cheaper than `measure`: it compares the stored figure
+    /// against the decoder's own and never loads the asset, because the stored
+    /// figure is what the asset would have said. Synchronous, for a caller
+    /// that is already off the main actor.
+    static func correction(for stored: Double, at url: URL, isVideo: Bool) -> Double? {
+        guard !isVideo, stored > 0, let decoded = decodedSeconds(at: url),
+              isOverRead(claimed: stored, decoded: decoded) else { return nil }
+        return decoded
+    }
+
+    private static func isOverRead(claimed: Double, decoded: Double) -> Bool {
+        decoded > 0 && claimed > decoded * lowerFactor && claimed < decoded * upperFactor
+    }
+
+    /// The file's length in decoded frames, as seconds. Nil for anything
+    /// `AVAudioFile` won't open, which simply leaves the asset's figure
+    /// standing.
+    private static func decodedSeconds(at url: URL) -> Double? {
+        guard let file = try? AVAudioFile(forReading: url) else { return nil }
+        let rate = file.processingFormat.sampleRate
+        guard rate > 0, file.length > 0 else { return nil }
+        return Double(file.length) / rate
+    }
+}
+
 /// Reads the duration of a local media file (audio or video).
-func mediaDuration(of url: URL) async -> Double {
-    guard let seconds = try? await AVURLAsset(url: url).load(.duration).seconds,
-          seconds.isFinite else { return 0 }
-    return seconds
+func mediaDuration(of url: URL, isVideo: Bool) async -> Double {
+    await MediaDuration.measure(at: url, isVideo: isVideo) ?? 0
 }
 
 /// Verifies a finished download is actually decodable before it's surfaced as a
@@ -143,7 +230,10 @@ enum MediaVerifier {
         let asset = AVURLAsset(url: url)
         let neededType: AVMediaType = isVideo ? .video : .audio
         let tracks = (try? await asset.loadTracks(withMediaType: neededType)) ?? []
-        let duration = ((try? await asset.load(.duration))?.seconds) ?? 0
+        // Reconciled rather than taken from the container: this figure is what
+        // several download routes record as the track's length, and the
+        // container is not always to be believed about it (see `MediaDuration`).
+        let duration = await MediaDuration.measure(at: url, isVideo: isVideo) ?? 0
         guard !tracks.isEmpty, duration.isFinite, duration > 0 else {
             throw ExtractorError.downloadFailed(
                 "The downloaded file isn't playable (no decodable \(isVideo ? "video" : "audio") track) — the stream was likely truncated or corrupted.")
