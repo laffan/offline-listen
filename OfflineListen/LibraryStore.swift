@@ -305,6 +305,35 @@ final class LibraryStore: ObservableObject {
     var archivedTracks: [Track] { tracks.filter { $0.isArchived } }
     /// Active tracks not assigned to any folder — the main library list.
     var unfiledActiveTracks: [Track] { activeTracks.filter { $0.folderID == nil } }
+
+    /// Every mixtape, **the one added to most recently first**.
+    ///
+    /// The order a "which mixtape?" list wants: the tape you are filling is
+    /// overwhelmingly the tape you are about to fill again, and having it at
+    /// the top is the difference between one tap and a scroll through everything
+    /// you have ever made.
+    ///
+    /// "Added to" is the newest `dateAdded` among the tracks it holds. A
+    /// mixtape with nothing in it yet has no such date and falls back to when
+    /// it was *made*, which is the same question asked of an empty tape; ties
+    /// (two empty ones from the same moment) settle by name so the list never
+    /// shuffles itself between redraws.
+    var mixtapesByRecentAddition: [Folder] {
+        let mixtapes = activeFolders.filter { $0.isMixtape }
+        guard !mixtapes.isEmpty else { return [] }
+        var lastAdded: [UUID: Date] = [:]
+        for track in activeTracks {
+            guard let id = track.folderID else { continue }
+            if let known = lastAdded[id], known >= track.dateAdded { continue }
+            lastAdded[id] = track.dateAdded
+        }
+        return mixtapes.sorted { left, right in
+            let leftDate = lastAdded[left.id] ?? left.dateCreated
+            let rightDate = lastAdded[right.id] ?? right.dateCreated
+            if leftDate != rightDate { return leftDate > rightDate }
+            return left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
+        }
+    }
     /// How far back the **Added** tab looks. A cap rather than a window: the
     /// tab is for finding what arrived recently, and a list that runs to
     /// thousands stops being that long before it stops being expensive.

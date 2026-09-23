@@ -312,7 +312,30 @@ vertical space goes to the content instead.
    ten. The swipe has to be a deliberate one, downward and longer than it is
    wide, and anything inside that wants a drag of its own keeps it (the
    scrubber above all); a fullscreen video opts out entirely, since there the
-   picture owns the screen. Beneath the transport, the **previous track** is named
+   picture owns the screen.
+
+   **Tapping the sleeve turns it over**, onto the two things worth doing to
+   the song you are listening to: **Pin to Recent**, which keeps it at the top
+   of the Recent tab where the log can't scroll it away (and reads *Unpin* once
+   it's there, so a second tap isn't a no-op), and **Copy to Mixtape**. The
+   actions sit *on* the artwork rather than under it because the player is a
+   tight column — a row of buttons wedged in would push the scrubber and the
+   transport down permanently, for two things you reach for occasionally — and
+   the sleeve is the one thing on the screen big enough to be an obvious target
+   with nothing else to do. Tapping anywhere else on it puts them away, and so
+   does the track changing: they belong to the song that was playing.
+
+   **Copy to Mixtape** lists your mixtapes **most recently added to first**,
+   because filling a mixtape is something you do in a sitting: the tape you
+   last put a song on is almost always the tape the next song is for. Each row
+   is the mixtape's own banner — its cover, its title in the font you gave it —
+   rather than a line of text, since a mixtape is a thing you made and
+   recognise by looking at it. Tapping one makes a copy there — the same
+   **Copy to Folder** the Library's track menus offer, with its own file, so
+   the original stays exactly where it is — and says so over the sleeve. The
+   tape the song is already playing from isn't offered.
+
+   Beneath the transport, the **previous track** is named
    on the left and the **next track** on the right (labelled as such, with
    artist under title) — tap either to go straight to it. Video is
    edge-to-edge in portrait, and **tapping the picture hands it the whole
@@ -1814,7 +1837,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `EveryNoiseData/` | Bundled (folder reference): `genres.json` index + per-genre artist shards from the one-time `tools/everynoise/scrape.py`, plus the derived `artists.idx.z` from `build_artist_index.py`. |
 | `BrowseSourceView.swift` | One source's items with per-row Download/Preview/Discard, plus a **Select** mode for bulk download; also `BrowseTrackStatusButton`, the green play button every browse list shows once a download is in the library. |
 | `BrowsePreviewView.swift` | The preview modal: pipeline download, mini player with prev/play-pause/next over the queue it was opened with (auto-advancing at the end of each track — off its own frozen-playhead watchdog, not just the end notification — phone locked or not), the lock-screen metadata it borrows while it plays, Save/Discard. |
-| `*View.swift` | The five SwiftUI screens, in tab order (Browse, Library, Player, Download, Settings — which embeds the Log); none of them sets a navigation title. `DownloadView.swift` also holds the queue's album grouping — the collapsible record with its cover, count and whole-album bar. `LibraryView.swift` also holds `LibraryTab`, the Recent/Folders/Added/Watch/All strip, the Folders tab's two shapes (the list, and the cover view's album grid), the shared track-menu entries every list drops into its `contextMenu` (Sync to Local, Send to Watch, View Discography, **Copy to Folder**, **Find Alternative**, AI Organize, Get Album Art, Get Subtitles, Convert Format), and Find Alternative's own search screen. `PlayerView.swift` also holds the tap-to-seek scrubber, the caption overlay (and its own 5 Hz playhead clock), the `MiniPlayerBar` the other tabs inset above the tab bar, and the album-art loaders (`TrackArtwork`, `FolderArtwork`, `FolderCover`) — each a bounded `ImageCache` with a full decode for the big slots and an ImageIO thumbnail for the row-sized ones. |
+| `*View.swift` | The five SwiftUI screens, in tab order (Browse, Library, Player, Download, Settings — which embeds the Log); none of them sets a navigation title. `DownloadView.swift` also holds the queue's album grouping — the collapsible record with its cover, count and whole-album bar. `LibraryView.swift` also holds `LibraryTab`, the Recent/Folders/Added/Watch/All strip, the Folders tab's two shapes (the list, and the cover view's album grid), the shared track-menu entries every list drops into its `contextMenu` (Sync to Local, Send to Watch, View Discography, **Copy to Folder**, **Find Alternative**, AI Organize, Get Album Art, Get Subtitles, Convert Format), and Find Alternative's own search screen. `PlayerView.swift` also holds the tap-to-seek scrubber, the caption overlay (and its own 5 Hz playhead clock), the actions a tap on the sleeve reveals and the `MixtapePickerView` behind Copy to Mixtape, the `MiniPlayerBar` the other tabs inset above the tab bar, and the album-art loaders (`TrackArtwork`, `FolderArtwork`, `FolderCover`) — each a bounded `ImageCache` with a full decode for the big slots and an ImageIO thumbnail for the row-sized ones. |
 | `FolderView.swift` | Folder detail (tap-to-play, reorder, subfolders, mixtape header/Edit Cover, the album sleeve that opens its art options and the Discography row beneath its tracks), the discography push a library album makes, plus the Library's Added and Recent tabs — Added including its day sections and the collapsible album group each day folds a record into (`AddedDay`/`AddedListItem`/`AddedAlbumGroup`), Recent including the pinned folder and the row-by-row frame that draws its border. |
 | `MixtapeViews.swift` | Mixtape banner rendering (non-destructive crop), the shared folder-row label, and the Edit Cover sheet (PhotosPicker + drag/pinch + font picker). |
 | `AlbumViews.swift` | The album side of a folder: the stand-in colour palette, the square sleeve (cover or colour) the folder screen and the cover grid draw, the grid's own cell, the Custom Album Art sheet — PhotosPicker, square framing, and the crop that turns the framing into the JPEG copied onto every song — and **Retrieve Album Art**'s finder: the artist search (memoized for the session), the chosen artist's covers as a grid, and the pick that hands one to `ArtworkFetcher`. |

@@ -200,6 +200,18 @@ struct PlayerView: View {
     /// (title, transport, nav and tab bars all out of the way) until it's
     /// tapped back down. Landscape goes fullscreen on its own, by orientation.
     @State private var portraitFullscreen = false
+    /// Whether the sleeve is showing what it can do — set by tapping it. The
+    /// actions live *on* the artwork rather than under it because the player
+    /// is a tight column: a row of buttons wedged in would push the scrubber
+    /// and the transport down every time, for two things you reach for
+    /// occasionally.
+    @State private var artworkActions = false
+    /// The track whose **Copy to Mixtape** list is up.
+    @State private var copyingToMixtape: Track?
+    /// The brief confirmation over the sleeve after a copy — the same flash
+    /// the CC button uses, for the same reason: the list dismisses itself and
+    /// nothing on this screen would otherwise change.
+    @State private var artworkNotice: String?
 
     /// Whether the picture is currently filling the screen — landscape
     /// (compact height) with a video track, or portrait after a tap on it.
@@ -241,6 +253,18 @@ struct PlayerView: View {
             // owns the screen, and a stray downward drag shouldn't dump you
             // out of the film.
             .gesture(swipeDown, including: isFullscreenVideo ? .subviews : .all)
+        }
+        .sheet(item: $copyingToMixtape) { track in
+            MixtapePickerView(track: track) { mixtape in
+                library.copy(track, toFolder: mixtape.id)
+                flashOverArtwork("Copied to \(mixtape.name)")
+            }
+        }
+        // A track finishing takes the sleeve's actions with it: they belong to
+        // the song that was playing, and the next one is a different song.
+        .onChange(of: playback.currentTrack?.id) { _ in
+            artworkActions = false
+            artworkNotice = nil
         }
         .statusBarHidden(isFullscreenVideo)
         // A fresh track starts framed normally — the old one's fullscreen
@@ -477,18 +501,96 @@ struct PlayerView: View {
     /// gradient placeholder. Artwork lands moments *after* a download (it's
     /// fetched best-effort once the track exists), so the library's live copy
     /// is consulted rather than playback's snapshot.
+    ///
+    /// Tapping it turns the sleeve over: what you can do with the song you are
+    /// listening to, on the one thing on this screen big enough to be an
+    /// obvious target and with nothing else to do.
     @ViewBuilder
     private func artworkView(_ track: Track) -> some View {
         let live = library.track(withID: track.id) ?? track
-        if let image = TrackArtwork.image(for: live) {
-            Image(platformImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 260, height: 260)
-                .clipShape(RoundedRectangle(cornerRadius: 20))
-                .shadow(radius: 12, y: 6)
-        } else {
-            placeholderArtwork
+        Group {
+            if let image = TrackArtwork.image(for: live) {
+                Image(platformImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 260, height: 260)
+                    .clipShape(RoundedRectangle(cornerRadius: 20))
+                    .shadow(radius: 12, y: 6)
+            } else {
+                placeholderArtwork
+            }
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .onTapGesture {
+            withAnimation(.easeInOut(duration: 0.18)) { artworkActions.toggle() }
+        }
+        // After the tap target, so the buttons sit above it and take their own
+        // taps — the same layering the video tap target uses.
+        .overlay { artworkOverlay(live) }
+    }
+
+    /// What the sleeve shows once it has been tapped: the two things worth
+    /// doing to the song that is playing, and a tap anywhere else on the art
+    /// to put them away again.
+    @ViewBuilder
+    private func artworkOverlay(_ track: Track) -> some View {
+        if artworkActions {
+            let pinned = library.isPinnedInRecent(track.id)
+            VStack(spacing: 12) {
+                artworkButton(pinned ? "Unpin from Recent" : "Pin to Recent",
+                              systemImage: pinned ? "pin.slash" : "pin") {
+                    // The label flips under the finger, which is the whole
+                    // confirmation this one needs — so the sleeve stays open.
+                    withAnimation { library.toggleRecentPin(track.id) }
+                }
+                artworkButton("Copy to Mixtape", systemImage: "plus.rectangle.on.folder") {
+                    copyingToMixtape = track
+                    withAnimation(.easeInOut(duration: 0.18)) { artworkActions = false }
+                }
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(.ultraThinMaterial)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .onTapGesture {
+                withAnimation(.easeInOut(duration: 0.18)) { artworkActions = false }
+            }
+            .transition(.opacity)
+        } else if let artworkNotice {
+            Text(artworkNotice)
+                .font(.caption.weight(.semibold))
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(.ultraThinMaterial, in: Capsule())
+                .padding(12)
+                .transition(.opacity)
+        }
+    }
+
+    private func artworkButton(_ title: String, systemImage: String,
+                               action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.regular)
+    }
+
+    /// Says what just happened, then gets out of the way. Keyed on the text
+    /// itself so a second action during the wait doesn't have its notice
+    /// cleared by the first one's timer.
+    private func flashOverArtwork(_ notice: String) {
+        withAnimation { artworkNotice = notice }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_800_000_000)
+            guard artworkNotice == notice else { return }
+            withAnimation { artworkNotice = nil }
         }
     }
 
@@ -1238,3 +1340,70 @@ struct NativeVideoPlayer: NSViewRepresentable {
     }
 }
 #endif
+
+/// **Copy to Mixtape**, from the Player's sleeve: which tape does this song
+/// join?
+///
+/// Ordered by the one added to **most recently** (`mixtapesByRecentAddition`),
+/// because filling a mixtape is something you do in a sitting: the tape you
+/// last put a song on is almost always the tape the next song is for, and
+/// having it at the top is the difference between one tap and a scroll through
+/// everything you have ever made.
+///
+/// Each row is the mixtape's own banner — the cover, the title in the font it
+/// was given — rather than a line of text, since a mixtape is a thing you made
+/// and recognise by looking at it. It is the same `FolderRowLabel` the Library
+/// draws, so a tape looks here exactly as it does there.
+private struct MixtapePickerView: View {
+    @EnvironmentObject private var library: LibraryStore
+    @Environment(\.dismiss) private var dismiss
+
+    let track: Track
+    let onPick: (Folder) -> Void
+
+    /// Everywhere the song isn't already: copying it into the tape it is
+    /// playing from would make two identical rows side by side, which is never
+    /// what somebody meant by "copy".
+    private var mixtapes: [Folder] {
+        library.mixtapesByRecentAddition.filter { $0.id != track.folderID }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if mixtapes.isEmpty {
+                    ContentUnavailableViewCompat(
+                        title: "No mixtapes yet",
+                        systemImage: "recordingtape",
+                        description: "Touch and hold a folder in the Library and choose Convert to Mixtape."
+                    )
+                } else {
+                    List {
+                        Section {
+                            ForEach(mixtapes) { mixtape in
+                                Button {
+                                    onPick(mixtape)
+                                    dismiss()
+                                } label: {
+                                    FolderRowLabel(folder: mixtape,
+                                                   count: library.trackCount(in: mixtape.id))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        } footer: {
+                            Text("A copy of \u{201C}\(track.title)\u{201D} joins the mixtape, with its own file — the original stays where it is.")
+                        }
+                    }
+                    .listStyle(.plain)
+                }
+            }
+            .navigationTitle("Copy to Mixtape")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+    }
+}
