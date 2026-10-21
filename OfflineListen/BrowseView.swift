@@ -128,8 +128,10 @@ struct SearchView: View {
     }
 }
 
-/// The Search tab's four buttons, where a navigation bar would be: glyph over
-/// name, the one showing in the accent colour. Two of them carry news from the
+/// The Search tab's four buttons, where a navigation bar would be: a glyph
+/// each, with no name under it — four familiar icons read at a glance, and the
+/// names were costing the row half its height. The one showing wears the
+/// accent colour; VoiceOver still reads each by name. Two of them carry news from the
 /// section behind them — **Download** the number of downloads still working or
 /// waiting (the tab's own badge says the same from elsewhere in the app), and
 /// **Sources** a dot when a refresh has turned up items nobody has acted on.
@@ -161,20 +163,15 @@ private struct SearchSectionBar: View {
         return Button {
             selection = candidate
         } label: {
-            VStack(spacing: 3) {
-                Image(systemName: candidate.systemImage)
-                    .font(.body.weight(.semibold))
-                    .overlay(alignment: .topTrailing) { marker(for: candidate) }
-                Text(candidate.displayName)
-                    .font(.caption2.weight(.medium))
-                    .lineLimit(1)
-            }
-            .foregroundStyle(selected ? Color.accentColor : Color.secondary)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 6)
-            .background(selected ? Color.accentColor.opacity(0.12) : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 10))
-            .contentShape(Rectangle())
+            Image(systemName: candidate.systemImage)
+                .font(.title3.weight(.semibold))
+                .overlay(alignment: .topTrailing) { marker(for: candidate) }
+                .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .background(selected ? Color.accentColor.opacity(0.12) : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 10))
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel(for: candidate))

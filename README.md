@@ -20,8 +20,9 @@ space goes to the content instead.
    bookmarks behind buttons in its top-right corner, and Download — and the
    buttons that were a level down are now the tab's own organization. They
    stand where a navigation bar would (the tab has none at its top level; a
-   screen pushed from any section brings its own back), each a glyph over its
-   name with the one showing in the accent colour. Two of them carry news from
+   screen pushed from any section brings its own back), each a glyph alone —
+   no name beneath it — with the one showing in the accent colour (VoiceOver
+   still reads each by name). Two of them carry news from
    behind them: **Download** wears the number of downloads still working or
    waiting, and **Sources** a **dot** when a refresh has turned up items you
    haven't acted on. The same download count rides on the **Search tab's own
