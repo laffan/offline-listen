@@ -22,7 +22,7 @@ struct RootView: View {
     @EnvironmentObject private var videoQuality: VideoQualityChooser
     @State private var selection: Tab = .library
     /// Set while the Player's swipe-down is switching tabs, so arriving back in
-    /// the Library reads as going back rather than as a visit (see
+    /// the Library or Recent reads as going back rather than as a visit (see
     /// `AppRouter.libraryVisits`).
     @State private var returning = false
 
@@ -83,7 +83,7 @@ struct RootView: View {
             routeTrack()
         }
         .onChange(of: selection) { tab in
-            if tab == .library && !returning { router.noteLibraryVisit() }
+            if !returning { router.noteVisit(to: tab) }
             returning = false
         }
         .onChange(of: router.pendingBrowse) { _ in routeBrowse() }
@@ -102,8 +102,9 @@ struct RootView: View {
     }
 
     /// The Player's swipe-down: back to the screen the playing track was
-    /// started from — the album, the Recent list, the Random hand it was dealt
-    /// from — rather than to the Library regardless.
+    /// started from — the album, the Recent tab's Pinned, Recent or Ignored
+    /// list, the Random hand it was dealt from — rather than to the Library
+    /// regardless.
     private func returnToPlayContext() {
         returning = true
         switch router.playContext {
@@ -113,7 +114,8 @@ struct RootView: View {
         case .library(let place)?:
             router.pendingLibraryPlace = place
             selection = .library
-        case .recent?:
+        case .recent(let tab)?:
+            router.pendingRecentTab = tab
             selection = .recent
         case nil:
             // Nothing started this session — the track restored at launch.
@@ -141,7 +143,7 @@ struct RootView: View {
             return
         }
         playback.play(track, in: library.recentTracks)
-        router.notePlayStarted(in: .recent)
+        router.notePlayStarted(in: .recent(.recent))
         selection = .player
     }
 }

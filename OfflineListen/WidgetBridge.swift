@@ -122,21 +122,26 @@ final class AppRouter: ObservableObject {
     /// Where the track now playing was started — what the Player's swipe-down
     /// goes back to. Stamped by `RootView` as each track starts.
     private(set) var playContext: PlayContext?
-    /// The Library's and the Search tab's current spots, kept up to date by
-    /// those screens so a track starting can be stamped with where it started.
-    /// Plain properties: they're read at that moment and nothing redraws over
-    /// them.
+    /// The Library's, the Search tab's and the Recent tab's current spots,
+    /// kept up to date by those screens so a track starting can be stamped
+    /// with where it started. Plain properties: they're read at that moment
+    /// and nothing redraws over them.
     var libraryPlace = LibraryPlace()
     var searchSection: SearchSection = .browse
-    /// A spot for the Library (or the Search tab) to go back to, set by the
-    /// Player's swipe-down and cleared by the screen once it has.
+    var recentTab: RecentTab = .pinned
+    /// A spot for the Library (or the Search or Recent tab) to go back to, set
+    /// by the Player's swipe-down and cleared by the screen once it has.
     @Published var pendingLibraryPlace: LibraryPlace?
     @Published var pendingSearchSection: SearchSection?
+    @Published var pendingRecentTab: RecentTab?
     /// Counts the times the Library tab has been *visited* — picked from the
     /// tab bar — as against gone back to from the Player. The Random list
     /// deals itself a fresh hand on each visit and keeps the one it was
     /// playing from when it's gone back to.
     @Published private(set) var libraryVisits = 0
+    /// The same count for the Recent tab, whose **Ignored** list is a snapshot
+    /// taken per visit on the same terms.
+    @Published private(set) var recentVisits = 0
 
     /// Notes the screen a track is starting from. The Player and Settings
     /// start nothing of their own, so a start from there (the widget's, which
@@ -145,7 +150,7 @@ final class AppRouter: ObservableObject {
         switch tab {
         case .search: playContext = .search(searchSection)
         case .library: playContext = .library(libraryPlace)
-        case .recent: playContext = .recent
+        case .recent: playContext = .recent(recentTab)
         case .player, .settings: break
         }
     }
@@ -154,8 +159,13 @@ final class AppRouter: ObservableObject {
         playContext = context
     }
 
-    func noteLibraryVisit() {
-        libraryVisits += 1
+    /// Counts a visit to a tab, for the lists that are dealt afresh on one.
+    func noteVisit(to tab: Tab) {
+        switch tab {
+        case .library: libraryVisits += 1
+        case .recent: recentVisits += 1
+        case .search, .player, .settings: break
+        }
     }
 
     /// Returns false for a URL that isn't a widget link, so the caller can fall
@@ -180,7 +190,7 @@ final class AppRouter: ObservableObject {
 enum PlayContext: Equatable {
     case search(SearchSection)
     case library(LibraryPlace)
-    case recent
+    case recent(RecentTab)
 }
 
 /// A spot in the Library: the section showing, the screens pushed over it (an

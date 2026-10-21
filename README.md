@@ -456,47 +456,64 @@ space goes to the content instead.
    catalogue. **Convert to Folder** is the way back. See
    [Album folders](#album-folders).
 
-3. **Recent** — what you've **played**, most recent first: a tab of its own,
-   between the Library and the Player, rather than one of the Library's
-   sections, because what you've been listening to is somewhere you go as
-   often as the library itself. Each row shows when and, where the track has
-   one, its **album cover** in place of
-   the media glyph (the playing colour moves to a dot on the sleeve's corner,
-   so nothing is lost by showing a picture). It's the one list that earns the artwork: a list
-   you scan for a title reads fastest as text, but a list of things you've
-   *heard* is recognised fastest by its sleeves. A track
-   joins it the moment playback *starts*; it doesn't have to finish. It's a
-   **log, not a set**: the same track appears once per listen, so a track you
-   keep coming back to shows up repeatedly — only *consecutive* repeats are
-   collapsed, since restarting the track you're already on isn't a new listen.
-   Nothing lives there (the tracks stay wherever they are), so removing a row —
-   or **Clear** — only forgets the listen. The log keeps the last 200 plays in
-   `Documents/recents.json`. With nothing in the log there's nothing to Clear,
-   and the navigation bar goes too.
+3. **Recent** — a tab of its own, between the Library and the Player, because
+   what you've been listening to (and what you haven't) is somewhere you go as
+   often as the library itself. Like the Library it's divided by a strip of
+   **tabs** across the top — **Pinned**, **Recent** and **Ignored** — and it
+   opens on **Pinned**, the tracks you kept on purpose being what you most
+   often come back for. Every row wears its **album cover** where the track
+   has one, in place of the media glyph (the playing colour moves to a dot on
+   the sleeve's corner, so nothing is lost by showing a picture): a list you
+   scan for a title reads fastest as text, but a list of things you've
+   *heard* is recognised fastest by its sleeves. Nothing on this screen lives
+   anywhere — the tracks stay in whatever folder they're in — so every list
+   here is a set of references, and **swiping a row right** pins it (or, if
+   it's pinned, lets it go) in all three. There's no navigation bar: nothing
+   needs one, so the tabs start at the top of the screen.
 
-   **The pinned folder.** A log scrolls, which is exactly wrong for the one
-   track you keep going back to. **Swipe a row right** to **Pin** it and it
-   joins a **Pinned** folder at the top of the tab — a folder row like any
-   other (pin glyph, its count, tap to twirl it open and shut, and it stays put
-   at the head of the list while the log scrolls past under it). With the folder
-   **open**, a **border in the pin's own orange** runs around the whole thing —
-   header and tracks together, with a little room inside its top and bottom
-   edges — so the kept set reads as an area of its own rather than as a few
-   more rows of the log. Shut, there is nothing inside to fence off and no
-   border is drawn: a box around one closed row reads as a stray rectangle. A
-   `List` draws rows and not boxes, so it's assembled a row at a time: the rows
-   inside carry the side rails, the header caps it and the last pin closes it.
-   The frame also takes over the list's **row insets** — those sit outside the
-   row's content, so an overlay drawn on that content stopped short of its
-   neighbour's and the rails came out dashed, with a gap at every track. Newest pin
-   first; pinning the same track twice lifts it rather than listing it again,
-   since this one *is* a set. Tapping a pinned track plays **through the pinned
-   folder**, the way any curated folder plays. Swipe right again — or use **Pin
-   to Top** / **Unpin** in the touch-and-hold menu — to let it go. Like
-   everything else on this screen it's a reference, not a filing: nothing moves
-   on disk, a pinned track keeps whatever folder it actually lives in, and
-   **Clear** empties the log and leaves the pins alone. They persist to
-   `Documents/recent-pins.json`, and whether the folder is open persists too.
+   **Pinned.** A log scrolls, which is exactly wrong for the one track you
+   keep going back to; a pin keeps it. Newest pin first, and pinning the same
+   track twice lifts it rather than listing it again, since this one *is* a
+   set. Tapping a pinned track plays **through the pins** in list order, the
+   way any curated folder plays. Pin from a row's swipe or its touch-and-hold
+   menu here, or from the sleeve in the Player (**Pin to Recent**). **Clear**
+   empties the log and leaves the pins alone. They persist to
+   `Documents/recent-pins.json`. (Pins used to be a twirl-open folder with an
+   orange border, sat at the head of the log; with a tab of their own there's
+   no log to fence them off from, and the border and the twirl have gone.)
+
+   **Recent** is what you've **played**, most recent first, each row saying
+   when. A track joins it the moment playback *starts*; it doesn't have to
+   finish. It's a **log, not a set**: the same track appears once per listen,
+   so a track you keep coming back to shows up repeatedly — only
+   *consecutive* repeats are collapsed, since restarting the track you're
+   already on isn't a new listen. Removing a row — or **Clear Recent**, at
+   the foot of the list, the way History's Clear sits in Browse — only forgets
+   the listen. The log keeps the last 200 plays in `Documents/recents.json`.
+
+   **Ignored** is the **fifty songs that have gone longest without being
+   played**, longest first, each row saying when it was last heard (or
+   **Never played**). A song is measured from its last play, or — if it has
+   never been played — from when it arrived: either way, that's how long it
+   has sat unheard. Songs only, as in the Library's Random tab; a podcast you
+   haven't got to is a backlog, not a song you've forgotten. It plays as a
+   playlist, top to bottom.
+
+   It can't be read off the log, which forgets: it holds 200 plays and Clear
+   empties it. So each play also writes the track's **last-played date** to
+   `Documents/last-played.json`, a date per track that's ever been played,
+   which Clear doesn't touch. On the first launch with that file, it's filled
+   in from the log, so Ignored already knows about what you've played lately;
+   a song played before that and since fallen out of the log has no date, is
+   measured from its arrival, and shows its length where the date would be.
+
+   Like Random, the list is a **snapshot per visit**: playing a song takes it
+   off the live list — it's no longer ignored — and rows vanishing from under
+   the song you just tapped, its queue going with them, is no way to work
+   through what you've neglected. So it's taken when you arrive (the Recent
+   tab picked from the tab bar, or Ignored picked from its strip) and held
+   while you're there; swiping the Player back to it lands you on the
+   snapshot that's playing.
 
 4. **Player** — artwork, scrubber, play/pause, skip, next/previous — the same
    control suite for audio and video, and it drives the lock screen and
@@ -507,12 +524,13 @@ space goes to the content instead.
    works as before, so you never have to drag the playhead across a track
    just to skip ahead. **Swipe the player down** to put it away — it goes
    back to **where the playing track was started**: the album or folder it
-   was tapped in (with the screens that were pushed to reach it), the Recent
-   list, the Random tab's hand, a Library search's results, or the Search
-   section it came from. The swipe has to be a deliberate one, downward and
-   longer than it is wide, and anything inside that wants a drag of its own
-   keeps it (the scrubber above all); a fullscreen video opts out entirely,
-   since there the picture owns the screen.
+   was tapped in (with the screens that were pushed to reach it), whichever of
+   the Recent tab's Pinned, Recent or Ignored lists it came from, the Random
+   tab's hand, a Library search's results, or the Search section it came
+   from. The swipe has to be a deliberate one, downward and longer than it is
+   wide, and anything inside that wants a drag of its own keeps it (the
+   scrubber above all); a fullscreen video opts out entirely, since there the
+   picture owns the screen.
 
    *Where it was started* is noted at the moment it starts. `play` is always
    called from the screen being looked at, before that screen switches to the
@@ -529,9 +547,10 @@ space goes to the content instead.
    Library.
 
    **Tapping the sleeve turns it over**, onto the two things worth doing to
-   the song you are listening to: **Pin to Recent**, which keeps it at the top
-   of the Recent tab where the log can't scroll it away (and reads *Unpin* once
-   it's there, so a second tap isn't a no-op), and **Copy to Mixtape**. The
+   the song you are listening to: **Pin to Recent**, which keeps it in the
+   Recent tab's **Pinned** list where the log can't scroll it away (and reads
+   *Unpin* once it's there, so a second tap isn't a no-op), and **Copy to
+   Mixtape**. The
    actions sit *on* the artwork rather than under it because the player is a
    tight column — a row of buttons wedged in would push the scrubber and the
    transport down permanently, for two things you reach for occasionally — and
@@ -1839,7 +1858,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 |------|------|
 | `OfflineListenApp.swift` | App entry; wires up the shared stores. |
 | `Models.swift` | `Track`, `Folder`, `DownloadMode`, `LibraryFilter`, `FolderSort`, `FolderViewMode`, paths, helpers. |
-| `LibraryStore.swift` | Persists the library to `Documents/library.json` and folders to `Documents/folders.json`; owns the local moves across the sync boundary (queueing replica ops), the importer's reconcile primitives, and the mixtape/album conversions — including the album cover write that lands on the folder *and* every song in it, and the reset that puts the downloaded one (or a colour) back. |
+| `LibraryStore.swift` | Persists the library to `Documents/library.json` and folders to `Documents/folders.json` (and each track's last-played date to `Documents/last-played.json`, which the Recent tab's Ignored list sorts by); owns the local moves across the sync boundary (queueing replica ops), the importer's reconcile primitives, and the mixtape/album conversions — including the album cover write that lands on the folder *and* every song in it, and the reset that puts the downloaded one (or a colour) back. |
 | `LocalSync.swift` | `LocalSyncStore` — the sync folder's security-scoped bookmark, the stamped manifest + journaled exporter, the coordinated importer (placeholder-aware copies), kqueue monitoring, and the off-main tree scan. |
 | `DownloadManager.swift` | Download queue (two concurrent slots) + `DownloadJob` + persisted history; `enqueueAlbum`, which files a whole release into one folder in tracklist order with the catalogue's own titles/artists and marks its jobs so the Download section groups them; `AlbumDownloadProgress`, the per-record tally the group's header reads (the jobs publish only to their own rows); `ArtworkFetcher`, the best-effort album-art fetch a finished download (or an album folder) triggers; and `VideoQualityChooser`, which puts the source's real rendition list to the user mid-extraction (once per video, hand-queued downloads only). |
 | `PythonGate.swift` | App-wide async mutex serializing every embedded-Python call, so the two-slot pipeline never runs concurrent interpreter work. |
@@ -1887,7 +1906,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `BrowseSourceView.swift` | One source's items with per-row Download/Preview/Discard, plus a **Select** mode for bulk download; also `BrowseTrackStatusButton`, the green play button every browse list shows once a download is in the library. |
 | `BrowsePreviewView.swift` | The preview modal: pipeline download, mini player with prev/play-pause/next over the queue it was opened with (auto-advancing at the end of each track — off its own frozen-playhead watchdog, not just the end notification — phone locked or not), the lock-screen metadata it borrows while it plays, Save/Discard. |
 | `*View.swift` | The SwiftUI screens. The five tabs, in order: Search (`BrowseView.swift`'s `SearchView`, whose Download section is `DownloadView`), Library, Recent (`RecentView`, in `FolderView.swift`), Player and Settings — which embeds the Log; none of them sets a navigation title. `RootView.swift` holds the `TabView`, the Search tab's download badge, and the Player's swipe-down back to where its track was started. `DownloadView.swift` also holds the queue's album grouping — the collapsible record with its cover, count and whole-album bar. `LibraryView.swift` also holds `LibraryTab`, the Folders/Random/Watch/All strip (and the Random tab's hand, dealt on each visit and kept for a return), the Folders tab's two shapes (the list, and the cover view's album grid), the shared track-menu entries every list drops into its `contextMenu` (Sync to Local, Send to Watch, View Discography, **Copy to Folder**, **Find Alternative**, AI Organize, Get Album Art, Get Subtitles, Convert Format), and Find Alternative's own search screen. `PlayerView.swift` also holds the tap-to-seek scrubber, the caption overlay (and its own 5 Hz playhead clock), the actions a tap on the sleeve reveals and the `MixtapePickerView` behind Copy to Mixtape, the `MiniPlayerBar` the other tabs inset above the tab bar, and the album-art loaders (`TrackArtwork`, `FolderArtwork`, `FolderCover`) — each a bounded `ImageCache` with a full decode for the big slots and an ImageIO thumbnail for the row-sized ones. |
-| `FolderView.swift` | Folder detail (tap-to-play, reorder, subfolders, mixtape header/Edit Cover, the album sleeve that opens its art options and the Discography row beneath its tracks), the discography push a library album makes, plus the Library's **Random** tab (`RandomTracksView`) and the **Recent** tab (`RecentView` around `RecentTracksView`), Recent including the pinned folder and the row-by-row frame that draws its border. |
+| `FolderView.swift` | Folder detail (tap-to-play, reorder, subfolders, mixtape header/Edit Cover, the album sleeve that opens its art options and the Discography row beneath its tracks), the discography push a library album makes, plus the Library's **Random** tab (`RandomTracksView`) and the **Recent** tab — `RecentTab`, `RecentView` (the Pinned/Recent/Ignored strip and the Ignored snapshot it takes per visit) and `RecentTracksView`, the three lists. |
 | `MixtapeViews.swift` | Mixtape banner rendering (non-destructive crop), the shared folder-row label, and the Edit Cover sheet (PhotosPicker + drag/pinch + font picker). |
 | `AlbumViews.swift` | The album side of a folder: the stand-in colour palette, the square sleeve (cover or colour) the folder screen and the cover grid draw, the grid's own cell, the Custom Album Art sheet — PhotosPicker, square framing, and the crop that turns the framing into the JPEG copied onto every song — and **Retrieve Album Art**'s finder: the artist search (memoized for the session), the chosen artist's covers as a grid, and the pick that hands one to `ArtworkFetcher`. |
 | `WatchFolderView.swift` | The phone's Library **Watch** tab (manage what's been sent to the watch). |

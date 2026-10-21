@@ -44,11 +44,19 @@ enum AppPaths {
         documents.appendingPathComponent("recents.json")
     }
 
-    /// The tracks kept in the **Pinned** folder at the top of the Recent tab.
+    /// The tracks kept in the Recent tab's **Pinned** list.
     /// Separate from the log for the same reason the log is separate from the
     /// library: it records what you decided about a listen, not what's on disk.
     static var recentPins: URL {
         documents.appendingPathComponent("recent-pins.json")
+    }
+
+    /// When each track was last played, for the Recent tab's **Ignored** list.
+    /// Kept apart from the log because the log forgets — it holds 200 plays and
+    /// Clear empties it — and "what haven't I heard in longest?" needs a date
+    /// for everything that has ever been played.
+    static var lastPlayed: URL {
+        documents.appendingPathComponent("last-played.json")
     }
 
     /// The user-chosen sync folders, resolved from their security-scoped

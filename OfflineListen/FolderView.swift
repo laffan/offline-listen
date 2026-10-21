@@ -607,45 +607,141 @@ struct RandomTracksView: View {
     }
 }
 
-/// The **Recent** tab — a tab of the app's own, between the Library and the
-/// Player, rather than one of the Library's sections: what you've been
-/// listening to is a place you go as often as the library itself. The list is
-/// `RecentTracksView`; this gives it a navigation stack to hang its Clear
-/// button on, and the share sheet its swipe asks for.
-struct RecentView: View {
-    /// Switches to the player tab after starting playback.
-    let onPlay: () -> Void
+/// The Recent tab's sections, in the order their tabs sit across its top.
+enum RecentTab: String, CaseIterable, Identifiable {
+    /// What you've pinned to keep — the default, being what you came back for.
+    case pinned
+    /// What you've played, newest first.
+    case recent
+    /// The songs that have gone longest unplayed.
+    case ignored
 
-    @State private var share: SharePayload?
+    var id: String { rawValue }
 
-    var body: some View {
-        NavigationStack {
-            RecentTracksView(onPlay: onPlay, share: $share)
-                .navigationBarTitleDisplayMode(.inline)
-                .sheet(item: $share) { payload in
-                    ActivityView(items: payload.urls)
-                }
+    var displayName: String {
+        switch self {
+        case .pinned: return "Pinned"
+        case .recent: return "Recent"
+        case .ignored: return "Ignored"
         }
     }
 }
 
-/// The **Recent** tab's list: what you've played, most recent first.
+/// The **Recent** tab — a tab of the app's own, between the Library and the
+/// Player: what you've been listening to (and what you haven't) is a place
+/// you go as often as the library itself. Divided like the Library, by a strip
+/// of tabs across the top: **Pinned** (where it opens), **Recent** and
+/// **Ignored**. The lists themselves are `RecentTracksView`.
 ///
-/// A log rather than a place — the tracks live wherever they normally do, and
-/// nothing here moves or deletes them. A track appears once per listen (with
-/// consecutive repeats collapsed), which is why rows are keyed by the *entry*
-/// and not by the track. Playback continues through the distinct tracks in the
-/// list, so a repeat doesn't send `next` backwards.
+/// No navigation bar: nothing here needs one — Clear sits at the foot of the
+/// log, the way History's does in Browse — so the tabs start at the top of the
+/// screen.
+struct RecentView: View {
+    @EnvironmentObject private var library: LibraryStore
+    /// Told which tab is showing, so a track starting here can be traced back
+    /// to it — and asks for one when the Player is swiped back here.
+    @EnvironmentObject private var router: AppRouter
+
+    /// Switches to the player tab after starting playback.
+    let onPlay: () -> Void
+
+    @State private var tab: RecentTab = .pinned
+    @State private var share: SharePayload?
+    /// The **Ignored** list as it stood when you arrived, by track id. A
+    /// snapshot, like the Library's Random hand: playing a song takes it off
+    /// the live list — it's no longer ignored — and rows vanishing from under
+    /// the song you just tapped, its queue going with them, is no way to work
+    /// through what you've neglected. Taken afresh on each visit; kept when
+    /// the Player is swiped back to it.
+    @State private var ignoredPicks: [UUID] = []
+    /// Set when going back to the Ignored tab from the Player, so arriving on
+    /// it doesn't take a new snapshot over the one that's playing.
+    @State private var keepIgnoredPicks = false
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                Picker("Section", selection: $tab) {
+                    ForEach(RecentTab.allCases) { section in
+                        Text(section.displayName).tag(section)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal)
+                .padding(.top, 4)
+                .padding(.bottom, 6)
+
+                RecentTracksView(tab: tab, ignoredPicks: ignoredPicks,
+                                 onPlay: onPlay, share: $share)
+                    // Greedy so an empty section's placeholder centers in the
+                    // room below the tabs rather than clinging to them.
+                    .frame(maxHeight: .infinity)
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            #if !os(macOS)
+            .toolbar(.hidden, for: .navigationBar)
+            #endif
+            .sheet(item: $share) { payload in
+                ActivityView(items: payload.urls)
+            }
+        }
+        .onAppear {
+            router.recentTab = tab
+            goBackToPendingTab()
+            if ignoredPicks.isEmpty { snapshotIgnored() }
+        }
+        .onChange(of: tab) { newTab in
+            router.recentTab = newTab
+            if newTab == .ignored {
+                if keepIgnoredPicks { keepIgnoredPicks = false } else { snapshotIgnored() }
+            }
+        }
+        // A visit — the tab picked from the tab bar — takes a fresh snapshot.
+        // Going back to it from the Player isn't one.
+        .onChange(of: router.recentVisits) { _ in
+            if tab == .ignored { snapshotIgnored() }
+        }
+        .onChange(of: router.pendingRecentTab) { _ in goBackToPendingTab() }
+    }
+
+    private func snapshotIgnored() {
+        ignoredPicks = library.ignoredSongs(count: LibraryStore.ignoredListSize).map(\.id)
+    }
+
+    /// The Player's swipe-down: back to the tab the playing track was started
+    /// from.
+    private func goBackToPendingTab() {
+        guard let pending = router.pendingRecentTab else { return }
+        router.pendingRecentTab = nil
+        if pending == .ignored && tab != .ignored { keepIgnoredPicks = true }
+        tab = pending
+    }
+}
+
+/// The Recent tab's lists — **Pinned**, the **Recent** log, and **Ignored** —
+/// one at a time, as its tab strip picks.
 ///
-/// Above the log sits the **Pinned** folder: swipe a row right and the track is
-/// kept there, at the head of the tab, where the log can't scroll it away. Like
-/// everything else on this screen that's a *reference*, not a filing — nothing
-/// moves on disk and a pinned track keeps whatever folder it actually lives in
-/// — so pinning and unpinning are as free as removing a listen.
+/// The log is a log rather than a place — the tracks live wherever they
+/// normally do, and nothing here moves or deletes them. A track appears once
+/// per listen (with consecutive repeats collapsed), which is why rows are
+/// keyed by the *entry* and not by the track. Playback continues through the
+/// distinct tracks in the list, so a repeat doesn't send `next` backwards.
+///
+/// **Pinned** is what a swipe right keeps — anywhere on this screen — where
+/// the log can't scroll it away. Like everything else here that's a
+/// *reference*, not a filing: nothing moves on disk and a pinned track keeps
+/// whatever folder it actually lives in, so pinning and unpinning are as free
+/// as removing a listen.
+///
+/// **Ignored** is the songs that have gone longest without a play (see
+/// `LibraryStore.ignoredSongs`), as `RecentView` snapshotted them on arrival.
 struct RecentTracksView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var playback: PlaybackManager
 
+    let tab: RecentTab
+    /// The Ignored list's snapshot, by track id.
+    let ignoredPicks: [UUID]
     let onPlay: () -> Void
     @Binding var share: SharePayload?
 
@@ -656,48 +752,35 @@ struct RecentTracksView: View {
     @State private var discographyRequest: DiscographyRequest?
     /// The track **Find Alternative** was asked for.
     @State private var alternativeRequest: AlternativeRequest?
-    /// Whether the pinned folder is twirled open. Persisted like the Library's
-    /// other display choices, so the tab looks the way you left it.
-    @AppStorage("recentPinsExpanded") private var pinsExpanded = true
 
     private var entries: [RecentListenRow] { library.recentListenEntries }
     /// The playback queue for the log: each track once, in the order it was
     /// last heard.
     private var queue: [Track] { library.recentTracks }
-    /// What's in the pinned folder — and its own queue, so playing from it
-    /// carries on through the folder rather than off into the log.
+    /// What's pinned — and its own queue, so playing from it carries on
+    /// through the pins rather than off into the log.
     private var pinned: [Track] { library.pinnedRecentTracks }
+    /// The snapshot, resolved against the live library — a song deleted or
+    /// archived since simply drops out.
+    private var ignored: [Track] {
+        let active = Set(library.activeTracks.map(\.id))
+        return ignoredPicks.compactMap { active.contains($0) ? library.track(withID: $0) : nil }
+    }
 
     var body: some View {
         Group {
-            if entries.isEmpty && pinned.isEmpty {
-                ContentUnavailableViewCompat(
-                    title: "Nothing played yet",
-                    systemImage: "clock.arrow.circlepath",
-                    description: "Tracks appear here as you play them — most recent first. Swipe one right to pin it to the top."
-                )
-            } else {
-                list
+            switch tab {
+            case .pinned: pinnedList
+            case .recent: logList
+            case .ignored: ignoredList
             }
         }
-        // No title: the tab bar names it. And with nothing to Clear there's
-        // nothing to keep the navigation bar for either — the placeholder
-        // starts at the top of the screen.
-        #if !os(macOS)
-        .toolbar(entries.isEmpty ? .hidden : .automatic, for: .navigationBar)
-        #endif
+        // No title: the tab bar names it.
         .editMetadataSheet(for: $editingTrack)
         .discographySheet(for: $discographyRequest)
         .findAlternativeSheet(for: $alternativeRequest)
         .sheet(item: $chapterContext) { context in
             ChapterListView(track: context.track, queue: context.queue, onPlay: onPlay)
-        }
-        .toolbar {
-            if !entries.isEmpty {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Clear", role: .destructive) { confirmingClear = true }
-                }
-            }
         }
         .confirmationDialog("Clear the Recent list?",
                             isPresented: $confirmingClear,
@@ -705,92 +788,101 @@ struct RecentTracksView: View {
             Button("Clear", role: .destructive) { library.clearRecentListens() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This only empties the list of what you've played. No tracks are deleted, and the pinned folder stays as it is.")
+            Text("This only empties the list of what you've played. No tracks are deleted, pinned tracks stay pinned, and the Ignored list still knows when each song was last played.")
         }
     }
 
-    /// The pinned folder, then the log.
-    private var list: some View {
-        // Resolved once per render pass rather than once per row: each row is
-        // handed its whole list as the playback queue, so reading the computed
-        // property inside the loop would rebuild it for every row it built.
+    // Each list is resolved once per render pass rather than once per row:
+    // every row is handed its whole list as the playback queue, so reading the
+    // computed property inside the loop would rebuild it for every row built.
+
+    @ViewBuilder
+    private var pinnedList: some View {
         let pins = pinned
-        let log = entries
-        let logQueue = queue
-        return List {
-            if !pins.isEmpty {
-                Section {
-                    if pinsExpanded {
-                        ForEach(pins) { track in
-                            row(track, in: pins, playsAsFolder: true)
-                                .modifier(PinnedFrame(closesBelow: track.id == pins.last?.id))
-                        }
-                    }
-                } header: {
-                    // The frame starts here; the last pin closes it. Shut,
-                    // the folder is a plain row with no border at all.
-                    pinnedFolderRow(count: pins.count)
-                        .modifier(PinnedFrame(isDrawn: pinsExpanded, opensAbove: true))
+        if pins.isEmpty {
+            ContentUnavailableViewCompat(
+                title: "Nothing pinned",
+                systemImage: "pin",
+                description: "Swipe a track right in Recent or Ignored — or tap the sleeve in the Player — to keep it here, where the log can't scroll it away."
+            )
+        } else {
+            List {
+                ForEach(pins) { track in
+                    row(track, in: pins, playsAsFolder: true)
                 }
             }
-            Section {
+            .listStyle(.plain)
+            .miniPlayerClearance()
+        }
+    }
+
+    @ViewBuilder
+    private var logList: some View {
+        let log = entries
+        let logQueue = queue
+        if log.isEmpty {
+            ContentUnavailableViewCompat(
+                title: "Nothing played yet",
+                systemImage: "clock.arrow.circlepath",
+                description: "Tracks appear here as you play them — most recent first. Swipe one right to pin it."
+            )
+        } else {
+            List {
                 ForEach(log) { pair in
                     row(pair.track, in: logQueue,
                         detail: relativeDate(pair.entry.date), entry: pair.entry)
                 }
+                // At the foot of the log rather than in a navigation bar,
+                // the way History's Clear sits in Browse: it's the last thing
+                // you'd do here, and a bar kept for one button is a bar's
+                // height lost from every tab.
+                Button(role: .destructive) {
+                    confirmingClear = true
+                } label: {
+                    Text("Clear Recent")
+                        .frame(maxWidth: .infinity)
+                }
+                .padding(.vertical, 6)
+                .listRowSeparator(.hidden)
             }
+            .listStyle(.plain)
+            .miniPlayerClearance()
         }
-        .listStyle(.plain)
-        .miniPlayerClearance()
     }
 
-    /// The pinned folder itself: one row at the head of the list, wearing its
-    /// count the way a folder row does, that twirls its tracks open and shut.
-    /// It's a `Section` **header** rather than an ordinary row so it stays put
-    /// at the top while the log scrolls past beneath it — which is most of the
-    /// point of pinning something.
-    private func pinnedFolderRow(count: Int) -> some View {
-        Button {
-            withAnimation { pinsExpanded.toggle() }
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "pin.fill")
-                    .foregroundStyle(RecentPin.tint)
-                    .frame(width: 24)
-                Text("Pinned")
-                    .font(.body)
-                    .foregroundStyle(.primary)
-                Spacer()
-                Text("\(count)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-                    .rotationEffect(.degrees(pinsExpanded ? 90 : 0))
+    @ViewBuilder
+    private var ignoredList: some View {
+        let songs = ignored
+        if songs.isEmpty {
+            ContentUnavailableViewCompat(
+                title: "Nothing ignored",
+                systemImage: "moon.zzz",
+                description: "The songs you've gone longest without playing turn up here — longest first."
+            )
+        } else {
+            List {
+                ForEach(songs) { track in
+                    row(track, in: songs, playsAsFolder: true,
+                        detail: unplayedDetail(for: track))
+                }
             }
-            .padding(.vertical, 6)
-            .contentShape(Rectangle())
+            .listStyle(.plain)
+            .miniPlayerClearance()
         }
-        .buttonStyle(.plain)
-        // A section header upper-cases its text; this one is a folder row, not
-        // a caption.
-        .textCase(nil)
     }
 
-    /// One row of either list. They differ in four things: which queue a tap
-    /// plays within, whether that queue is a *curated* one (only the pinned
-    /// folder is), whether the trailing edge has a *listen* to forget (only the
-    /// log does), and which way round the pin swipe reads.
+    /// One row of any of the lists. They differ in four things: which queue a
+    /// tap plays within, whether that queue is a *curated* one (Pinned and
+    /// Ignored are), whether the trailing edge has a *listen* to forget (only
+    /// the log does), and which way round the pin swipe reads.
     ///
-    /// `playsAsFolder` is the pinned folder's half of the Library's autoplay
-    /// rule: an **auto-aggregated** list mixes media types together, so
-    /// playback stays within the type you started, while a **curated** list —
-    /// which the pinned folder is, a track at a time, by hand — plays straight
-    /// through in list order whatever the types. Without it a pinned song
-    /// followed by a pinned podcast quietly dropped the podcast from the queue,
-    /// so the folder ended early and not where the list does.
+    /// `playsAsFolder` is the Library's autoplay rule: an **auto-aggregated**
+    /// list mixes media types together, so playback stays within the type you
+    /// started, while a **curated** list — which the pins are, a track at a
+    /// time, by hand — plays straight through in list order whatever the
+    /// types. Without it a pinned song followed by a pinned podcast quietly
+    /// dropped the podcast from the queue, so the list ended early and not
+    /// where it does on screen.
     private func row(_ track: Track, in queue: [Track],
                      playsAsFolder: Bool = false,
                      detail: String? = nil, entry: RecentListen? = nil) -> some View {
@@ -811,9 +903,9 @@ struct RecentTracksView: View {
                 onPlay()
             }
             .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                // Keeps the track at the top of the tab (or lets it go again).
-                // Both directions are the same gesture, so the row you just
-                // pinned undoes itself the way you pinned it.
+                // Pins the track (or lets it go again). Both directions are
+                // the same gesture, so the row you just pinned undoes itself
+                // the way you pinned it.
                 let isPinned = library.isPinnedInRecent(track.id)
                 Button {
                     togglePin(track.id)
@@ -852,7 +944,7 @@ struct RecentTracksView: View {
                 Button {
                     togglePin(track.id)
                 } label: {
-                    Label(isPinned ? "Unpin" : "Pin to Top",
+                    Label(isPinned ? "Unpin" : "Pin",
                           systemImage: isPinned ? "pin.slash" : "pin")
                 }
                 CopyToFolderMenu(track: track)
@@ -871,13 +963,12 @@ struct RecentTracksView: View {
     /// Pins or unpins, on the **next** main-actor turn.
     ///
     /// The same order the Library's bulk actions follow, and for the same
-    /// reason. A pin moves a row between the two sections of this list, and at
-    /// the edges it moves a whole *section*: pinning the first track inserts the
-    /// Pinned section (header and all), unpinning the last one removes it.
-    /// Landing that in the update the swipe is already animating — the gesture's
-    /// own commit — is what the `List` underneath doesn't survive. Doing it a
-    /// turn later costs a frame nobody can see and leaves the table one change
-    /// to apply at a time.
+    /// reason. In the Pinned tab, unpinning removes the very row the swipe is
+    /// still animating — and unpinning the last one swaps the whole list for
+    /// the placeholder. Landing that in the update the swipe is already
+    /// animating — the gesture's own commit — is what the `List` underneath
+    /// doesn't survive. Doing it a turn later costs a frame nobody can see and
+    /// leaves the table one change to apply at a time.
     private func togglePin(_ trackID: UUID) {
         Task { @MainActor in
             withAnimation { library.toggleRecentPin(trackID) }
@@ -889,79 +980,18 @@ struct RecentTracksView: View {
     private func relativeDate(_ date: Date) -> String {
         date.formatted(.relative(presentation: .numeric))
     }
+
+    /// What an Ignored row says on its trailing edge: when it was last played,
+    /// "Never played" for a song that hasn't been, and — for one played too
+    /// long ago for anything to have recorded the date — nothing, so the row
+    /// shows its length the way a library row does.
+    private func unplayedDetail(for track: Track) -> String? {
+        if let date = library.lastPlayed(track.id) { return relativeDate(date) }
+        return track.hasBeenPlayed ? nil : "Never played"
+    }
 }
 
-/// The pin's colour and weight, in one place: the glyph, the swipe action and
-/// the border around the folder all draw from here, so the fence reads as
-/// belonging to the pin rather than as a stray line.
+/// The pin's colour: the glyph and the swipe action both draw from here.
 private enum RecentPin {
     static let tint = Color.orange
-    static let line: CGFloat = 1.5
-    /// How far the frame stands off the row's content, so text isn't touching
-    /// the rails.
-    static let inset: CGFloat = 10
-    /// Where the rails stand relative to the screen edge — the margin the
-    /// list's own rows keep, so the box lines up with the log beneath it.
-    static let gutter: CGFloat = 16
-    /// The breathing room above and below a row inside the frame. The frame
-    /// takes the list's row insets to zero (see `PinnedFrame`), so it has to
-    /// put back the vertical padding those insets were providing.
-    static let rowPad: CGFloat = 11
-    /// Extra room inside the top and bottom of the box, so the first and last
-    /// rows aren't sitting on the rails.
-    static let endPad: CGFloat = 10
-}
-
-/// One slice of the border around the Recent tab's **Pinned** folder.
-///
-/// A `List` draws rows, not boxes, so the frame is assembled a row at a time:
-/// every row inside the folder carries the two side rails, the header caps it
-/// with a top one, and the last pin closes it with a bottom one. The
-/// separators inside the folder go, so the rails run unbroken from the header
-/// down to the last pin instead of being crossed at every row.
-///
-/// The row's own padding is the frame's, not the list's: a `List` puts its row
-/// insets *outside* the row's content, so an overlay drawn on that content
-/// stopped short of the row above and below and the side rails came out as a
-/// dashed line with a gap at every boundary. Zeroing `listRowInsets` and
-/// re-padding inside the frame lets each row's rails meet its neighbour's.
-///
-/// With the folder shut there's nothing inside to fence off, so no frame is
-/// drawn at all — a box around the one closed row reads as a stray rectangle
-/// rather than as a folder holding something.
-private struct PinnedFrame: ViewModifier {
-    var isDrawn = true
-    var opensAbove = false
-    var closesBelow = false
-
-    func body(content: Content) -> some View {
-        content
-            .padding(.horizontal, isDrawn ? RecentPin.inset : 0)
-            .padding(.top, isDrawn && opensAbove ? RecentPin.endPad : 0)
-            .padding(.bottom, isDrawn && closesBelow ? RecentPin.endPad : 0)
-            .padding(.vertical, RecentPin.rowPad)
-            .frame(maxWidth: .infinity)
-            .overlay(alignment: .leading) { rail(width: RecentPin.line) }
-            .overlay(alignment: .trailing) { rail(width: RecentPin.line) }
-            .overlay(alignment: .top) {
-                if opensAbove { rail(height: RecentPin.line) }
-            }
-            .overlay(alignment: .bottom) {
-                if closesBelow { rail(height: RecentPin.line) }
-            }
-            .padding(.horizontal, RecentPin.gutter)
-            .listRowInsets(EdgeInsets())
-            .listRowSeparator(.hidden)
-    }
-
-    /// A length of rail — or nothing at all, with the folder shut, which is
-    /// what keeps the padding and the alignment while the border goes away.
-    @ViewBuilder
-    private func rail(width: CGFloat? = nil, height: CGFloat? = nil) -> some View {
-        if isDrawn {
-            Rectangle()
-                .fill(RecentPin.tint)
-                .frame(width: width, height: height)
-        }
-    }
 }

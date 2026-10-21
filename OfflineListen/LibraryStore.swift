@@ -15,10 +15,14 @@ final class LibraryStore: ObservableObject {
     /// separately from the library (`recents.json`) — it's a record of
     /// behaviour, not of what's on disk.
     @Published private(set) var recentListens: [RecentListen] = []
-    /// The tracks in the **Pinned** folder at the top of the Recent tab, newest
+    /// The tracks in the Recent tab's **Pinned** list, newest
     /// pin first (`recent-pins.json`). Unlike the log this is a *set*: a track
     /// is pinned or it isn't, however many times you've played it.
     @Published private(set) var pinnedRecentIDs: [UUID] = []
+    /// When each track was last played (`last-played.json`) — the measure the
+    /// **Ignored** list sorts by. Not published: it changes only as a track
+    /// starts, which writes the log in the same breath, and the log is.
+    private var lastPlayedDates: [UUID: Date] = [:]
     /// Bumped whenever a mixtape cover image is (re)written, so views that
     /// render covers from disk know to reload even when the style is unchanged.
     @Published private(set) var coverRevision = 0
@@ -362,7 +366,7 @@ final class LibraryStore: ObservableObject {
         return recentListenEntries.compactMap { seen.insert($0.track.id).inserted ? $0.track : nil }
     }
 
-    /// The **Pinned** folder at the top of the Recent tab, newest pin first,
+    /// The Recent tab's **Pinned** list, newest pin first,
     /// resolved against the live library — so a pinned track that's since been
     /// deleted simply drops out, exactly as it does from the log. It doubles as
     /// that folder's playback queue: tap a row and the pinned set plays on in
@@ -493,6 +497,7 @@ final class LibraryStore: ObservableObject {
     func load() {
         loadRecents()
         loadRecentPins()
+        loadLastPlayed()
         defer {
             loadFolders()
             // Not in `loadRecents`: the log is only ids, and resolving them
@@ -547,6 +552,10 @@ final class LibraryStore: ObservableObject {
     /// rows; a repeat with anything in between is kept, because that really is
     /// a separate listen.
     func recordListen(_ trackID: UUID) {
+        // The date moves on every start, repeat or not: restarting a track is
+        // still hearing it.
+        lastPlayedDates[trackID] = Date()
+        saveLastPlayed()
         guard recentListens.first?.trackID != trackID else { return }
         recentListens.insert(RecentListen(trackID: trackID), at: 0)
         if recentListens.count > Self.recentListenLimit {
@@ -572,7 +581,69 @@ final class LibraryStore: ObservableObject {
         appLog("Cleared the Recent listening log.", category: "Library")
     }
 
-    // MARK: - The Recent tab's pinned folder
+    // MARK: - Last played, and the Ignored list
+
+    /// How many songs the Recent tab's **Ignored** list shows.
+    static let ignoredListSize = 50
+
+    /// Reads the dates, then fills in any the log knows and the file doesn't —
+    /// which on the first launch with this file is all of them, so the list
+    /// isn't blank for the songs you've played lately. The log only reaches
+    /// back 200 plays; a song played before that and since fallen out of it
+    /// has no date, and is measured from its arrival instead (see
+    /// `ignoredSongs`).
+    private func loadLastPlayed() {
+        if let data = try? Data(contentsOf: AppPaths.lastPlayed) {
+            do {
+                lastPlayedDates = try JSONDecoder().decode([UUID: Date].self, from: data)
+            } catch {
+                print("[LibraryStore] failed to decode last-played dates: \(error)")
+            }
+        }
+        var filled = false
+        for entry in recentListens {
+            if let known = lastPlayedDates[entry.trackID], known >= entry.date { continue }
+            lastPlayedDates[entry.trackID] = entry.date
+            filled = true
+        }
+        if filled { saveLastPlayed() }
+    }
+
+    private func saveLastPlayed() {
+        do {
+            let data = try JSONEncoder().encode(lastPlayedDates)
+            try data.write(to: AppPaths.lastPlayed, options: .atomic)
+        } catch {
+            print("[LibraryStore] failed to save last-played dates: \(error)")
+        }
+    }
+
+    /// When the track was last played, if that's known.
+    func lastPlayed(_ trackID: UUID) -> Date? {
+        lastPlayedDates[trackID]
+    }
+
+    /// The Recent tab's **Ignored** list: the `count` active songs that have
+    /// gone longest without being played, longest first.
+    ///
+    /// A song is measured from its last play, or — if it has never been played,
+    /// or was played too long ago for anything to have recorded when — from
+    /// when it arrived: either way, that's how long it has sat unheard. Songs
+    /// only, as in the Random tab; a podcast you haven't got to is a backlog,
+    /// not a song you've forgotten. Not memoized: the tab takes a snapshot of
+    /// it per visit rather than reading it on every redraw.
+    func ignoredSongs(count: Int) -> [Track] {
+        let songs = activeTracks.filter { $0.playbackCategory == .song }
+        let keyed = songs.map { (track: $0, since: lastPlayedDates[$0.id] ?? $0.dateAdded) }
+        return keyed.sorted { left, right in
+            if left.since != right.since { return left.since < right.since }
+            return left.track.title.localizedCaseInsensitiveCompare(right.track.title) == .orderedAscending
+        }
+        .prefix(count)
+        .map { $0.track }
+    }
+
+    // MARK: - The Recent tab's Pinned list
 
     /// How many tracks the pinned folder holds. Hand-curated a swipe at a time,
     /// so it's a bound on the file rather than a limit anyone should meet.
