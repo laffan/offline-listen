@@ -1,12 +1,13 @@
 import SwiftUI
 
-/// The in-app Every Noise at Once browser — the Browse tab's own screen: the
-/// site's genre map, faithfully — **Map**, **List** and **Scan** modes plus a
-/// **Find** field, at both levels. Tapping a genre reveals its constituent
-/// artists positioned in rough relation to one another; tapping an artist
-/// plays their 30-second top-track preview and offers a **+** that opens
-/// their live Spotify discography — or, when Spotify isn't configured, files
-/// them into Browse as a regular Artist source (Top 10 or Search Discography).
+/// The in-app Every Noise at Once browser — the Search tab's **Browse**
+/// section: the site's genre map, faithfully — **Map**, **List** and **Scan**
+/// modes plus a **Find** field, at both levels. Tapping a genre reveals its
+/// constituent artists positioned in rough relation to one another; tapping an
+/// artist plays their 30-second top-track preview and offers a **+** that
+/// opens their live Spotify discography — or, when Spotify isn't configured,
+/// files them into Sources as a regular Artist source (Top 10 or Search
+/// Discography).
 struct EveryNoiseView: View {
     @EnvironmentObject private var playback: PlaybackManager
     /// Gates the Find field's Spotify target and the scan's "+", both of which
@@ -15,12 +16,15 @@ struct EveryNoiseView: View {
     /// Carries a row tapped in the home-screen widget, parked until the index
     /// below has loaded and can resolve it.
     @EnvironmentObject private var router: AppRouter
-    /// What History (and an artist's page) has put aside — shown by the
-    /// bookmark button beside the sources one.
-    @EnvironmentObject private var savedForLater: SavedForLaterStore
     /// The maps ignore the bottom safe area, so the mini player's height is
     /// handed to them as extra content inset (UIKit can't see the SwiftUI bar).
     @Environment(\.miniPlayerHeight) private var miniPlayerHeight
+
+    /// Whether Browse is the Search section showing. The tab keeps its other
+    /// sections alive behind this one rather than rebuilding the map on every
+    /// switch, so leaving doesn't make it disappear — this is what stops a
+    /// preview playing on under the Download queue.
+    var isActive = true
 
     @StateObject private var store = EveryNoiseStore()
     @StateObject private var player = ENPreviewPlayer()
@@ -63,8 +67,6 @@ struct EveryNoiseView: View {
     @State private var centerRequest: NoiseMapCenter?
     /// Briefly highlights a genre jumped to via Find.
     @State private var flashID: String?
-    /// Whether the Saved for Later list is up.
-    @State private var showingSaved = false
 
     var body: some View {
         Group {
@@ -78,36 +80,9 @@ struct EveryNoiseView: View {
                 browser
             }
         }
-        // No title: this is the Browse tab's own screen, and the map wants every
-        // point of height it can get. The mode bar underneath says where you are.
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItemGroup(placement: .navigationBarTrailing) {
-                Button {
-                    showingSaved = true
-                } label: {
-                    Image(systemName: savedForLater.items.isEmpty ? "bookmark" : "bookmark.fill")
-                }
-                .accessibilityLabel("Saved for later")
-
-                // A push, not a cover: the sources list lives inside the main
-                // nav — tab bar in place — like every other Browse screen. A
-                // link rather than a presented destination, since the map
-                // already carries two of those for genres and artists.
-                NavigationLink {
-                    BrowseSourcesView()
-                } label: {
-                    SourcesButtonLabel()
-                }
-            }
-        }
-        .sheet(isPresented: $showingSaved) {
-            SavedForLaterView { item in
-                // The sheet is on its way out; the push it asked for has to
-                // wait for the next runloop turn or it lands under it.
-                DispatchQueue.main.async { open(saved: item) }
-            }
-        }
+        // No title or toolbar: the Search tab's section buttons sit where the
+        // navigation bar would, and the map wants every point of height it can
+        // get. The mode bar underneath says where you are.
         .navigationDestination(isPresented: genreIsPushed) {
             if let pushedGenre {
                 // Pushed destinations are hosted by Browse's NavigationStack,
@@ -141,12 +116,16 @@ struct EveryNoiseView: View {
         .onChange(of: router.pendingBrowse) { _ in openPendingBrowse() }
         .onChange(of: store.genres.count) { _ in openPendingBrowse() }
         .onDisappear { player.stop() }
+        .onChange(of: isActive) { active in
+            if !active { player.stop() }
+        }
     }
 
-    /// Opens whatever a widget row asked for — the same three destinations a
-    /// History row leads to. Nothing is cleared until it resolves, so a tap
-    /// that lands mid-load isn't dropped; an unresolvable one (a dataset
-    /// rebuilt without that genre) is, rather than being retried forever.
+    /// Opens whatever a widget row or a Bookmarks row asked for — the same
+    /// three destinations a History row leads to. Nothing is cleared until it
+    /// resolves, so a tap that lands mid-load isn't dropped; an unresolvable
+    /// one (a dataset rebuilt without that genre) is, rather than being
+    /// retried forever.
     private func openPendingBrowse() {
         guard let target = router.pendingBrowse else { return }
         switch target {
@@ -170,8 +149,8 @@ struct EveryNoiseView: View {
         }
         router.pendingBrowse = nil
         guard let genre = store.genres.first(where: { $0.key == genreKey }) else {
-            appLog("Widget asked for genre '\(genreKey)', which isn't in the map.",
-                   level: .warning, category: "Widget")
+            appLog("Asked to open genre '\(genreKey)', which isn't in the map.",
+                   level: .warning, category: "Browse")
             return
         }
         present {
@@ -243,29 +222,6 @@ struct EveryNoiseView: View {
         } else {
             pushedArtistID = entry.artistID
             pushedGenre = genre
-        }
-    }
-
-    /// A Saved for Later row leads exactly where the History row it was saved
-    /// from does — the three destinations differ only in how they're reached.
-    private func open(saved item: SavedForLaterItem) {
-        present {
-            if item.kind == .spotify {
-                guard let id = item.artistID else { return }
-                self.liveArtist = ENLiveArtist(name: item.name, spotifyID: id)
-                return
-            }
-            guard let genre = self.store.genres.first(where: { $0.key == item.genreKey }) else {
-                appLog("Saved genre '\(item.genreKey)' isn't in the map any more.",
-                       level: .warning, category: "Browse")
-                return
-            }
-            if item.kind == .genre {
-                self.push(genre)
-            } else {
-                self.pushedArtistID = item.artistID
-                self.pushedGenre = genre
-            }
         }
     }
 
@@ -1736,7 +1692,7 @@ struct ENArtistBar: View {
                 }
                 .accessibilityLabel(offersLiveDiscography
                                     ? "Browse \(artist.name)'s discography"
-                                    : "Follow \(artist.name) in Browse")
+                                    : "Add \(artist.name) to Sources")
             }
 
             // Where the bar's close button used to be. Dismissing it was the

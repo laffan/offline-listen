@@ -10,19 +10,212 @@ locked.
 
 ## What's here
 
-Five screens (tabs), left to right. None of them carries a header title — the
-vertical space goes to the content instead.
+Five screens (tabs), left to right: **Search**, **Library**, **Recent**,
+**Player**, **Settings**. None of them carries a header title — the vertical
+space goes to the content instead.
 
-1. **Browse** — opens straight into the **Every Noise browser**: the whole
+1. **Search** — everything for finding something to listen to, behind **four
+   buttons across the top**: **Browse**, **Download**, **Sources** and
+   **Bookmarks**. It used to be two tabs — Browse, with the sources and the
+   bookmarks behind buttons in its top-right corner, and Download — and the
+   buttons that were a level down are now the tab's own organization. They
+   stand where a navigation bar would (the tab has none at its top level; a
+   screen pushed from any section brings its own back), each a glyph over its
+   name with the one showing in the accent colour. Two of them carry news from
+   behind them: **Download** wears the number of downloads still working or
+   waiting, and **Sources** a **dot** when a refresh has turned up items you
+   haven't acted on. The same download count rides on the **Search tab's own
+   badge** in the tab bar, so an active queue is visible from anywhere in the
+   app — the badge the Download tab used to wear.
+
+   The four sections are **kept alive** behind the one showing rather than
+   rebuilt on each switch: the map takes a moment to read off disk and
+   remembers where you were on it, the Download field may be holding a
+   half-pasted link, and a source list keeps its scroll. Only the section
+   showing takes touches or reaches VoiceOver; leaving Browse stops an artist
+   preview that was playing, and leaving Download puts the keyboard away.
+
+   **Browse** is the **Every Noise browser**: the whole
    [Every Noise at Once](https://everynoise.com) genre map, bundled into the
    app and browsable offline; tapping an artist there leads to their live
-   Spotify discography, or files them into Browse as an Artist source (see
-   [The Every Noise browser](#the-every-noise-browser)). The **sources** you
-   keep tabs on live one tap away, behind the **stack button** in the
-   top-right corner — beside a **bookmark button** holding what you've
-   [saved for later](#saved-for-later) — and the stack wears a **dot** when a
-   refresh has turned up
-   items you haven't acted on (see
+   Spotify discography, or files them into Sources as an Artist source (see
+   [The Every Noise browser](#the-every-noise-browser)).
+
+   **Download** — paste one or more URLs (whitespace/line-break separated; any
+   http(s) link is queued and the rest of a pasted blob is skipped), choose
+   **Audio** or **Video** (default Audio) from the **toggle beside the input
+   field** — the Library's own music-note and film glyphs — and watch the
+   queue. **Paste** leads the field rather than trailing it: it's what you
+   reach for before typing anything, and it becomes the clear button once
+   there's something to clear. The mode toggle has gone through three shapes:
+   a segmented picker on its own line (a row of the screen to say what two
+   icons say), then two small icons squeezed inside the field's trailing edge,
+   and now a control of its own next to it — compact, but with glyphs big
+   enough to read at a glance, which is what the one control deciding *what a
+   download is* deserves. A video download **asks which resolution** once it knows what the
+   source is offering (see
+   [Choosing a resolution](#choosing-a-resolution)). Links from **any site
+   yt-dlp supports** work — YouTube, Vimeo, SoundCloud and ~hundreds more — not
+   just YouTube — plus **Spotify** links, which take a different route (see
+   **Spotify links** below). Swipe a row for **Cancel** (active/queued), **Restart**, or
+   **Clear**; tap a finished row to play it. Every row shows the track's
+   **title and artist** (kept in step with the Library, so an AI-cleaned name
+   shows here too) — including the rows that haven't downloaded yet, which used
+   to read as the raw URL until their extraction came back. Anything the list
+   that queued them already knew goes up straight away instead: the catalogue's
+   own title and artist for a discography pick, and for a Browse row or a
+   search hit whatever that row was showing. That naming is **display only** —
+   a feed's title is a video name, not catalogue metadata, so the finished
+   track is still named by the download and still gets the AI organizer's go at
+   it.
+
+   **A record queued whole is one row.** **Download Album** (in a discography) puts a
+   dozen jobs in the queue at once, and a dozen rows of one record buries
+   everything else in the list. They fold into a single **collapsible group**
+   instead — **collapsed by default**, since a record you asked for whole is
+   one thing you asked for — wearing the album's **cover** and name, how far
+   along it is ("7 of 12 tracks · 61%"), and one **progress bar across the
+   whole record**. Twirl it open for the individual tracks, which are ordinary
+   queue rows with their own swipes. Only an album groups: a Browse source
+   files its one-off picks into a folder too, and a dozen unrelated songs from
+   a feed are a dozen downloads, not a record. Finishing a half-landed album
+   (Download Album again on one that crashed partway) joins the group it
+   belongs to rather than starting a second one, and the grouping survives a
+   relaunch with the queue.
+
+   The tally behind that bar is kept by the **queue**, not worked out by the
+   view. Each job is an `ObservableObject` of its own precisely so one row can
+   redraw without the other four hundred doing the same — which means a header
+   sitting *above* a dozen of them would never hear a thing from any of them.
+   The manager is watching all of them anyway, so it keeps the count and
+   publishes it, quantized to whole percents: every distinct value is a redraw
+   of the queue, and the bar it draws is a couple of hundred points wide.
+
+   The queue is a **running history** — it persists across
+   relaunches (`Documents/downloads.json`, capped at the 500 most recent), so
+   what you've downloaded stays listed until you **Clear** it; only in-flight
+   jobs are dropped on quit. The **Search** tab's **badge** (and the
+   Download button's own count) shows how many downloads are active or
+   queued. The queue runs **up to two downloads at once** (see
+   [the pipeline notes](#browse-keeping-tabs-on-audio-sources) — the network
+   work runs in parallel while everything touching the embedded Python
+   interpreter stays serialized).
+
+   **The queue outlives the session, and keeps going with the screen off.**
+   Three things, which are only useful together:
+
+   - **It's written down as soon as it's queued**, not when it finishes.
+     `downloads.json` holds the unfinished jobs beside the history — with the
+     album orders they need to file themselves — so a queue survives being
+     backgrounded, killed, or crashing. At the next launch the pending rows
+     come back as queued work and start again once the first screen is up. A
+     job interrupted mid-*download* restarts rather than resuming: its partial
+     file was in a scratch directory that doesn't survive, and half a track is
+     worth nothing. **A job that never finishes gets three of those goes and
+     then stops asking.** Restarting a pending job at every launch is what
+     makes a crash cost progress rather than work — and, for a job that is
+     itself what took the app down, it is also a loop the app can't be opened
+     long enough to break out of. So each start is counted (and written down
+     *before* the work begins, since a crash records nothing afterwards) and
+     cleared the moment the job reaches a verdict; the fourth start doesn't
+     happen. The row goes to **Failed** saying so, and Retry is one tap away
+     whenever you want it.
+   - **A background assertion is held while the queue works**, so locking the
+     phone doesn't stop it where it stands (which is what used to happen: the
+     app was suspended between one track and the next and nothing moved again
+     until it was reopened).
+   - **A background processing task** is scheduled on the way out when work is
+     outstanding, so iOS can grant a fresh window later — typically on Wi-Fi,
+     which is exactly when finishing a queue of albums is welcome. Each window
+     restarts the queue, asks for the next one, and hands itself back the
+     moment the system calls time.
+
+   None of this makes the window unlimited — no API does. iOS gives a
+   backgrounded app a bounded stretch and then suspends it whatever it's doing
+   (longer while audio is actually playing, which is why a queue running under
+   music tends to get further). The persistence is what makes that cost
+   *progress* rather than work: reopen the app, or wait for the system to grant
+   a window, and it carries on from where it stopped.
+
+   **A batch is one change to the queue.** Everything that queues several
+   links from one press — **Download Album**, a playlist or Spotify
+   collection's selection, a source's bulk **Select** — hands the whole set
+   over at once (`enqueueBatch`) rather than a link at a time. It used to be a
+   loop, and each pass published its own insert and ran its own scheduler
+   pass: twenty tracks meant twenty mutations inside a single main-actor turn,
+   on top of whatever the view that pressed the button was changing in the
+   same turn. That combination is what the earlier bulk-download crash came
+   down to — the UIKit diff under a `List` doesn't survive it — and the batch
+   paths hadn't been given the same treatment the bulk-select path was. The
+   queue still lists newest-first and still runs oldest-first, so a record
+   downloads in tracklist order exactly as before.
+
+   **Search.** The same single input field doubles as a search box: type
+   anything that *isn't* a link and the button flips from **Download** to
+   **Search**. It scrapes YouTube's results page and returns the **top 5
+   videos** in a popup styled like a Browse list — title, channel, and
+   **Download** / **Preview** per row. Both observe the section's **Audio/Video
+   toggle**: Download queues the pick in that mode, and Preview opens the same
+   listen-first modal Browse uses — with a picture, in Video mode — where Save
+   files it into the library. A URL still behaves exactly as before — the
+   process only changes when no link is detected.
+
+   **Playlists.** Paste a **YouTube playlist** link — either the dedicated
+   `…/playlist?list=…` page or a `watch?v=…&list=…` link opened from inside a
+   playlist — and the app resolves its entries and shows a **selection popup**
+   listing every video. Everything is checked by default, so **Download** grabs
+   the whole list in one tap; or check off just the ones you want (a
+   **Select All / Deselect All** toggle is in the header). Confirming creates a
+   **folder named after the playlist** and queues the chosen entries into it (in
+   playlist order, using the same Audio/Video mode); cancelling — or dismissing
+   the popup — downloads nothing. A playlist row sits in the queue while it
+   resolves and while the popup is open, then reports how many downloads it
+   spawned. Auto-generated **mixes/radios** (`RD…` list ids) and the auth-only
+   **Watch Later** / **Liked** lists are treated as ordinary single-video links,
+   not playlists. Resolving the entry list uses the on-device yt-dlp module, so —
+   like chapter capture — it works only once that module has been fetched by a
+   prior download. The same selection popup also serves **Spotify** albums,
+   playlists and artists.
+
+   **Spotify links.** Paste a Spotify **track**, **album**, **playlist** or
+   **artist** — the `open.spotify.com/…` link (localized `intl-xx` share links
+   and `?si=…` share tokens included), the `spotify:track:…` URI, or a
+   `spotify.link` short link — and the app reads its metadata from Spotify,
+   matches **each track to a YouTube video**, and sends the results through the
+   ordinary download pipeline. A single track queues one download, like pasting
+   one YouTube link; an album, playlist or artist gets the **same selection
+   popup** a YouTube playlist does and lands in a **folder named after the
+   album/playlist/artist** (re-pasting reuses that folder rather than making a
+   second one). The queue row counts the matching off — *Resolving 42 of 137…* —
+   since every track costs a YouTube search; one paste resolves at most **200**
+   tracks, and anything past that is dropped and logged.
+
+   Every track resolved from Spotify also carries its **album art** into the
+   download — the finished track wears the cover in the Player, the lock
+   screen and the mini player (see [Album art](#album-art)).
+
+   Matching is ISRC-first: an ISRC names a specific *recording*, so a hit is
+   almost always the right master rather than a live take or a lyric-video
+   re-upload. Failing that it searches `"artist - title"` and rejects any result
+   whose length differs from Spotify's by more than 15 seconds. A track nothing
+   matches is skipped with a warning — the rest of the playlist still comes
+   through — and the **Log** records every resolution (which query matched, and
+   the video it chose), which is where to look if a wrong track lands.
+
+   This is **not** a Spotify player: nothing is downloaded *from* Spotify, which
+   only supplies the track list. It needs free developer credentials (Settings ▸
+   **Spotify**, below) and reads **public** metadata only,
+   so your saved songs and private playlists aren't visible to it. Podcast
+   episodes and audiobooks aren't supported, and a playlist's local files and
+   episodes are skipped (each noted in the Log). Unlike the YouTube playlist
+   path, none of this touches the on-device yt-dlp module, so Spotify links work
+   on a fresh install — only the downloads they spawn need the extractor.
+
+   With no navigation bar above it, the two things the bar used to carry sit
+   on a row of their own beneath the field: the **⋯** menu (**Refresh yt-dlp
+   engine**) on the left and **Clear** (finished/failed history) on the right.
+
+   **Sources** are the feeds you keep tabs on (see
    [Browse: keeping tabs on audio sources](#browse-keeping-tabs-on-audio-sources)):
    YouTube channels/playlists, RSS feeds, a **Blog Agent** for blogs
    without a feed, an **Artist** source (following their **Top 10**, an
@@ -34,14 +227,23 @@ vertical space goes to the content instead.
    **Preview** (a listen-first modal with **Save** / **Discard**). A **Select**
    button in a source's list flips it into multi-select, so you can tick a
    batch of items and download them all in one tap. An
-   **Audio/Video toggle** atop the Sources screen — the same one the Download
-   tab has — sets which mode both buttons (and the bulk download) act in.
-2. **Library** — downloaded tracks; tap to play. Five **tabs** across the top
-   divide it — **Recent**, **Folders**, **Added**, **Watch**, **All** — so each
+   **Audio/Video toggle** heads the section — the same one Download has — and
+   sets which mode both buttons (and the bulk download) act in; **Refresh
+   all** and **+** (add a source) share its row, there being no navigation bar
+   to carry them.
+
+   **Bookmarks** is the [Saved for Later](#saved-for-later) list — the genres
+   and artists you've put aside. A row opens the thing itself in **Browse**:
+   the section switches and the map pushes the genre, the artist on their
+   genre's map, or the Spotify discography, exactly as a History row would.
+
+2. **Library** — downloaded tracks; tap to play. Four **tabs** across the top
+   divide it — **Folders**, **Random**, **Watch**, **All** — so each
    section is one tap from the others rather than a screen you push into and
    come back out of. It opens on **Folders**: the library's own shape — the
    records and mixtapes you filed — is what you come to it for, and what you
-   were just listening to is one tab away (and already on the mini player).
+   were just listening to has a tab of the app's own now (**Recent**, beside
+   this one) and is already on the mini player.
    **All** lists
    **every** track — filed into a folder or not — so it's the full flat view
    of the library (folders are one way in, not the only one). A **search**
@@ -59,11 +261,10 @@ vertical space goes to the content instead.
    A **filter** (All / Music /
    Podcasts / Video) sits at the top of the **All** tab. Swipe **left**
    for Delete/Share/Archive (and bulk versions via **Select**); swipe **right**
-   on an audio track to classify it **Song** or **Podcast** (in **Recent** that
-   swipe pins the track to the top instead — see below). Songs start from the
+   on an audio track to classify it **Song** or **Podcast**. Songs start from the
    beginning; podcasts (mic icon) and videos (film icon) resume where you left
-   off and show a progress bar. A track you haven't listened to yet shows a
-   **green** icon. Video tracks play with picture on the Player screen. Archived
+   off and show a progress bar. Video tracks play with picture on the Player
+   screen. Archived
    tracks (and archived folders) live in the **Archive**, pinned to the bottom of
    the folder list.
 
@@ -71,51 +272,13 @@ vertical space goes to the content instead.
    the same list and keeps going to the end — it doesn't loop. (What makes
    that dependable, including with the phone locked, is described in
    [Why autoplay keeps going](#why-autoplay-keeps-going).) In the
-   **auto-aggregated** lists (the **All** and **Added** tabs), where media types
+   **auto-aggregated** lists (the **All** tab, a search's results), where media types
    are mixed together, autoplay **stays within the media type** you started: pick
    a song and only songs play on (podcasts and videos are skipped until the next
    song or the list ends), and likewise for podcasts and videos. A **folder is a
    curated playlist**, though, so it **plays straight through in list order**
    regardless of type — tap any track and the whole folder plays in sequence.
-
-   **Recent.** A tab of its own — what **Added** is for arrivals, this is for
-   listening — showing what you've **played**, most recent first, each row
-   showing when and, where the track has one, its **album cover** in place of
-   the media glyph (the playing colour moves to a dot on the sleeve's corner,
-   so nothing is lost by showing a picture). It's the one list that earns the artwork: a list
-   you scan for a title reads fastest as text, but a list of things you've
-   *heard* is recognised fastest by its sleeves. A track
-   joins it the moment playback *starts*; it doesn't have to finish. It's a
-   **log, not a set**: the same track appears once per listen, so a track you
-   keep coming back to shows up repeatedly — only *consecutive* repeats are
-   collapsed, since restarting the track you're already on isn't a new listen.
-   Nothing lives there (the tracks stay wherever they are), so removing a row —
-   or **Clear** — only forgets the listen. The log keeps the last 200 plays in
-   `Documents/recents.json`.
-
-   **The pinned folder.** A log scrolls, which is exactly wrong for the one
-   track you keep going back to. **Swipe a row right** to **Pin** it and it
-   joins a **Pinned** folder at the top of the tab — a folder row like any
-   other (pin glyph, its count, tap to twirl it open and shut, and it stays put
-   at the head of the list while the log scrolls past under it). With the folder
-   **open**, a **border in the pin's own orange** runs around the whole thing —
-   header and tracks together, with a little room inside its top and bottom
-   edges — so the kept set reads as an area of its own rather than as a few
-   more rows of the log. Shut, there is nothing inside to fence off and no
-   border is drawn: a box around one closed row reads as a stray rectangle. A
-   `List` draws rows and not boxes, so it's assembled a row at a time: the rows
-   inside carry the side rails, the header caps it and the last pin closes it.
-   The frame also takes over the list's **row insets** — those sit outside the
-   row's content, so an overlay drawn on that content stopped short of its
-   neighbour's and the rails came out dashed, with a gap at every track. Newest pin
-   first; pinning the same track twice lifts it rather than listing it again,
-   since this one *is* a set. Tapping a pinned track plays **through the pinned
-   folder**, the way any curated folder plays. Swipe right again — or use **Pin
-   to Top** / **Unpin** in the touch-and-hold menu — to let it go. Like
-   everything else on this screen it's a reference, not a filing: nothing moves
-   on disk, a pinned track keeps whatever folder it actually lives in, and
-   **Clear** empties the log and leaves the pins alone. They persist to
-   `Documents/recent-pins.json`, and whether the folder is open persists too.
+   The **Random** tab is a playlist too, and plays the same way.
 
    **Chapters.** Tracks that carry YouTube chapter markers show an **arrow**
    after the title, set off by a left border so it reads as a button distinct
@@ -135,42 +298,34 @@ vertical space goes to the content instead.
    artist under the folder's name, the same title-over-artist shape a track row
    has. It's derived from the tracks rather than stored on the folder, so an
    album you assembled by hand earns it too, an Edit Metadata fix moves it, and
-   a folder of unrelated songs (which agrees on nobody) shows nothing extra. The three virtual folders that used to sit pinned above them
-   — **Added**, **Recent** and **Watch** — are tabs now; the **Archive** is
-   still pinned to the bottom.
+   a folder of unrelated songs (which agrees on nobody) shows nothing extra.
+   The virtual folders that used to sit pinned above them are tabs now —
+   **Watch** in the Library, **Recent** as a tab of the app's own — and the
+   **Archive** is still pinned to the bottom. Create folders with the Folders
+   tab's folder button; move tracks in via touch-and-hold → **Move to
+   Folder** (or the **All** tab's bulk Select menu), and **Remove from
+   Folder** in the same menu is the way back out to the main list.
 
-   **Added** lists the **last 200 tracks to arrive**, newest first, whether
-   they came from a download, a Browse save or a sync folder. It was an
-   *Inbox* — everything you hadn't listened to yet, emptying itself as you
-   played it — and an inbox is a thing you're meant to clear, which turned out
-   not to be what the list was wanted for. "What did I add lately?" is the
-   question, and playing a track is no answer to it: nothing leaves for having
-   been played. (The green glyph that used to flag an unheard track went with
-   the idea; **Mark Played** and **Mark All Played** with it.)
+   **Random** is **fifty songs picked at random** from the whole library —
+   songs only, since a podcast or a video dropped into a shuffle of music is an
+   interruption rather than a pick — and it plays as a **playlist**: tap any
+   row and the rest follow in the order shown. It stands where **Added** used
+   to (the list of the last 200 arrivals, divided by day; it's gone).
 
-   It's divided **by day** — *Today*, *Yesterday*, then the date — because
-   when a thing arrived is half of what the tab is for, and a heading makes
-   that readable without a timestamp on every row. Within a day, a **record
-   that arrived that day folds into one collapsible group** wearing its
-   sleeve, its artist and its track count — the same shape the Download tab
-   gives a record in the queue, and for the same reason: an album arriving is
-   *one* thing that happened, and a dozen rows of it would bury the rest of
-   the day. Groups start closed. Two tracks are needed to make one, since a
-   group exists to collapse a crowd and putting a lone arrival behind a twirl
-   only hides it; and a download that ran past midnight appears under both
-   days, each holding the tracks that actually landed then, rather than
-   picking one and lying about the rest. Albums only — a mixtape or a plain
-   folder is somewhere you file things over time rather than a thing that
-   arrives. It keeps its
-   **Select** button: tick several tracks and the corner menu will **Move to
-   Folder**, **Share** or **Delete** the lot — a batch download arrives in a
-   batch and is usually filed in one — and while selecting, a tap ticks a row
-   rather than starting it. Create folders with the Folders tab's folder
-   button; move tracks in via touch-and-hold → **Move to Folder** (or the bulk
-   Select menu), and **Remove from Folder** in the same menu is the way back
-   out to the main list.
+   The hand is **dealt afresh on each visit**: picking the Library from the
+   tab bar, or Random from the Library's own tabs, deals a new fifty, and a
+   **shuffle** button in the corner deals one on demand. In between it holds
+   still — the list doesn't reshuffle under your finger as rows redraw. Going
+   *back* to it isn't a visit: swipe the Player down while one of its songs is
+   playing and you land on the hand that's playing, even if the Library has
+   dealt a new one since (the hand travels with the record of where the track
+   was started — see the Player, below). A song deleted or archived after it
+   was dealt simply drops out. The hand is held by the Library rather than by
+   the tab's own view, which is what lets it survive switching tabs and still
+   tell a visit from a return.
 
-   **Copy to Folder**, beneath it, puts a *second* copy of a song somewhere —
+   **Copy to Folder**, beneath **Move to Folder** in a track's touch-and-hold
+   menu, puts a *second* copy of a song somewhere —
    its own file, its own row — which is how a track joins a mixtape without
    leaving the record it came from. A copy rather than a shared reference
    because everything else about a track is per-track: rename one, give it
@@ -188,7 +343,7 @@ vertical space goes to the content instead.
    Audio**: the file is re-downloaded from its source in the other format,
    into the same folder, and the original is replaced only once the fresh
    download has fully landed — a failed conversion costs nothing (the
-   attempt shows in the Download tab like any job).
+   attempt shows in the Download section like any job).
 
    **Find Alternative** is the way out of a copy that turned out to be the
    wrong one — a live version, a lyric video with a minute of intro, eight
@@ -300,7 +455,50 @@ vertical space goes to the content instead.
    **Discography** button at the foot of its track list opens the artist's
    catalogue. **Convert to Folder** is the way back. See
    [Album folders](#album-folders).
-3. **Player** — artwork, scrubber, play/pause, skip, next/previous — the same
+
+3. **Recent** — what you've **played**, most recent first: a tab of its own,
+   between the Library and the Player, rather than one of the Library's
+   sections, because what you've been listening to is somewhere you go as
+   often as the library itself. Each row shows when and, where the track has
+   one, its **album cover** in place of
+   the media glyph (the playing colour moves to a dot on the sleeve's corner,
+   so nothing is lost by showing a picture). It's the one list that earns the artwork: a list
+   you scan for a title reads fastest as text, but a list of things you've
+   *heard* is recognised fastest by its sleeves. A track
+   joins it the moment playback *starts*; it doesn't have to finish. It's a
+   **log, not a set**: the same track appears once per listen, so a track you
+   keep coming back to shows up repeatedly — only *consecutive* repeats are
+   collapsed, since restarting the track you're already on isn't a new listen.
+   Nothing lives there (the tracks stay wherever they are), so removing a row —
+   or **Clear** — only forgets the listen. The log keeps the last 200 plays in
+   `Documents/recents.json`. With nothing in the log there's nothing to Clear,
+   and the navigation bar goes too.
+
+   **The pinned folder.** A log scrolls, which is exactly wrong for the one
+   track you keep going back to. **Swipe a row right** to **Pin** it and it
+   joins a **Pinned** folder at the top of the tab — a folder row like any
+   other (pin glyph, its count, tap to twirl it open and shut, and it stays put
+   at the head of the list while the log scrolls past under it). With the folder
+   **open**, a **border in the pin's own orange** runs around the whole thing —
+   header and tracks together, with a little room inside its top and bottom
+   edges — so the kept set reads as an area of its own rather than as a few
+   more rows of the log. Shut, there is nothing inside to fence off and no
+   border is drawn: a box around one closed row reads as a stray rectangle. A
+   `List` draws rows and not boxes, so it's assembled a row at a time: the rows
+   inside carry the side rails, the header caps it and the last pin closes it.
+   The frame also takes over the list's **row insets** — those sit outside the
+   row's content, so an overlay drawn on that content stopped short of its
+   neighbour's and the rails came out dashed, with a gap at every track. Newest pin
+   first; pinning the same track twice lifts it rather than listing it again,
+   since this one *is* a set. Tapping a pinned track plays **through the pinned
+   folder**, the way any curated folder plays. Swipe right again — or use **Pin
+   to Top** / **Unpin** in the touch-and-hold menu — to let it go. Like
+   everything else on this screen it's a reference, not a filing: nothing moves
+   on disk, a pinned track keeps whatever folder it actually lives in, and
+   **Clear** empties the log and leaves the pins alone. They persist to
+   `Documents/recent-pins.json`, and whether the folder is open persists too.
+
+4. **Player** — artwork, scrubber, play/pause, skip, next/previous — the same
    control suite for audio and video, and it drives the lock screen and
    Control Center. A track downloaded with **album art** (anything
    Spotify-sourced — see [Album art](#album-art)) shows its real cover in
@@ -308,11 +506,27 @@ vertical space goes to the content instead.
    player too. **Tap anywhere on the scrub bar to jump there**; dragging
    works as before, so you never have to drag the playhead across a track
    just to skip ahead. **Swipe the player down** to put it away — it goes
-   back to the Library, which is where it was opened from nine times out of
-   ten. The swipe has to be a deliberate one, downward and longer than it is
-   wide, and anything inside that wants a drag of its own keeps it (the
-   scrubber above all); a fullscreen video opts out entirely, since there the
-   picture owns the screen.
+   back to **where the playing track was started**: the album or folder it
+   was tapped in (with the screens that were pushed to reach it), the Recent
+   list, the Random tab's hand, a Library search's results, or the Search
+   section it came from. The swipe has to be a deliberate one, downward and
+   longer than it is wide, and anything inside that wants a drag of its own
+   keeps it (the scrubber above all); a fullscreen video opts out entirely,
+   since there the picture owns the screen.
+
+   *Where it was started* is noted at the moment it starts. `play` is always
+   called from the screen being looked at, before that screen switches to the
+   Player, so a hook on the playback manager has the root note the tab
+   selected at that instant — which covers the screens that are shared between
+   tabs (a discography, the preview modal) without each needing to know which
+   tab it's in. Each tab keeps the router up to date on where it is inside
+   itself: the Library its section, its navigation path, its search and (on
+   Random) its hand; Search which of its four sections is showing. Skipping
+   along the queue doesn't start anything new, so it doesn't move the mark; a
+   track tapped in the home-screen widget belongs to **Recent**, whose list it
+   came from; and a folder deleted in the meantime is left out of the way
+   back. The track restored at launch has no record, and goes back to the
+   Library.
 
    **Tapping the sleeve turns it over**, onto the two things worth doing to
    the song you are listening to: **Pin to Recent**, which keeps it at the top
@@ -372,180 +586,14 @@ vertical space goes to the content instead.
    that's what actually makes content scroll clear. The Every Noise maps take
    the same height as extra scroll inset, and their scan/artist-preview bars
    pad themselves by it, since the maps run edge to edge under the tab bar.
-4. **Download** — paste one or more URLs (whitespace/line-break separated; any
-   http(s) link is queued and the rest of a pasted blob is skipped), choose
-   **Audio** or **Video** (default Audio) from the **toggle beside the input
-   field** — the Library's own music-note and film glyphs — and watch the
-   queue. **Paste** leads the field rather than trailing it: it's what you
-   reach for before typing anything, and it becomes the clear button once
-   there's something to clear. The mode toggle has gone through three shapes:
-   a segmented picker on its own line (a row of the screen to say what two
-   icons say), then two small icons squeezed inside the field's trailing edge,
-   and now a control of its own next to it — compact, but with glyphs big
-   enough to read at a glance, which is what the one control deciding *what a
-   download is* deserves. A video download **asks which resolution** once it knows what the
-   source is offering (see
-   [Choosing a resolution](#choosing-a-resolution)). Links from **any site
-   yt-dlp supports** work — YouTube, Vimeo, SoundCloud and ~hundreds more — not
-   just YouTube — plus **Spotify** links, which take a different route (see
-   **Spotify links** below). Swipe a row for **Cancel** (active/queued), **Restart**, or
-   **Clear**; tap a finished row to play it. Every row shows the track's
-   **title and artist** (kept in step with the Library, so an AI-cleaned name
-   shows here too) — including the rows that haven't downloaded yet, which used
-   to read as the raw URL until their extraction came back. Anything the list
-   that queued them already knew goes up straight away instead: the catalogue's
-   own title and artist for a discography pick, and for a Browse row or a
-   search hit whatever that row was showing. That naming is **display only** —
-   a feed's title is a video name, not catalogue metadata, so the finished
-   track is still named by the download and still gets the AI organizer's go at
-   it.
 
-   **A record queued whole is one row.** **Browse ▸ Download Album** puts a
-   dozen jobs in the queue at once, and a dozen rows of one record buries
-   everything else in the list. They fold into a single **collapsible group**
-   instead — **collapsed by default**, since a record you asked for whole is
-   one thing you asked for — wearing the album's **cover** and name, how far
-   along it is ("7 of 12 tracks · 61%"), and one **progress bar across the
-   whole record**. Twirl it open for the individual tracks, which are ordinary
-   queue rows with their own swipes. Only an album groups: a Browse source
-   files its one-off picks into a folder too, and a dozen unrelated songs from
-   a feed are a dozen downloads, not a record. Finishing a half-landed album
-   (Download Album again on one that crashed partway) joins the group it
-   belongs to rather than starting a second one, and the grouping survives a
-   relaunch with the queue.
-
-   The tally behind that bar is kept by the **queue**, not worked out by the
-   view. Each job is an `ObservableObject` of its own precisely so one row can
-   redraw without the other four hundred doing the same — which means a header
-   sitting *above* a dozen of them would never hear a thing from any of them.
-   The manager is watching all of them anyway, so it keeps the count and
-   publishes it, quantized to whole percents: every distinct value is a redraw
-   of the queue, and the bar it draws is a couple of hundred points wide.
-
-   The queue is a **running history** — it persists across
-   relaunches (`Documents/downloads.json`, capped at the 500 most recent), so
-   what you've downloaded stays listed until you **Clear** it; only in-flight
-   jobs are dropped on quit. The tab's **badge** shows how many downloads are
-   active or queued. The queue runs **up to two downloads at once** (see
-   [the pipeline notes](#browse-keeping-tabs-on-audio-sources) — the network
-   work runs in parallel while everything touching the embedded Python
-   interpreter stays serialized).
-
-   **The queue outlives the session, and keeps going with the screen off.**
-   Three things, which are only useful together:
-
-   - **It's written down as soon as it's queued**, not when it finishes.
-     `downloads.json` holds the unfinished jobs beside the history — with the
-     album orders they need to file themselves — so a queue survives being
-     backgrounded, killed, or crashing. At the next launch the pending rows
-     come back as queued work and start again once the first screen is up. A
-     job interrupted mid-*download* restarts rather than resuming: its partial
-     file was in a scratch directory that doesn't survive, and half a track is
-     worth nothing. **A job that never finishes gets three of those goes and
-     then stops asking.** Restarting a pending job at every launch is what
-     makes a crash cost progress rather than work — and, for a job that is
-     itself what took the app down, it is also a loop the app can't be opened
-     long enough to break out of. So each start is counted (and written down
-     *before* the work begins, since a crash records nothing afterwards) and
-     cleared the moment the job reaches a verdict; the fourth start doesn't
-     happen. The row goes to **Failed** saying so, and Retry is one tap away
-     whenever you want it.
-   - **A background assertion is held while the queue works**, so locking the
-     phone doesn't stop it where it stands (which is what used to happen: the
-     app was suspended between one track and the next and nothing moved again
-     until it was reopened).
-   - **A background processing task** is scheduled on the way out when work is
-     outstanding, so iOS can grant a fresh window later — typically on Wi-Fi,
-     which is exactly when finishing a queue of albums is welcome. Each window
-     restarts the queue, asks for the next one, and hands itself back the
-     moment the system calls time.
-
-   None of this makes the window unlimited — no API does. iOS gives a
-   backgrounded app a bounded stretch and then suspends it whatever it's doing
-   (longer while audio is actually playing, which is why a queue running under
-   music tends to get further). The persistence is what makes that cost
-   *progress* rather than work: reopen the app, or wait for the system to grant
-   a window, and it carries on from where it stopped.
-
-   **A batch is one change to the queue.** Everything that queues several
-   links from one press — **Download Album**, a playlist or Spotify
-   collection's selection, a source's bulk **Select** — hands the whole set
-   over at once (`enqueueBatch`) rather than a link at a time. It used to be a
-   loop, and each pass published its own insert and ran its own scheduler
-   pass: twenty tracks meant twenty mutations inside a single main-actor turn,
-   on top of whatever the view that pressed the button was changing in the
-   same turn. That combination is what the earlier bulk-download crash came
-   down to — the UIKit diff under a `List` doesn't survive it — and the batch
-   paths hadn't been given the same treatment the bulk-select path was. The
-   queue still lists newest-first and still runs oldest-first, so a record
-   downloads in tracklist order exactly as before.
-
-   **Search.** The same single input field doubles as a search box: type
-   anything that *isn't* a link and the button flips from **Download** to
-   **Search**. It scrapes YouTube's results page and returns the **top 5
-   videos** in a popup styled like a Browse list — title, channel, and
-   **Download** / **Preview** per row. Both observe the tab's **Audio/Video
-   toggle**: Download queues the pick in that mode, and Preview opens the same
-   listen-first modal Browse uses — with a picture, in Video mode — where Save
-   files it into the library. A URL still behaves exactly as before — the
-   process only changes when no link is detected.
-
-   **Playlists.** Paste a **YouTube playlist** link — either the dedicated
-   `…/playlist?list=…` page or a `watch?v=…&list=…` link opened from inside a
-   playlist — and the app resolves its entries and shows a **selection popup**
-   listing every video. Everything is checked by default, so **Download** grabs
-   the whole list in one tap; or check off just the ones you want (a
-   **Select All / Deselect All** toggle is in the header). Confirming creates a
-   **folder named after the playlist** and queues the chosen entries into it (in
-   playlist order, using the same Audio/Video mode); cancelling — or dismissing
-   the popup — downloads nothing. A playlist row sits in the queue while it
-   resolves and while the popup is open, then reports how many downloads it
-   spawned. Auto-generated **mixes/radios** (`RD…` list ids) and the auth-only
-   **Watch Later** / **Liked** lists are treated as ordinary single-video links,
-   not playlists. Resolving the entry list uses the on-device yt-dlp module, so —
-   like chapter capture — it works only once that module has been fetched by a
-   prior download. The same selection popup also serves **Spotify** albums,
-   playlists and artists.
-
-   **Spotify links.** Paste a Spotify **track**, **album**, **playlist** or
-   **artist** — the `open.spotify.com/…` link (localized `intl-xx` share links
-   and `?si=…` share tokens included), the `spotify:track:…` URI, or a
-   `spotify.link` short link — and the app reads its metadata from Spotify,
-   matches **each track to a YouTube video**, and sends the results through the
-   ordinary download pipeline. A single track queues one download, like pasting
-   one YouTube link; an album, playlist or artist gets the **same selection
-   popup** a YouTube playlist does and lands in a **folder named after the
-   album/playlist/artist** (re-pasting reuses that folder rather than making a
-   second one). The queue row counts the matching off — *Resolving 42 of 137…* —
-   since every track costs a YouTube search; one paste resolves at most **200**
-   tracks, and anything past that is dropped and logged.
-
-   Every track resolved from Spotify also carries its **album art** into the
-   download — the finished track wears the cover in the Player, the lock
-   screen and the mini player (see [Album art](#album-art)).
-
-   Matching is ISRC-first: an ISRC names a specific *recording*, so a hit is
-   almost always the right master rather than a live take or a lyric-video
-   re-upload. Failing that it searches `"artist - title"` and rejects any result
-   whose length differs from Spotify's by more than 15 seconds. A track nothing
-   matches is skipped with a warning — the rest of the playlist still comes
-   through — and the **Log** records every resolution (which query matched, and
-   the video it chose), which is where to look if a wrong track lands.
-
-   This is **not** a Spotify player: nothing is downloaded *from* Spotify, which
-   only supplies the track list. It needs free developer credentials (Settings ▸
-   **Spotify**, below) and reads **public** metadata only,
-   so your saved songs and private playlists aren't visible to it. Podcast
-   episodes and audiobooks aren't supported, and a playlist's local files and
-   episodes are skipped (each noted in the Log). Unlike the YouTube playlist
-   path, none of this touches the on-device yt-dlp module, so Spotify links work
-   on a fresh install — only the downloads they spawn need the extractor.
 5. **Settings** — AI configuration on top, then **Spotify** credentials, a
    **Subtitles** section, an
    **Every Noise Data** section, a
    **Local Sync** section, a
    **Blog Agent** section (posts per
-   refresh / songs per post limits for the Browse tab's Blog Agent sources),
+   refresh / songs per post limits for the Blog Agent sources in Search ▸
+   Sources),
    and the **Log** as a section beneath them.
    - **Subtitles.** Whether captions show at all (the same switch the Player's
      CC button flips), their **text size**, a **colour** swatch and what sits
@@ -688,7 +736,7 @@ album art stops being only something a download brings — see
 
 A folder that never went through **Download Album** can earn the same sleeve:
 when *every* track in it carries the same cover — a Spotify album pasted into
-the Download tab, or a folder you assembled by hand out of one record — that
+the Download section, or a folder you assembled by hand out of one record — that
 image is shown. It has to be decided on **content**, not file names, because
 each track's cover is saved under its own track id, so an album's twelve
 identical covers are twelve identical *files*. File sizes are compared first,
@@ -707,8 +755,7 @@ redraws never re-read disk.
 
 ## Browse: keeping tabs on audio sources
 
-The Browse tab's **Sources** screen — behind the stack button in the top-right
-corner of the genre map — watches a set of user-configured **sources** and turns
+The Search tab's **Sources** section watches a set of user-configured **sources** and turns
 what
 they surface into a curated to-listen list. Every source, whatever its type,
 produces the same thing: **YouTube links with metadata** — each shown as a
@@ -724,14 +771,13 @@ atop the Sources screen:
   and still gets the AI organizer's go at it. Browse downloads are filed into a
   **library folder named
   after the source** (a "Brian Eno" Discography lands in a "Brian Eno"
-  folder), so everything from one source stays together — and, being fresh
-  arrivals, they show at the top of **Added** as well. Once the
+  folder), so everything from one source stays together. Once the
   download **lands in the library**, the row's button becomes a **green play
   button**: tapping it starts that track *in the background*, leaving you on
   the list you were working through (tap again to pause). Until then it's the
   plain green marker — a queued download has nothing to play yet. This is the
   same control everywhere a list offers a download: a source's items, the Every
-  Noise discography, and the Download tab's search results.
+  Noise discography, and the Download section's search results.
 - **Preview** — its icon **fills in** once you've opened it, so a long list
   shows at a glance what you've already auditioned (the button keeps working —
   it's a breadcrumb, not a decision). It opens a modal that downloads the audio — or, in Video mode,
@@ -988,7 +1034,7 @@ a **Find** field — at both levels:
   with credentials saved.
 - **Find** filters: in list mode it narrows the list; over a map it drops down
   the matches and tapping one flies the map there. At the root a **target
-  toggle sits beside the field** — the shape the Download tab's Audio/Video
+  toggle sits beside the field** — the shape the Download section's Audio/Video
   switch settled on, in the field's own material and corner radius so the two
   read as one control with a switch on the end. (Inside the field, as it used
   to be, three targets meant three caption-sized icons squeezed between the
@@ -1028,7 +1074,7 @@ a **Find** field — at both levels:
   Find, rows swipe to delete, with a Clear History button at the bottom
   (`Documents/everynoise-history.json`). Swiping a row the **other** way
   (right) keeps it rather than forgetting it: **Save for Later** files that
-  genre or artist behind the **bookmark button** in the top-right corner (see
+  genre or artist on the Search tab's **Bookmarks** list (see
   [Saved for Later](#saved-for-later)) and leaves the log entry where it is.
   **A genre's own page has it too**,
   scoped to that genre: which of *its* artists you've already heard is the
@@ -1042,8 +1088,11 @@ a **Find** field — at both levels:
 History answers "what have I already looked at?", which is the wrong question
 for something you meant to come back to — a genre you opened mid-scan, an
 artist you liked and then browsed past. **Saved for Later** is the list of
-those, behind the **bookmark button** beside the sources button in the Browse
-tab's top-right corner (filled once there's anything on it). Five ways in, all
+those — the Search tab's **Bookmarks** section, one button along from Browse.
+A row opens the genre, the artist on their genre's map, or the Spotify
+discography back in Browse: the section switches and the map pushes it, by the
+same route a home-screen widget row takes (so a bookmark tapped before the map
+has finished loading waits for it rather than going nowhere). Five ways in, all
 of them where you already are rather than a screen you have to go to:
 **swipe right** on a row in History (at either level) or in **List** mode (a
 genre, or an artist inside a genre); the **bookmark** in a tapped artist's
@@ -1167,8 +1216,8 @@ are a pair: **Add as
 Source** files the
 artist into Browse as a discography-mode **Artist source** on the spot (it
 reads "In Browse" once an equivalent source exists, so it never files a
-duplicate), while **Save for Later** just bookmarks them on the list behind
-the browser's own bookmark button (see
+duplicate), while **Save for Later** just bookmarks them on the Search tab's
+Bookmarks list (see
 [Saved for Later](#saved-for-later)) — keeping an artist without following
 them. That one is a **switch**, and one that knows what it's looking at: the
 tile comes up **already filled** (the accent as a solid background rather than
@@ -1183,12 +1232,12 @@ in the row; when the search settles, the **matched tracks light up with
 Download and Preview beside them** (Preview is the standard Browse
 listen-first modal, walking the rest of the release) and misses dim to "no
 match" — no picker popup. A single-track pick goes in **unfiled**: it shows
-in the Library's **All** and **Added** tabs rather than an album folder.
+in the Library's **All** tab rather than an album folder.
 **Download Album** is the opposite case and files the whole record into a
-folder of its own, cover art and all — and its jobs arrive in the Download tab
+folder of its own, cover art and all — and its jobs arrive in the Download queue
 as a **single collapsible group** wearing that cover, rather than as a dozen
 rows burying whatever else is in the queue (see the
-[Download tab](#whats-here)).
+[Download section](#whats-here)).
 
 **It resumes rather than restarts.** Before queueing anything it looks for the
 record *in the library*: the folder it would file into, and — since the same
@@ -1792,7 +1841,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `Models.swift` | `Track`, `Folder`, `DownloadMode`, `LibraryFilter`, `FolderSort`, `FolderViewMode`, paths, helpers. |
 | `LibraryStore.swift` | Persists the library to `Documents/library.json` and folders to `Documents/folders.json`; owns the local moves across the sync boundary (queueing replica ops), the importer's reconcile primitives, and the mixtape/album conversions — including the album cover write that lands on the folder *and* every song in it, and the reset that puts the downloaded one (or a colour) back. |
 | `LocalSync.swift` | `LocalSyncStore` — the sync folder's security-scoped bookmark, the stamped manifest + journaled exporter, the coordinated importer (placeholder-aware copies), kqueue monitoring, and the off-main tree scan. |
-| `DownloadManager.swift` | Download queue (two concurrent slots) + `DownloadJob` + persisted history; `enqueueAlbum`, which files a whole release into one folder in tracklist order with the catalogue's own titles/artists and marks its jobs so the Download tab groups them; `AlbumDownloadProgress`, the per-record tally the group's header reads (the jobs publish only to their own rows); `ArtworkFetcher`, the best-effort album-art fetch a finished download (or an album folder) triggers; and `VideoQualityChooser`, which puts the source's real rendition list to the user mid-extraction (once per video, hand-queued downloads only). |
+| `DownloadManager.swift` | Download queue (two concurrent slots) + `DownloadJob` + persisted history; `enqueueAlbum`, which files a whole release into one folder in tracklist order with the catalogue's own titles/artists and marks its jobs so the Download section groups them; `AlbumDownloadProgress`, the per-record tally the group's header reads (the jobs publish only to their own rows); `ArtworkFetcher`, the best-effort album-art fetch a finished download (or an album folder) triggers; and `VideoQualityChooser`, which puts the source's real rendition list to the user mid-extraction (once per video, hand-queued downloads only). |
 | `PythonGate.swift` | App-wide async mutex serializing every embedded-Python call, so the two-slot pipeline never runs concurrent interpreter work. |
 | `ExtractionMemory.swift` | What the pipeline learned *this session* about which route actually produces a file — the native extractor's rest, the default path's skip, and the player-client order the forced sweep leads with (see [What the pipeline remembers](#what-the-pipeline-remembers)). |
 | `YouTubeExtractor.swift` | `MediaExtractor` protocol + YoutubeDL-iOS impl + a mock; also `MediaVerifier` (a finished download has to be decodable before it counts as one) and `MediaDuration`, the two-reader length check that catches AVFoundation's HE-AAC over-read. |
@@ -1811,7 +1860,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `PlaylistResolver.swift` | Detects playlist links and flat-resolves their entries (on-device yt-dlp) so a playlist downloads into a folder. |
 | `ChapterSplitter.swift` | Exports one file per chapter (AVFoundation) for "Break Chapters into Playlist". |
 | `VideoMerger.swift` | Muxes a video-only + audio-only stream into one MP4. |
-| `PlaybackManager.swift` | `AVPlayer` engine (audio + video), audio session (including interruption/route-change handling), the lock screen (its own and any **borrowed** by a `RemoteAudioSource` — see [Lending the lock screen out](#lending-the-lock-screen-out)), and the frozen-playhead watchdog that keeps autoplay advancing; exposes the queue's next/previous entries for the Player's neighbour labels. |
+| `PlaybackManager.swift` | `AVPlayer` engine (audio + video), audio session (including interruption/route-change handling), the lock screen (its own and any **borrowed** by a `RemoteAudioSource` — see [Lending the lock screen out](#lending-the-lock-screen-out)), and the frozen-playhead watchdog that keeps autoplay advancing; calls `onStart` as each track starts, which is where the root notes the tab it was started on; exposes the queue's next/previous entries for the Player's neighbour labels. |
 | `Logger.swift` | `LogStore` — thread-safe, app-wide log sink. |
 | `AISettings.swift` | `AISettingsStore` (model/key/assist, Keychain-backed), `AIModel`, `Keychain` helper. |
 | `AnthropicClient.swift` | Minimal Anthropic Messages API client (verify + single-shot completion) over URLSession. |
@@ -1820,7 +1869,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `SpotifySettings.swift` | `SpotifySettingsStore` — the Keychain-backed client id/secret (mirrors `AISettingsStore`). |
 | `SpotifyResolver.swift` | Spotify metadata → `ResolvedPlaylist`: ISRC-first YouTube matching with a duration gate, bounded and concurrent; plus `AlbumIdentifier` (the "Artist - Title" split and the album-search identification) and `AlbumConversion`, which is what **Convert to Album** runs. |
 | `AIOrganizer.swift` | Builds the prompt, calls the API, writes music/podcast + clean metadata back to the library. |
-| `BrowseModels.swift` | `BrowseSourceKind`, `BrowseSource`, `BrowseItem` + status — the Browse tab's data model. `BrowseItem.naming` is the shared "Artist — Song" split the rows, the preview modal's lock-screen metadata and the download queue all name items by. |
+| `BrowseModels.swift` | `BrowseSourceKind`, `BrowseSource`, `BrowseItem` + status — the Sources section's data model. `BrowseItem.naming` is the shared "Artist — Song" split the rows, the preview modal's lock-screen metadata and the download queue all name items by. |
 | `BrowseStore.swift` | Persists sources/items to `Documents/browse.json`; orchestrates refreshes and the new/downloaded/saved/discarded lifecycle. |
 | `FeedParser.swift` | Minimal RSS 2.0 + Atom parser (XMLParser) shared by the YouTube feeds and the generic RSS reader. |
 | `BrowseFetchers.swift` | YouTube channel/playlist feed fetch (+ channel-id resolution by page scrape), the YouTube-link-filtered RSS reader, and the search-result resolver. |
@@ -1828,24 +1877,24 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `BlogAgent.swift` | The Blog Agent source: homepage fetch → AI link triage → article reads → per-article summary + artist extraction + YouTube-link harvest, with bot-protection ("agent blocked") detection. |
 | `DiscographyAgent.swift` | The AI catalogue layout behind Search Discography mode: albums + track names + a Highlights list, one model call, no YouTube work (matching moved into the browser, on demand). |
 | `DiscographyBrowserView.swift` | The shared album-first discography browser — artist header (portrait, name, Learn More bio), the Artist Sample Track row atop the Top 10, cover thumbnails/full art, names first, per-release YouTube search, **Download Album**, pinned Top 10, and the whole-catalogue song search that scrolls to and highlights its hit — plus its two catalogue providers (Spotify live / AI layout), the Wikipedia lookup + AI bio sheet, and the Browse-source wrapper that caches the first pass. |
-| `BrowseView.swift` | The Browse tab: the Every Noise browser as the tab's own screen, plus the **Sources** screen behind the corner button — sources grouped by type, add-source sheet, refresh. |
+| `BrowseView.swift` | The Search tab: `SearchSection` and `SearchView` — the four section buttons (with the download count and the sources dot) over Browse, Download, Sources and Bookmarks, kept alive behind one another — plus the **Sources** section itself: sources grouped by type, add-source sheet, refresh. |
 | `EveryNoiseData.swift` | The bundled Every Noise dataset: models, the lazy/LRU shard-loading store, the memory-mapped global artist search (`ENArtistIndex`), and the 30-second preview player. |
 | `EveryNoiseUpdates.swift` | `ENUpdateStore` — the opt-in, heavily throttled Spotify harvest that records what the frozen dataset is missing as you browse; the exportable JSONL it writes for `tools/everynoise/merge_updates.py`; `merged(_:genre:)`, which draws the findings onto the genre's map straight away; and `ENDataFolder`, the separately bookmarked folder a copy of the records is kept in. |
 | `NoiseMapView.swift` | The virtualized `UIScrollView` scatter map (spatial grid + recycled labels) both noise maps render through — opens centered on its canvas, with the draggable scroll-pill ring on the right edge. |
-| `SavedForLater.swift` | The Saved for Later list: the saved genre/artist model, the app-level `SavedForLaterStore` (`saved-for-later.json`), and the sheet behind the Browse tab's bookmark button. |
+| `SavedForLater.swift` | The Saved for Later list: the saved genre/artist model, the app-level `SavedForLaterStore` (`saved-for-later.json`), and the list the Search tab's **Bookmarks** section shows. |
 | `EveryNoiseView.swift` | The Every Noise browser: Map/List/Scan/History modes + Find at both levels (with the root's genre/artist/Spotify toggle), the scan transport and its "+", the artist bar whose "+" opens the live discography (or creates Artist sources when Spotify isn't set up), and the measured bottom-bar clearance the maps and lists inset by. |
 | `EveryNoiseData/` | Bundled (folder reference): `genres.json` index + per-genre artist shards from the one-time `tools/everynoise/scrape.py`, plus the derived `artists.idx.z` from `build_artist_index.py`. |
 | `BrowseSourceView.swift` | One source's items with per-row Download/Preview/Discard, plus a **Select** mode for bulk download; also `BrowseTrackStatusButton`, the green play button every browse list shows once a download is in the library. |
 | `BrowsePreviewView.swift` | The preview modal: pipeline download, mini player with prev/play-pause/next over the queue it was opened with (auto-advancing at the end of each track — off its own frozen-playhead watchdog, not just the end notification — phone locked or not), the lock-screen metadata it borrows while it plays, Save/Discard. |
-| `*View.swift` | The five SwiftUI screens, in tab order (Browse, Library, Player, Download, Settings — which embeds the Log); none of them sets a navigation title. `DownloadView.swift` also holds the queue's album grouping — the collapsible record with its cover, count and whole-album bar. `LibraryView.swift` also holds `LibraryTab`, the Recent/Folders/Added/Watch/All strip, the Folders tab's two shapes (the list, and the cover view's album grid), the shared track-menu entries every list drops into its `contextMenu` (Sync to Local, Send to Watch, View Discography, **Copy to Folder**, **Find Alternative**, AI Organize, Get Album Art, Get Subtitles, Convert Format), and Find Alternative's own search screen. `PlayerView.swift` also holds the tap-to-seek scrubber, the caption overlay (and its own 5 Hz playhead clock), the actions a tap on the sleeve reveals and the `MixtapePickerView` behind Copy to Mixtape, the `MiniPlayerBar` the other tabs inset above the tab bar, and the album-art loaders (`TrackArtwork`, `FolderArtwork`, `FolderCover`) — each a bounded `ImageCache` with a full decode for the big slots and an ImageIO thumbnail for the row-sized ones. |
-| `FolderView.swift` | Folder detail (tap-to-play, reorder, subfolders, mixtape header/Edit Cover, the album sleeve that opens its art options and the Discography row beneath its tracks), the discography push a library album makes, plus the Library's Added and Recent tabs — Added including its day sections and the collapsible album group each day folds a record into (`AddedDay`/`AddedListItem`/`AddedAlbumGroup`), Recent including the pinned folder and the row-by-row frame that draws its border. |
+| `*View.swift` | The SwiftUI screens. The five tabs, in order: Search (`BrowseView.swift`'s `SearchView`, whose Download section is `DownloadView`), Library, Recent (`RecentView`, in `FolderView.swift`), Player and Settings — which embeds the Log; none of them sets a navigation title. `RootView.swift` holds the `TabView`, the Search tab's download badge, and the Player's swipe-down back to where its track was started. `DownloadView.swift` also holds the queue's album grouping — the collapsible record with its cover, count and whole-album bar. `LibraryView.swift` also holds `LibraryTab`, the Folders/Random/Watch/All strip (and the Random tab's hand, dealt on each visit and kept for a return), the Folders tab's two shapes (the list, and the cover view's album grid), the shared track-menu entries every list drops into its `contextMenu` (Sync to Local, Send to Watch, View Discography, **Copy to Folder**, **Find Alternative**, AI Organize, Get Album Art, Get Subtitles, Convert Format), and Find Alternative's own search screen. `PlayerView.swift` also holds the tap-to-seek scrubber, the caption overlay (and its own 5 Hz playhead clock), the actions a tap on the sleeve reveals and the `MixtapePickerView` behind Copy to Mixtape, the `MiniPlayerBar` the other tabs inset above the tab bar, and the album-art loaders (`TrackArtwork`, `FolderArtwork`, `FolderCover`) — each a bounded `ImageCache` with a full decode for the big slots and an ImageIO thumbnail for the row-sized ones. |
+| `FolderView.swift` | Folder detail (tap-to-play, reorder, subfolders, mixtape header/Edit Cover, the album sleeve that opens its art options and the Discography row beneath its tracks), the discography push a library album makes, plus the Library's **Random** tab (`RandomTracksView`) and the **Recent** tab (`RecentView` around `RecentTracksView`), Recent including the pinned folder and the row-by-row frame that draws its border. |
 | `MixtapeViews.swift` | Mixtape banner rendering (non-destructive crop), the shared folder-row label, and the Edit Cover sheet (PhotosPicker + drag/pinch + font picker). |
 | `AlbumViews.swift` | The album side of a folder: the stand-in colour palette, the square sleeve (cover or colour) the folder screen and the cover grid draw, the grid's own cell, the Custom Album Art sheet — PhotosPicker, square framing, and the crop that turns the framing into the JPEG copied onto every song — and **Retrieve Album Art**'s finder: the artist search (memoized for the session), the chosen artist's covers as a grid, and the pick that hands one to `ArtworkFetcher`. |
 | `WatchFolderView.swift` | The phone's Library **Watch** tab (manage what's been sent to the watch). |
 | `WatchManifest.swift` | Wire format shared by the iPhone and watch targets (the sync manifest, the remote-control `RemoteNowPlaying`/`RemoteCommand` types, + WC keys). |
 | `WatchSync.swift` | Phone-side WatchConnectivity bridge: pushes the manifest + audio files, handles the watch's "Clear all". |
 | `WidgetShared.swift` | Wire format shared by the app and the widget targets (the genre/artist/song rows the widget draws, their App Group storage, and the `offlinelisten://` deep links each row opens) — the same trick `WatchManifest.swift` uses for the watch. |
-| `WidgetBridge.swift` | The app's half: republishes the snapshot from the Recent log and the Every Noise visit log (genres and artists as separate deduplicated lists), reloads the widget's timeline when it actually changed, and `AppRouter`, which parks a tapped row until the screen that can act on it is up. |
+| `WidgetBridge.swift` | The app's half: republishes the snapshot from the Recent log and the Every Noise visit log (genres and artists as separate deduplicated lists), reloads the widget's timeline when it actually changed, and `AppRouter`, which parks a tapped row (or a Bookmarks row) until the screen that can act on it is up — and holds the `PlayContext` the Player's swipe-down goes back to, with the Library's and Search tab's current spots kept up to date for it. |
 
 The companion watch app lives under `OfflineListenWatch/` (see
 [Companion Apple Watch app](#companion-apple-watch-app)).
@@ -2021,7 +2070,7 @@ songs from `LibraryStore`'s `saveRecents()`, genres and artists from
 already pass through. Each writer re-reads the snapshot, replaces its own half
 and writes it back, so neither can clobber the other's rows. The browse half is
 also refreshed **from disk at launch**, since the browser's visit log isn't
-loaded at all until the Browse tab is opened.
+loaded at all until the Search tab is opened.
 
 Each row carries the **date** it happened, used only for ordering — that's what
 lets the single-item sizes pick a winner across two lists and **Genres &
@@ -2452,13 +2501,13 @@ than once — the default extraction, then the forced-client recovery, then any
 mid-download URL refresh — so the answer is memoized against the URL for ten
 minutes; that also means a **Restart** straight after a failure doesn't
 re-ask. And the question is raised only for a download you queued *by hand*: a
-single pasted link, a hit picked from the Download tab's search, a restart.
+single pasted link, a hit picked from the Download section's search, a restart.
 Everything queued as a **batch** — playlist children, album tracks, Browse's
 bulk download, a format conversion — runs unattended on the **last resolution
 you chose** (best available until you've chosen one), because forty prompts is
 not a feature.
 
-The sheet is presented from the app's root rather than the Download tab, since
+The sheet is presented from the app's root rather than the Download section, since
 the download that asks may have been started from Browse. Dismissing it takes
 the best available — a picker you can ignore is better than a download that
 stalls — and a prompt nobody answers falls back to that standing preference
@@ -2609,7 +2658,7 @@ knows it:
    `AudioOnlyFormat`. `canHandle` returns true only when a YouTube video id can be
    parsed, so non-YouTube links bypass it.
 2. **`YoutubeDLExtractor` (fallback)** — the yt-dlp path, used when the native
-   extractor fails. `extractInfo(url:)` resolves the video; the Download tab's
+   extractor fails. `extractInfo(url:)` resolves the video; the Download section's
    "⋯" menu has **Refresh yt-dlp engine** to re-pull a stale module. The URL is
    first **canonicalised** to `https://www.youtube.com/watch?v=ID` — the mobile
    host (`m.youtube.com`) and tracking/autoplay params (`pp`, `ra`, …) are

@@ -2,10 +2,11 @@ import SwiftUI
 
 /// The tabs, in the order they sit in the tab bar.
 enum Tab: Hashable {
-    case browse
+    /// Browse, Download, Sources and Bookmarks — finding things to listen to.
+    case search
     case library
+    case recent
     case player
-    case download
     case settings
 }
 
@@ -20,9 +21,15 @@ struct RootView: View {
     /// and a question nobody can see is a download that waits for nothing.
     @EnvironmentObject private var videoQuality: VideoQualityChooser
     @State private var selection: Tab = .library
+    /// Set while the Player's swipe-down is switching tabs, so arriving back in
+    /// the Library reads as going back rather than as a visit (see
+    /// `AppRouter.libraryVisits`).
+    @State private var returning = false
 
-    /// Downloads still working or waiting — the number shown on the Download
-    /// tab's badge (finished/failed/cancelled history doesn't count).
+    /// Downloads still working or waiting — the number shown on the Search
+    /// tab's badge (finished/failed/cancelled history doesn't count). The queue
+    /// lives one of that tab's buttons in, so the badge is how it's seen from
+    /// everywhere else.
     private var pendingDownloads: Int {
         downloads.jobs.filter { $0.state.isActive || $0.state == .queued }.count
     }
@@ -33,30 +40,31 @@ struct RootView: View {
         // (outside each screen's own NavigationStack) rather than to the
         // TabView, which is what lets a screen's own bottom bar — the Every
         // Noise scan/artist bars — stack neatly above it.
-        // Left to right: the two screens you browse with, the player they feed,
-        // then the queue and the settings behind them.
+        // Left to right: where you find things, the library they land in, what
+        // you've been playing out of it, the player they all feed, then the
+        // settings behind them.
         TabView(selection: $selection) {
-            BrowseView()
+            SearchView(onPlay: { selection = .player })
                 .miniPlayerBar { selection = .player }
-                .tabItem { Label("Browse", systemImage: "safari") }
-                .tag(Tab.browse)
+                .tabItem { Label("Search", systemImage: "magnifyingglass") }
+                .badge(pendingDownloads == 0 ? nil : Text("\(pendingDownloads)"))
+                .tag(Tab.search)
 
             LibraryView(onPlay: { selection = .player })
                 .miniPlayerBar { selection = .player }
                 .tabItem { Label("Library", systemImage: "music.note.list") }
                 .tag(Tab.library)
 
-            // Swiping the player down puts it away — back to the Library,
-            // which is where it was opened from nine times out of ten.
-            PlayerView(onSwipeDown: { selection = .library })
+            RecentView(onPlay: { selection = .player })
+                .miniPlayerBar { selection = .player }
+                .tabItem { Label("Recent", systemImage: "clock.arrow.circlepath") }
+                .tag(Tab.recent)
+
+            // Swiping the player down puts it away — back to wherever the
+            // playing track was started from.
+            PlayerView(onSwipeDown: returnToPlayContext)
                 .tabItem { Label("Player", systemImage: "play.circle") }
                 .tag(Tab.player)
-
-            DownloadView(onPlay: { selection = .player })
-                .miniPlayerBar { selection = .player }
-                .tabItem { Label("Download", systemImage: "arrow.down.circle") }
-                .badge(pendingDownloads == 0 ? nil : Text("\(pendingDownloads)"))
-                .tag(Tab.download)
 
             SettingsView()
                 .miniPlayerBar { selection = .player }
@@ -69,9 +77,49 @@ struct RootView: View {
         .sheet(item: $videoQuality.pending) { pending in
             VideoQualityPickerView(pending: pending)
         }
-        .onAppear { routeBrowse(); routeTrack() }
+        .onAppear {
+            notePlayStarts()
+            routeBrowse()
+            routeTrack()
+        }
+        .onChange(of: selection) { tab in
+            if tab == .library && !returning { router.noteLibraryVisit() }
+            returning = false
+        }
         .onChange(of: router.pendingBrowse) { _ in routeBrowse() }
         .onChange(of: router.pendingTrackID) { _ in routeTrack() }
+    }
+
+    /// Has every track that starts note the tab it was started on. `play` is
+    /// called from the screen being looked at, before that screen's `onPlay`
+    /// switches to the Player — so at that moment the selected tab *is* where
+    /// the track came from, whichever shared screen (a discography, the
+    /// preview modal) did the starting.
+    private func notePlayStarts() {
+        let router = self.router
+        let tab = $selection
+        playback.onStart = { router.notePlayStarted(on: tab.wrappedValue) }
+    }
+
+    /// The Player's swipe-down: back to the screen the playing track was
+    /// started from — the album, the Recent list, the Random hand it was dealt
+    /// from — rather than to the Library regardless.
+    private func returnToPlayContext() {
+        returning = true
+        switch router.playContext {
+        case .search(let section)?:
+            router.pendingSearchSection = section
+            selection = .search
+        case .library(let place)?:
+            router.pendingLibraryPlace = place
+            selection = .library
+        case .recent?:
+            selection = .recent
+        case nil:
+            // Nothing started this session — the track restored at launch.
+            // The Library is where it most likely came from.
+            selection = .library
+        }
     }
 
     /// The tab is all this level does for a browse row — resolving it against
@@ -79,7 +127,7 @@ struct RootView: View {
     /// navigation stack and knows when that index has finished loading.
     private func routeBrowse() {
         guard router.pendingBrowse != nil else { return }
-        selection = .browse
+        selection = .search
     }
 
     /// Starts a track tapped in the widget, with the Recent list as its queue —
@@ -93,6 +141,7 @@ struct RootView: View {
             return
         }
         playback.play(track, in: library.recentTracks)
+        router.notePlayStarted(in: .recent)
         selection = .player
     }
 }

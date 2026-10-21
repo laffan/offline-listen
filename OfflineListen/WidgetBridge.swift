@@ -117,6 +117,47 @@ final class AppRouter: ObservableObject {
     /// A track to start playing, cleared by `RootView` once it has.
     @Published var pendingTrackID: UUID?
 
+    // MARK: Where the playing track came from
+
+    /// Where the track now playing was started — what the Player's swipe-down
+    /// goes back to. Stamped by `RootView` as each track starts.
+    private(set) var playContext: PlayContext?
+    /// The Library's and the Search tab's current spots, kept up to date by
+    /// those screens so a track starting can be stamped with where it started.
+    /// Plain properties: they're read at that moment and nothing redraws over
+    /// them.
+    var libraryPlace = LibraryPlace()
+    var searchSection: SearchSection = .browse
+    /// A spot for the Library (or the Search tab) to go back to, set by the
+    /// Player's swipe-down and cleared by the screen once it has.
+    @Published var pendingLibraryPlace: LibraryPlace?
+    @Published var pendingSearchSection: SearchSection?
+    /// Counts the times the Library tab has been *visited* — picked from the
+    /// tab bar — as against gone back to from the Player. The Random list
+    /// deals itself a fresh hand on each visit and keeps the one it was
+    /// playing from when it's gone back to.
+    @Published private(set) var libraryVisits = 0
+
+    /// Notes the screen a track is starting from. The Player and Settings
+    /// start nothing of their own, so a start from there (the widget's, which
+    /// says where it belongs itself) leaves the last context as it was.
+    func notePlayStarted(on tab: Tab) {
+        switch tab {
+        case .search: playContext = .search(searchSection)
+        case .library: playContext = .library(libraryPlace)
+        case .recent: playContext = .recent
+        case .player, .settings: break
+        }
+    }
+
+    func notePlayStarted(in context: PlayContext) {
+        playContext = context
+    }
+
+    func noteLibraryVisit() {
+        libraryVisits += 1
+    }
+
     /// Returns false for a URL that isn't a widget link, so the caller can fall
     /// through to its usual handling (the Share Extension's
     /// `offlinelisten://import`).
@@ -132,4 +173,24 @@ final class AppRouter: ObservableObject {
         appLog("Widget opened \(url.absoluteString)", category: "Widget")
         return true
     }
+}
+
+/// Where in the app a track was started, so swiping the Player away can go back
+/// there rather than to wherever the Player happened to be opened from.
+enum PlayContext: Equatable {
+    case search(SearchSection)
+    case library(LibraryPlace)
+    case recent
+}
+
+/// A spot in the Library: the section showing, the screens pushed over it (an
+/// album, a folder inside a folder), the search the list was answering — and,
+/// on the Random tab, the hand it had dealt, since going back there means going
+/// back to the songs that are playing rather than to whatever a later visit
+/// dealt.
+struct LibraryPlace: Equatable {
+    var tab: LibraryTab = .folders
+    var path: [LibraryRoute] = []
+    var query: String = ""
+    var randomPicks: [UUID] = []
 }

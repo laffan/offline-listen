@@ -53,10 +53,10 @@ extension AppPaths {
     }
 }
 
-/// The Saved for Later list, behind the bookmark button in the Browse tab's
-/// top-right corner. App-level (wired in `OfflineListenApp`) because three
-/// screens touch it — the History rows that fill it, the browser's own button
-/// that shows it, and the discography page's Save for Later — and two of those
+/// The Saved for Later list — the Search tab's **Bookmarks** section.
+/// App-level (wired in `OfflineListenApp`) because three screens touch it —
+/// the History rows that fill it, the Bookmarks section that shows it, and the
+/// discography page's Save for Later — and two of those
 /// are pushed destinations, which don't inherit anything injected inside the
 /// browser.
 @MainActor
@@ -171,37 +171,27 @@ extension View {
     }
 }
 
-/// The Saved for Later list: the genres and artists put aside from History (or
-/// from an artist's own page), grouped by kind. A row opens the thing itself —
+/// The Saved for Later list — the Search tab's **Bookmarks** section: the
+/// genres and artists put aside from History (or from an artist's own page),
+/// grouped by kind. A row opens the thing itself in Browse —
 /// the same three destinations a History row leads to — and swipes away.
 struct SavedForLaterView: View {
     @EnvironmentObject private var saved: SavedForLaterStore
-    @Environment(\.dismiss) private var dismiss
 
-    /// Handed the picked item, after the sheet has closed — the browser owns
+    /// Handed the picked item — the Search tab takes it to Browse, which owns
     /// the navigation, exactly as it does for History.
     let onOpen: (SavedForLaterItem) -> Void
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if saved.items.isEmpty {
-                    ContentUnavailableViewCompat(
-                        title: "Nothing saved yet",
-                        systemImage: "bookmark",
-                        description: "Swipe right on a History row, tap the bookmark on a genre's or artist's page, or use Save for Later on a discography — anything you want to come back to."
-                    )
-                } else {
-                    list
-                }
-            }
-            .navigationTitle("Saved for Later")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") { dismiss() }
-                }
-            }
+        if saved.items.isEmpty {
+            ContentUnavailableViewCompat(
+                title: "Nothing saved yet",
+                systemImage: "bookmark",
+                description: "Swipe right on a History row, tap the bookmark on a genre's or artist's page, or use Save for Later on a discography — anything you want to come back to."
+            )
+            .frame(maxHeight: .infinity)
+        } else {
+            list
         }
     }
 
@@ -211,6 +201,7 @@ struct SavedForLaterView: View {
             section("Genres", saved.genres)
         }
         .listStyle(.plain)
+        .miniPlayerClearance()
     }
 
     @ViewBuilder
@@ -219,9 +210,6 @@ struct SavedForLaterView: View {
             Section(title) {
                 ForEach(entries) { item in
                     Button {
-                        // Close first: the destinations are pushes on the
-                        // browser's own stack, which can't happen under a sheet.
-                        dismiss()
                         onOpen(item)
                     } label: {
                         row(item)

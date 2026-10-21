@@ -65,7 +65,7 @@ struct WatchFolderView: View {
                 .miniPlayerClearance()
             }
         }
-        // See RecentlyAddedView: a tab of the Library, so no title of its own.
+        // A tab of the Library, so no title of its own.
     }
 
     private func row(for track: Track, queue: [Track]) -> some View {

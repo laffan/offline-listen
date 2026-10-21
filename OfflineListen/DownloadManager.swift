@@ -692,7 +692,7 @@ final class DownloadManager: ObservableObject {
     private func parkJobsThatNeverFinish() {
         var parked = 0
         for job in jobs where job.state == .queued && job.startAttempts >= Self.maxStartAttempts {
-            appLog("Not resuming \"\(job.title)\": started \(job.startAttempts) times without ever finishing. Retry it by hand from the Download tab.",
+            appLog("Not resuming \"\(job.title)\": started \(job.startAttempts) times without ever finishing. Retry it by hand from Search ▸ Download.",
                    level: .error, category: "Queue")
             job.state = .failed("Stopped after \(job.startAttempts) attempts that never finished — retry it when you're ready.")
             job.startAttempts = 0

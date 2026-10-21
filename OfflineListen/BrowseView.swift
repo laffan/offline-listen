@@ -1,51 +1,223 @@
 import SwiftUI
 
-/// The Browse tab. The **Every Noise at Once** browser *is* the tab — the whole
-/// genre map, open the moment you get here — and the sources you keep tabs on
-/// (YouTube channels/playlists, RSS feeds, AI-curated artist/genre/country
-/// lists) sit one tap away behind the button in the top-right corner. That's
-/// the reverse of how it started: the map used to be the thing behind a button.
-struct BrowseView: View {
-    var body: some View {
-        NavigationStack {
-            // The two corner buttons — Saved for Later and Sources — are
-            // declared by the browser itself, so they sit in one group in a
-            // known order rather than in two toolbars that merge however
-            // SwiftUI feels like.
-            EveryNoiseView()
+/// The Search tab's sections, in the order their buttons sit across its top.
+enum SearchSection: String, CaseIterable, Identifiable {
+    /// The Every Noise genre map.
+    case browse
+    /// The link field and the download queue.
+    case download
+    /// The channels, feeds and AI lists you keep tabs on.
+    case sources
+    /// Saved for Later.
+    case bookmarks
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .browse: return "Browse"
+        case .download: return "Download"
+        case .sources: return "Sources"
+        case .bookmarks: return "Bookmarks"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .browse: return "safari"
+        case .download: return "arrow.down.circle"
+        case .sources: return "rectangle.stack"
+        case .bookmarks: return "bookmark"
         }
     }
 }
 
-/// The sources button, wearing a dot when the sources have turned up items
-/// nobody has acted on yet. With the map as the tab, this is the only thing
-/// left that says a refresh found something — the per-source counts are a
-/// screen away now.
+/// The Search tab: everything for finding something to listen to, behind four
+/// buttons across the top — **Browse** (the Every Noise map), **Download**
+/// (paste a link or search YouTube, and the queue), **Sources** and
+/// **Bookmarks**. It used to be two tabs, Browse and Download, with the sources
+/// and the bookmarks behind buttons in Browse's corner; the buttons that were
+/// a level down are the tab's own organization now.
 ///
-/// It observes the store on its own so that a refresh redraws *this* and not
-/// the genre map behind it.
-struct SourcesButtonLabel: View {
-    @EnvironmentObject private var browse: BrowseStore
+/// The sections are **kept alive** behind the one showing rather than built
+/// anew on each switch: the map takes a moment to read off disk and remembers
+/// where you were on it, the Download field may be holding a half-pasted link,
+/// and a source list keeps its scroll. Only the showing one takes touches or
+/// reaches VoiceOver.
+struct SearchView: View {
+    @EnvironmentObject private var router: AppRouter
+
+    /// Switches to the player tab after a finished download is tapped.
+    let onPlay: () -> Void
+
+    @State private var section: SearchSection = .browse
 
     var body: some View {
-        let new = browse.totalNewCount
-        return Image(systemName: "rectangle.stack")
-            .overlay(alignment: .topTrailing) {
-                if new > 0 {
-                    // The same tint the per-source count badges wear.
-                    Circle()
-                        .fill(Color.accentColor)
-                        .frame(width: 8, height: 8)
-                        .offset(x: 5, y: -3)
+        NavigationStack {
+            VStack(spacing: 0) {
+                SearchSectionBar(selection: $section)
+                ZStack {
+                    ForEach(SearchSection.allCases) { candidate in
+                        let showing = candidate == section
+                        page(candidate)
+                            .opacity(showing ? 1 : 0)
+                            .allowsHitTesting(showing)
+                            .accessibilityHidden(!showing)
+                    }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .accessibilityLabel(new > 0 ? "Your sources — \(new) new" : "Your sources")
+            // Never shown — the section buttons stand where the bar would —
+            // but it's what a pushed screen's back button reads.
+            .navigationTitle(section.displayName)
+            .navigationBarTitleDisplayMode(.inline)
+            #if !os(macOS)
+            .toolbar(.hidden, for: .navigationBar)
+            #endif
+        }
+        .onAppear { openPending() }
+        .onChange(of: section) { router.searchSection = $0 }
+        .onChange(of: router.pendingSearchSection) { _ in openPending() }
+        .onChange(of: router.pendingBrowse) { _ in openPending() }
+    }
+
+    @ViewBuilder
+    private func page(_ candidate: SearchSection) -> some View {
+        switch candidate {
+        case .browse:
+            EveryNoiseView(isActive: section == .browse)
+        case .download:
+            DownloadView(onPlay: onPlay, isActive: section == .download)
+        case .sources:
+            BrowseSourcesView()
+        case .bookmarks:
+            SavedForLaterView(onOpen: { open($0) })
+        }
+    }
+
+    /// Goes where the router asks: back to the section a playing track was
+    /// started in (the Player's swipe-down), or to Browse for a widget row or
+    /// a bookmark, which the map then opens itself.
+    private func openPending() {
+        if router.pendingBrowse != nil {
+            section = .browse
+        }
+        if let pending = router.pendingSearchSection {
+            router.pendingSearchSection = nil
+            section = pending
+        }
+    }
+
+    /// A bookmark opens in Browse, the way a widget row does — the same three
+    /// destinations, and the same wait for the genre index if the map hasn't
+    /// been read off disk yet.
+    private func open(_ item: SavedForLaterItem) {
+        let target: WidgetDeepLink.BrowseTarget
+        switch item.kind {
+        case .genre:
+            target = .genre(key: item.genreKey)
+        case .artist:
+            guard let id = item.artistID else { return }
+            target = .artist(genreKey: item.genreKey, artistID: id)
+        case .spotify:
+            guard let id = item.artistID else { return }
+            target = .spotifyArtist(id: id, name: item.name)
+        }
+        section = .browse
+        router.pendingBrowse = target
+    }
+}
+
+/// The Search tab's four buttons, where a navigation bar would be: glyph over
+/// name, the one showing in the accent colour. Two of them carry news from the
+/// section behind them — **Download** the number of downloads still working or
+/// waiting (the tab's own badge says the same from elsewhere in the app), and
+/// **Sources** a dot when a refresh has turned up items nobody has acted on.
+///
+/// It observes the queue and the sources on its own so that a refresh or a
+/// download starting redraws *this* and not the genre map behind it.
+private struct SearchSectionBar: View {
+    @EnvironmentObject private var downloads: DownloadManager
+    @EnvironmentObject private var browse: BrowseStore
+    @Binding var selection: SearchSection
+
+    private var pendingDownloads: Int {
+        downloads.jobs.filter { $0.state.isActive || $0.state == .queued }.count
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(SearchSection.allCases) { candidate in
+                button(candidate)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 4)
+        .padding(.bottom, 6)
+    }
+
+    private func button(_ candidate: SearchSection) -> some View {
+        let selected = candidate == selection
+        return Button {
+            selection = candidate
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: candidate.systemImage)
+                    .font(.body.weight(.semibold))
+                    .overlay(alignment: .topTrailing) { marker(for: candidate) }
+                Text(candidate.displayName)
+                    .font(.caption2.weight(.medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            .background(selected ? Color.accentColor.opacity(0.12) : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 10))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel(for: candidate))
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    @ViewBuilder
+    private func marker(for candidate: SearchSection) -> some View {
+        switch candidate {
+        case .download where pendingDownloads > 0:
+            Text("\(pendingDownloads)")
+                .font(.system(size: 10, weight: .bold))
+                .monospacedDigit()
+                .foregroundStyle(.white)
+                .padding(.horizontal, 4)
+                .frame(minWidth: 15, minHeight: 15)
+                .background(Color.red, in: Capsule())
+                .offset(x: 10, y: -6)
+        case .sources where browse.totalNewCount > 0:
+            // The same tint the per-source count badges wear.
+            Circle()
+                .fill(Color.accentColor)
+                .frame(width: 8, height: 8)
+                .offset(x: 5, y: -3)
+        default:
+            EmptyView()
+        }
+    }
+
+    private func accessibilityLabel(for candidate: SearchSection) -> String {
+        switch candidate {
+        case .download where pendingDownloads > 0:
+            return "Download — \(pendingDownloads) in progress"
+        case .sources where browse.totalNewCount > 0:
+            return "Sources — \(browse.totalNewCount) new"
+        default:
+            return candidate.displayName
+        }
     }
 }
 
 /// The sources screen: what each source has surfaced, ready to curate —
-/// download, preview, save or discard. Reached from the button in the Browse
-/// tab's top-right corner.
+/// download, preview, save or discard. The Search tab's **Sources** section.
 struct BrowseSourcesView: View {
     @EnvironmentObject private var browse: BrowseStore
 
@@ -54,11 +226,11 @@ struct BrowseSourcesView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // The Audio/Video toggle beneath the title (kept out of the
-            // toolbar so it doesn't crowd the add button): every item's
-            // Download and Preview act in this mode, mirroring the
-            // Download tab's own toggle.
-            HStack {
+            // The Audio/Video toggle, with Refresh All and Add on the same
+            // row — there's no navigation bar to carry them at the top of the
+            // Search tab. Every item's Download and Preview act in this mode,
+            // mirroring the Download section's own toggle.
+            HStack(spacing: 16) {
                 Picker("Mode", selection: $browse.downloadMode) {
                     ForEach(DownloadMode.allCases) { m in
                         Text(m.displayName).tag(m)
@@ -68,22 +240,7 @@ struct BrowseSourcesView: View {
                 .frame(maxWidth: 200)
 
                 Spacer()
-            }
-            .padding(.horizontal)
-            .padding(.bottom, 4)
 
-            if browse.sources.isEmpty {
-                emptyState
-            } else {
-                sourceList
-            }
-        }
-        .navigationTitle("Sources")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            // Both on the trailing edge: the leading one belongs to the back
-            // button now that this is a screen you arrive at rather than land on.
-            ToolbarItemGroup(placement: .navigationBarTrailing) {
                 Button {
                     Task { await browse.refreshAll() }
                 } label: {
@@ -92,6 +249,14 @@ struct BrowseSourcesView: View {
                 .disabled(browse.sources.isEmpty || !browse.refreshing.isEmpty)
                 .accessibilityLabel("Refresh all sources")
                 addMenu
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 4)
+
+            if browse.sources.isEmpty {
+                emptyState
+            } else {
+                sourceList
             }
         }
         .sheet(item: $addingKind) { kind in
@@ -110,6 +275,7 @@ struct BrowseSourcesView: View {
             }
         } label: {
             Image(systemName: "plus")
+                .font(.body.weight(.semibold))
         }
         .accessibilityLabel("Add source")
     }

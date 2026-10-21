@@ -7,6 +7,10 @@ struct DownloadView: View {
 
     /// Switches to the player tab after starting playback.
     let onPlay: () -> Void
+    /// Whether Download is the Search section showing. The section stays alive
+    /// behind the others, so leaving it doesn't take the field's focus with
+    /// it — this does, or the keyboard would stay up over the map.
+    var isActive = true
 
     @State private var urlText = ""
     @State private var mode: DownloadMode = .audio
@@ -34,76 +38,83 @@ struct DownloadView: View {
             .contains { DownloadManager.isDownloadableToken(String($0)) }
     }
 
+    /// The Search tab's **Download** section. It sits inside that tab's
+    /// navigation stack rather than owning one, and with no bar at the top of
+    /// it the two things the bar used to carry — the engine menu and Clear —
+    /// sit on a row of their own beneath the field.
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 16) {
-                inputCard
+        VStack(spacing: 12) {
+            inputCard
+            queueActions
 
-                if downloads.jobs.isEmpty {
-                    ContentUnavailableViewCompat(
-                        title: "No downloads yet",
-                        systemImage: "arrow.down.circle",
-                        description: "Paste a video, playlist or Spotify link above to start downloading, or type anything else to search YouTube. A playlist or album downloads into its own folder."
-                    )
-                    .frame(maxHeight: .infinity)
-                } else {
-                    List {
-                        ForEach(listItems) { item in
-                            switch item {
-                            case .job(let job):
-                                jobRow(job)
-                            case .album(let album):
-                                DisclosureGroup(isExpanded: expansion(of: album.id)) {
-                                    ForEach(album.jobs) { job in
-                                        jobRow(job)
-                                    }
-                                } label: {
-                                    AlbumDownloadGroupHeader(albumID: album.id,
-                                                             title: album.title,
-                                                             count: album.jobs.count)
+            if downloads.jobs.isEmpty {
+                ContentUnavailableViewCompat(
+                    title: "No downloads yet",
+                    systemImage: "arrow.down.circle",
+                    description: "Paste a video, playlist or Spotify link above to start downloading, or type anything else to search YouTube. A playlist or album downloads into its own folder."
+                )
+                .frame(maxHeight: .infinity)
+            } else {
+                List {
+                    ForEach(listItems) { item in
+                        switch item {
+                        case .job(let job):
+                            jobRow(job)
+                        case .album(let album):
+                            DisclosureGroup(isExpanded: expansion(of: album.id)) {
+                                ForEach(album.jobs) { job in
+                                    jobRow(job)
                                 }
+                            } label: {
+                                AlbumDownloadGroupHeader(albumID: album.id,
+                                                         title: album.title,
+                                                         count: album.jobs.count)
                             }
                         }
                     }
-                    .listStyle(.plain)
-                    .miniPlayerClearance()
                 }
-            }
-            .padding(.top)
-            // No title — the input field says what this screen is, and the
-            // height a header would take goes to the queue.
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Menu {
-                        Button {
-                            Task { await YoutubeDLExtractor.refreshEngine() }
-                        } label: {
-                            Label("Refresh yt-dlp engine", systemImage: "arrow.triangle.2.circlepath")
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Clear") { downloads.clearFinished() }
-                        .disabled(downloads.jobs.isEmpty)
-                }
-            }
-            .sheet(item: $downloads.pendingPlaylist) { pending in
-                PlaylistPickerView(pending: pending)
-            }
-            .sheet(item: $searchResults) { search in
-                SearchResultsView(search: search, mode: mode)
-            }
-            .alert("No results",
-                   isPresented: Binding(get: { failedQuery != nil },
-                                        set: { if !$0 { failedQuery = nil } })) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text("Nothing came back for “\(failedQuery ?? "")”. Check the connection or try different words.")
+                .listStyle(.plain)
+                .miniPlayerClearance()
             }
         }
+        .padding(.top, 4)
+        .onChange(of: isActive) { active in
+            if !active { urlFieldFocused = false }
+        }
+        .sheet(item: $downloads.pendingPlaylist) { pending in
+            PlaylistPickerView(pending: pending)
+        }
+        .sheet(item: $searchResults) { search in
+            SearchResultsView(search: search, mode: mode)
+        }
+        .alert("No results",
+               isPresented: Binding(get: { failedQuery != nil },
+                                    set: { if !$0 { failedQuery = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Nothing came back for “\(failedQuery ?? "")”. Check the connection or try different words.")
+        }
+    }
+
+    /// The engine menu on the left and Clear on the right — where they sat in
+    /// the navigation bar when Download was a tab of its own.
+    private var queueActions: some View {
+        HStack {
+            Menu {
+                Button {
+                    Task { await YoutubeDLExtractor.refreshEngine() }
+                } label: {
+                    Label("Refresh yt-dlp engine", systemImage: "arrow.triangle.2.circlepath")
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .accessibilityLabel("More")
+            Spacer()
+            Button("Clear") { downloads.clearFinished() }
+                .disabled(downloads.jobs.isEmpty)
+        }
+        .padding(.horizontal)
     }
 
     private var inputCard: some View {

@@ -817,7 +817,7 @@ struct SettingsView: View {
             Text("Spotify")
         } footer: {
             if spotify.isConfigured {
-                Text("Paste a Spotify track, album, playlist or artist link into the Download tab and its tracks are matched to YouTube videos and downloaded. Signing in as an app rather than as you, it reads public metadata only — your saved songs and private playlists aren't visible to it.\n\nCatalogues you open are kept on the device and never re-read, so browsing the same artist twice costs nothing. Each artist page says how old what it's showing is, and refreshes from there; clearing the cache makes every page read Spotify again.")
+                Text("Paste a Spotify track, album, playlist or artist link into Search ▸ Download and its tracks are matched to YouTube videos and downloaded. Signing in as an app rather than as you, it reads public metadata only — your saved songs and private playlists aren't visible to it.\n\nCatalogues you open are kept on the device and never re-read, so browsing the same artist twice costs nothing. Each artist page says how old what it's showing is, and refreshes from there; clearing the cache makes every page read Spotify again.")
             } else {
                 Text("Create a free app at developer.spotify.com to get a client ID and secret, then paste them here to download Spotify links. They're stored securely in the device Keychain.")
             }

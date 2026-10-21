@@ -86,7 +86,6 @@ final class LibraryStore: ObservableObject {
     private var cachedFolderArtists: [UUID: String]?
     private var cachedSearchKeys: [UUID: String]?
     private var cachedTrackIDsBySource: [String: UUID]?
-    private var cachedRecentlyAdded: [Track]?
     /// The Recently Played folder order, and the log state it was built from.
     private var cachedLastPlayed: [UUID: Date]?
     private var cachedLastPlayedStamp: String?
@@ -99,7 +98,6 @@ final class LibraryStore: ObservableObject {
         cachedFolderArtists = nil
         cachedSearchKeys = nil
         cachedTrackIDsBySource = nil
-        cachedRecentlyAdded = nil
         // A track moving folders changes which folder a logged play belongs to.
         cachedLastPlayed = nil
     }
@@ -108,7 +106,6 @@ final class LibraryStore: ObservableObject {
         cachedArchivedFolderIDs = nil
         // Which tracks are active depends on which folders are archived.
         cachedActiveTracks = nil
-        cachedRecentlyAdded = nil
     }
 
     /// Every folder id that is archived, directly or by inheritance — the
@@ -334,31 +331,16 @@ final class LibraryStore: ObservableObject {
             return left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
         }
     }
-    /// How far back the **Added** tab looks. A cap rather than a window: the
-    /// tab is for finding what arrived recently, and a list that runs to
-    /// thousands stops being that long before it stops being expensive.
-    static let recentlyAddedLimit = 200
+    /// How many songs the **Random** tab deals.
+    static let randomListSize = 50
 
-    /// The Library's **Added** tab: the most recently added tracks, newest
-    /// first.
-    ///
-    /// A *log*, not a queue. It used to be an Inbox — everything not yet
-    /// listened to, which emptied itself as you played it — and an inbox is
-    /// a thing you are meant to clear, which turned out not to be what this
-    /// list was wanted for. Nothing leaves for having been played; a track
-    /// leaves only by being deleted, archived, or falling past the cap.
-    ///
-    /// Sorted on `dateAdded` rather than on the master array's order, because
-    /// the two disagree: a download inserts at the top, a sync import appends
-    /// at the bottom, and a reorder inside a folder moves tracks around
-    /// wholesale. Memoized like every other derived list — this is read on
-    /// each redraw of the tab.
-    var recentlyAddedTracks: [Track] {
-        if let cached = cachedRecentlyAdded { return cached }
-        let value = Array(activeTracks.sorted { $0.dateAdded > $1.dateAdded }
-            .prefix(Self.recentlyAddedLimit))
-        cachedRecentlyAdded = value
-        return value
+    /// The Library's **Random** tab: `count` active songs picked at random —
+    /// songs only, since a podcast or a video dropped into a shuffle of music
+    /// is an interruption rather than a pick. Not memoized, unlike the other
+    /// derived lists: a different answer each time is the point, and the tab
+    /// holds on to the hand it was dealt rather than asking again on redraw.
+    func randomSongs(count: Int) -> [Track] {
+        Array(activeTracks.filter { $0.playbackCategory == .song }.shuffled().prefix(count))
     }
 
     /// The **Recent** folder: one row per logged play, newest first, resolved

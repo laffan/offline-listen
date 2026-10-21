@@ -80,6 +80,13 @@ final class PlaybackManager: NSObject, ObservableObject {
     /// mirror as a remote control (or `nil` when nothing is playing). Wired to
     /// `WatchSync` in the app entry; throttling lives there.
     var onNowPlayingChange: ((RemoteNowPlaying?) -> Void)?
+    /// Called as `play` starts a track, before anything else moves — the
+    /// moment `RootView` notes which screen it was started from, so swiping
+    /// the Player away can go back there. A hook rather than an argument
+    /// because the screens that start tracks are shared between tabs (an
+    /// album's discography, the preview modal), and only the tab they're
+    /// showing in knows where "there" is.
+    var onStart: (() -> Void)?
 
     private var queue: [Track] = []
     private var index = 0
@@ -183,6 +190,7 @@ final class PlaybackManager: NSObject, ObservableObject {
         // A library track starting is the borrower's cue that it's over — the
         // preview modal's Save hand-off is exactly this call.
         remoteAudio = nil
+        onStart?()
         let pool = tracks.isEmpty ? [track] : tracks
         queue = restrictToCategory ? pool.filter { $0.playbackCategory == track.playbackCategory } : pool
         if queue.isEmpty { queue = [track] }

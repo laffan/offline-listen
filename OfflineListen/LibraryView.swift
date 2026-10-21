@@ -298,14 +298,13 @@ enum LibraryRoute: Hashable {
 /// top of the screen. Each one used to be a row you pushed into (or, for
 /// **All**, the flat list that sat under the folders) — as tabs they're all
 /// one tap from each other instead of one tap and a back button.
+///
+/// **Recent** used to be one of them; it's a tab of the app's own now, beside
+/// the Library. **Random** stands where **Added** did.
 enum LibraryTab: String, CaseIterable, Identifiable {
-    /// What you've played, newest first.
-    case recent
     case folders
-    /// What arrived recently, newest first. The raw value stays `inbox` — it
-    /// is what the persisted tab selection is written as, and this tab is the
-    /// same tab, doing a job it turned out to be wanted for instead.
-    case inbox
+    /// Fifty songs picked at random, dealt afresh each time you come to it.
+    case random
     /// What's been pushed to the Apple Watch.
     case watch
     /// Every active track, filed or not — the full flat view of the library.
@@ -315,9 +314,8 @@ enum LibraryTab: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .recent: return "Recent"
         case .folders: return "Folders"
-        case .inbox: return "Added"
+        case .random: return "Random"
         case .watch: return "Watch"
         case .all: return "All"
         }
@@ -327,6 +325,10 @@ enum LibraryTab: String, CaseIterable, Identifiable {
 struct LibraryView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var playback: PlaybackManager
+    /// Told where the Library is as that changes, so a track starting here
+    /// can be traced back to it — and asks the Library to go back there when
+    /// the Player is swiped away.
+    @EnvironmentObject private var router: AppRouter
 
     /// Called after a track starts playing so the parent can switch to the player tab.
     let onPlay: () -> Void
@@ -341,6 +343,13 @@ struct LibraryView: View {
     /// you were just listening to is one tab away (and already on the mini
     /// player).
     @State private var tab: LibraryTab = .folders
+    /// The **Random** tab's hand, by track id. Held here rather than in the
+    /// tab's own view so that it survives the tab being switched away from —
+    /// it is dealt again on each *visit*, not each time SwiftUI rebuilds it.
+    @State private var randomPicks: [UUID] = []
+    /// Set when going back to the Random tab from the Player, so arriving on
+    /// it doesn't deal a new hand over the one that's playing.
+    @State private var keepRandomPicks = false
 
     @State private var showNewFolder = false
     @State private var newFolderName = ""
@@ -453,8 +462,25 @@ struct LibraryView: View {
             // Selection belongs to the tracks in All (and in a search's
             // results); carrying it anywhere else would leave a Done button
             // over a list it can't act on — or no Done button at all.
-            .onChange(of: tab) { _ in
+            .onChange(of: tab) { newTab in
                 if editMode.isEditing { endEditing() }
+                if newTab == .random {
+                    if keepRandomPicks { keepRandomPicks = false } else { dealRandom() }
+                }
+                notePlace()
+            }
+            .onChange(of: path) { _ in notePlace() }
+            .onChange(of: query) { _ in notePlace() }
+            .onChange(of: randomPicks) { _ in notePlace() }
+            // A visit — the Library picked from the tab bar — deals the Random
+            // tab a new hand. Going back to it from the Player isn't one.
+            .onChange(of: router.libraryVisits) { _ in
+                if tab == .random { dealRandom() }
+            }
+            .onChange(of: router.pendingLibraryPlace) { _ in goBackToPendingPlace() }
+            .onAppear {
+                notePlace()
+                goBackToPendingPlace()
             }
             .onChange(of: isSearching) { _ in
                 if editMode.isEditing { endEditing() }
@@ -566,12 +592,11 @@ struct LibraryView: View {
     @ViewBuilder
     private var tabContent: some View {
         switch tab {
-        case .recent:
-            RecentTracksView(onPlay: onPlay, share: $share)
         case .folders:
             folderList
-        case .inbox:
-            RecentlyAddedView(onPlay: onPlay, share: $share)
+        case .random:
+            RandomTracksView(picks: randomPicks, onDeal: dealRandom,
+                             onPlay: onPlay, share: $share)
         case .watch:
             WatchFolderView(onPlay: onPlay)
         case .all:
@@ -1147,8 +1172,8 @@ struct LibraryView: View {
 
         // Each tab brings its own actions: the folder controls where the folders
         // are, Select where the tracks are — in the All tab, and in a search's
-        // results, which are tracks too. (Added and Recent carry their own —
-        // Select and Clear — from the views themselves.)
+        // results, which are tracks too. (Random carries its own — Shuffle —
+        // from the view itself.)
         ToolbarItemGroup(placement: .navigationBarTrailing) {
             // New Folder also has to survive the empty-library welcome, which
             // stands in for the tabs — otherwise a fresh install has no way to
@@ -1225,6 +1250,42 @@ struct LibraryView: View {
     private func endEditing() {
         selection.removeAll()
         withAnimation { editMode = .inactive }
+    }
+
+    /// Deals the Random tab a fresh hand.
+    private func dealRandom() {
+        randomPicks = library.randomSongs(count: LibraryStore.randomListSize).map(\.id)
+    }
+
+    /// Tells the router where the Library is, for a track that starts here to
+    /// remember. Cheap — the router holds it in a plain property.
+    private func notePlace() {
+        router.libraryPlace = LibraryPlace(tab: tab, path: path, query: query,
+                                           randomPicks: tab == .random ? randomPicks : [])
+    }
+
+    /// Goes back to where the playing track was started, when the Player asks:
+    /// the section, the screens that were pushed over it, the search it was
+    /// answering — and, for the Random tab, the hand it was dealt from, which
+    /// a visit since may have replaced.
+    private func goBackToPendingPlace() {
+        guard let place = router.pendingLibraryPlace else { return }
+        router.pendingLibraryPlace = nil
+        if editMode.isEditing { endEditing() }
+        if place.tab == .random {
+            if tab != .random { keepRandomPicks = true }
+            if !place.randomPicks.isEmpty { randomPicks = place.randomPicks }
+        }
+        tab = place.tab
+        searchText = place.query
+        query = place.query
+        // A folder deleted since is no longer anywhere to go back to; the
+        // screens above it went with it.
+        let folderIDs = Set(library.folders.map(\.id))
+        path = Array(place.path.prefix(while: { route in
+            if case .folder(let id) = route { return folderIDs.contains(id) }
+            return true
+        }))
     }
 }
 

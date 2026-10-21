@@ -182,9 +182,10 @@ struct PlayerView: View {
     @EnvironmentObject private var library: LibraryStore
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
-    /// Called when the player is swiped down — the root takes it back to the
-    /// Library, which is where it was almost certainly opened from. Defaulted,
-    /// so the screen still stands alone in a preview.
+    /// Called when the player is swiped down — the root takes it back to
+    /// wherever the playing track was started (an album, the Recent list, the
+    /// Random tab's hand). Defaulted, so the screen still stands alone in a
+    /// preview.
     var onSwipeDown: () -> Void = {}
 
     /// Whether captions are drawn over a video that has them. Shared with
