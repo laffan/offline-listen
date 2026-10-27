@@ -245,6 +245,16 @@ final class PlaybackManager: NSObject, ObservableObject {
         loadCurrent(autoPlay: true, startAt: startPosition(for: queue[index]))
     }
 
+    /// Swaps the playing track for a fresh copy of itself — its file changed
+    /// under it (a **Trim**) — keeping its place in the queue and whether it
+    /// was playing, and picking up at `time` in the new file. Not a new
+    /// listen, so the Recent log is left alone.
+    func reloadCurrent(with updated: Track, at time: Double) {
+        guard currentTrack?.id == updated.id, queue.indices.contains(index) else { return }
+        queue[index] = updated
+        loadCurrent(autoPlay: isPlaying, startAt: max(0, time), countsAsListened: false)
+    }
+
     /// Jumps the current track to a chapter marker.
     func seek(toChapter chapter: Chapter) {
         seek(to: chapter.start)

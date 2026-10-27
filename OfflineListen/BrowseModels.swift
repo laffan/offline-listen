@@ -1,9 +1,13 @@
 import Foundation
 
 /// The kinds of audio source the Browse tab can keep tabs on. Three are
-/// feed-driven (scrape/RSS) and three are AI-driven (the model suggests popular
+/// feed-driven (scrape/RSS) and the rest are AI-driven (the model suggests
 /// songs, which are then resolved to real YouTube links via a search scrape).
 enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
+    /// A station seeded by one artist or track: the model picks music like it,
+    /// Pandora- or Spotify-radio-style. Listed first — it's the one source a
+    /// song in the Player (**Find Similar**) can start.
+    case radio
     case youtubeChannel
     case youtubePlaylist
     case rssFeed
@@ -26,6 +30,7 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
+        case .radio: return "Radio"
         case .youtubeChannel: return "YouTube Channel"
         case .youtubePlaylist: return "YouTube Playlist"
         case .rssFeed: return "RSS Feed"
@@ -40,6 +45,7 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
     /// Section header in the Browse tab.
     var pluralName: String {
         switch self {
+        case .radio: return "Radio Stations"
         case .youtubeChannel: return "YouTube Channels"
         case .youtubePlaylist: return "YouTube Playlists"
         case .rssFeed: return "RSS Feeds"
@@ -59,12 +65,13 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
     var supportsMore: Bool {
         switch self {
         case .youtubeChannel, .rssFeed, .blogAgent: return true
-        case .youtubePlaylist, .discography, .artist, .genre, .country: return false
+        case .radio, .youtubePlaylist, .discography, .artist, .genre, .country: return false
         }
     }
 
     var systemImage: String {
         switch self {
+        case .radio: return "dot.radiowaves.left.and.right"
         case .youtubeChannel: return "person.crop.rectangle"
         case .youtubePlaylist: return "list.and.film"
         case .rssFeed: return "dot.radiowaves.up.forward"
@@ -82,7 +89,7 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
     /// catalogue.
     var usesAI: Bool {
         switch self {
-        case .blogAgent, .discography, .artist, .genre, .country: return true
+        case .radio, .blogAgent, .discography, .artist, .genre, .country: return true
         case .youtubeChannel, .youtubePlaylist, .rssFeed: return false
         }
     }
@@ -92,7 +99,7 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
     var inputIsURL: Bool {
         switch self {
         case .youtubeChannel, .youtubePlaylist, .rssFeed, .blogAgent: return true
-        case .discography, .artist, .genre, .country: return false
+        case .radio, .discography, .artist, .genre, .country: return false
         }
     }
 
@@ -103,13 +110,14 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
     var supportsEra: Bool {
         switch self {
         case .artist, .genre, .country: return true
-        case .youtubeChannel, .youtubePlaylist, .rssFeed, .blogAgent, .discography: return false
+        case .radio, .youtubeChannel, .youtubePlaylist, .rssFeed, .blogAgent, .discography: return false
         }
     }
 
     /// Placeholder for the add-source input field.
     var inputPlaceholder: String {
         switch self {
+        case .radio: return "Artist or track (e.g. Björk – Jóga)"
         case .youtubeChannel: return "Channel URL or @handle"
         case .youtubePlaylist: return "Playlist URL or ID"
         case .rssFeed: return "Feed URL"
@@ -124,6 +132,8 @@ enum BrowseSourceKind: String, Codable, CaseIterable, Identifiable {
     /// One-line explanation shown in the add-source sheet.
     var help: String {
         switch self {
+        case .radio:
+            return "An AI builds a station of music like the artist or track you name — mostly other artists with a kindred sound — and finds it on YouTube. Refresh for more."
         case .youtubeChannel:
             return "Watches the channel's upload feed for new videos."
         case .youtubePlaylist:

@@ -134,6 +134,10 @@ final class AppRouter: ObservableObject {
     @Published var pendingLibraryPlace: LibraryPlace?
     @Published var pendingSearchSection: SearchSection?
     @Published var pendingRecentTab: RecentTab?
+    /// A source for Search ▸ Sources to scroll to and open — set by the
+    /// Player's **Find Similar**, which has just made a station there, and
+    /// cleared by the list once it has shown it.
+    @Published var pendingSource: UUID?
     /// Counts the times the Library tab has been *visited* — picked from the
     /// tab bar — as against gone back to from the Player. The Random list
     /// deals itself a fresh hand on each visit and keeps the one it was

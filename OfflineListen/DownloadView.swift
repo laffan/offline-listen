@@ -40,8 +40,9 @@ struct DownloadView: View {
 
     /// The Search tab's **Download** section. It sits inside that tab's
     /// navigation stack rather than owning one, and with no bar at the top of
-    /// it the two things the bar used to carry — the engine menu and Clear —
-    /// sit on a row of their own beneath the field.
+    /// it **Clear** — what the bar used to carry — sits on a row of its own
+    /// beneath the field. (The engine refresh that shared that row lives in
+    /// Settings now.)
     var body: some View {
         VStack(spacing: 12) {
             inputCard
@@ -96,20 +97,10 @@ struct DownloadView: View {
         }
     }
 
-    /// The engine menu on the left and Clear on the right — where they sat in
-    /// the navigation bar when Download was a tab of its own.
+    /// Clear, on the right — where it sat in the navigation bar when Download
+    /// was a tab of its own.
     private var queueActions: some View {
         HStack {
-            Menu {
-                Button {
-                    Task { await YoutubeDLExtractor.refreshEngine() }
-                } label: {
-                    Label("Refresh yt-dlp engine", systemImage: "arrow.triangle.2.circlepath")
-                }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-            }
-            .accessibilityLabel("More")
             Spacer()
             Button("Clear") { downloads.clearFinished() }
                 .disabled(downloads.jobs.isEmpty)
@@ -130,8 +121,11 @@ struct DownloadView: View {
                                 urlText = pasted
                             }
                         } label: {
+                            // Full strength, unlike the clear button that
+                            // replaces it: it's the field's first move, not a
+                            // way out of it.
                             Image(systemName: "doc.on.clipboard")
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Color.accentColor)
                         }
                         .accessibilityLabel("Paste")
                     } else {
@@ -144,7 +138,7 @@ struct DownloadView: View {
                         .accessibilityLabel("Clear")
                     }
 
-                    TextField("Paste a URL or search YouTube", text: $urlText)
+                    TextField("URL or search YouTube", text: $urlText)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.webSearch)

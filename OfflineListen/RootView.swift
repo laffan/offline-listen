@@ -87,6 +87,13 @@ struct RootView: View {
             returning = false
         }
         .onChange(of: router.pendingBrowse) { _ in routeBrowse() }
+        // Find Similar's station: the Sources list scrolls to it itself, so
+        // this level only has to get the right tab and section showing.
+        .onChange(of: router.pendingSource) { id in
+            guard id != nil else { return }
+            router.pendingSearchSection = .sources
+            selection = .search
+        }
         .onChange(of: router.pendingTrackID) { _ in routeTrack() }
     }
 

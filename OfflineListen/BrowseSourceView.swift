@@ -37,7 +37,7 @@ struct BrowseSourceView: View {
     /// post names) aren't a reliable artist/song pair, so they're left whole.
     private var parsesArtist: Bool {
         switch source?.kind {
-        case .artist, .genre, .country, .discography: return true
+        case .radio, .artist, .genre, .country, .discography: return true
         default: return false
         }
     }
@@ -729,7 +729,7 @@ private struct BrowseItemRow: View {
     }
 }
 
-private extension View {
+extension View {
     /// Browse list section headers: primary-coloured and non-uppercased, set
     /// off with a thin underline so they read as clear dividers instead of the
     /// default faint grey. Carries an opaque background (the main list colour)

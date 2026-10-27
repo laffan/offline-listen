@@ -48,12 +48,21 @@ final class BrowseStore: ObservableObject {
     /// so its items keep the position the playlist's page gives them
     /// (`feedPosition`; items from before that field existed sort last, in
     /// the order they were first seen, until the next refresh stamps them).
+    /// A **Radio** station is a running order too, but one that grows: each
+    /// refresh's batch follows the last, in the order the model laid it out.
     func visibleItems(for sourceID: UUID) -> [BrowseItem] {
         let shown = items.filter { $0.sourceID == sourceID && $0.status != .discarded }
-        if sources.first(where: { $0.id == sourceID })?.kind == .youtubePlaylist {
+        switch sources.first(where: { $0.id == sourceID })?.kind {
+        case .youtubePlaylist?:
             return shown.sorted {
                 ($0.feedPosition ?? Int.max, $0.dateFetched) < ($1.feedPosition ?? Int.max, $1.dateFetched)
             }
+        case .radio?:
+            // Items are minted in fetch order, so the fetch date alone keeps
+            // a batch in sequence and puts each new batch after the last.
+            return shown.sorted { $0.dateFetched < $1.dateFetched }
+        default:
+            break
         }
         return shown.sorted { ($0.datePublished ?? $0.dateFetched) > ($1.datePublished ?? $1.dateFetched) }
     }
@@ -92,6 +101,8 @@ final class BrowseStore: ObservableObject {
         // (with the era folded in for an era-scoped Country source).
         var fallbackName = trimmedInput.isEmpty ? kind.displayName : trimmedInput
         if let era { fallbackName += " (\(era))" }
+        // A station reads as one: "Björk – Jóga Radio".
+        if kind == .radio, !trimmedInput.isEmpty { fallbackName += " Radio" }
         // Several Artist sources for the same artist — a Top 10 and either
         // discography — would otherwise be identically-named rows.
         if kind == .artist, trimmedName.isEmpty {
@@ -110,6 +121,24 @@ final class BrowseStore: ObservableObject {
         save()
         appLog("Browse: added \(kind.displayName) source \"\(source.name)\"", category: "Browse")
         return source
+    }
+
+    /// The station **Find Similar** opens for a song: one seeded by it already
+    /// in the list (topped up if it never got any tracks), or a new one, whose
+    /// first set the model starts on straight away.
+    func radioStation(seededBy seed: String) -> BrowseSource {
+        let trimmed = seed.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let existing = sources.first(where: {
+            $0.kind == .radio && $0.input.localizedCaseInsensitiveCompare(trimmed) == .orderedSame
+        }) {
+            if visibleItems(for: existing.id).isEmpty {
+                Task { await refresh(existing) }
+            }
+            return existing
+        }
+        let station = addSource(kind: .radio, name: "", input: trimmed)
+        Task { await refresh(station) }
+        return station
     }
 
     func removeSource(_ source: BrowseSource) {
@@ -226,7 +255,7 @@ final class BrowseStore: ObservableObject {
                 // Unreachable — the guard above returns for every
                 // discography-mode source (this legacy kind included).
                 return
-            case .artist, .genre, .country:
+            case .radio, .artist, .genre, .country:
                 // Tell the model what it already suggested so refreshes dig
                 // deeper instead of repeating (discards included, on purpose).
                 let existingTitles = items.filter { $0.sourceID == source.id }.map(\.title)

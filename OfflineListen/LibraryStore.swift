@@ -165,42 +165,115 @@ final class LibraryStore: ObservableObject {
         return cachedFolderTrackCounts?[folderID] ?? 0
     }
 
-    /// The artist a folder belongs to — the one every track in it names. An
+    /// The artist a folder belongs to — the one every track in it credits. An
     /// album pulled down whole from a discography is exactly that, so its row
-    /// can print the artist under the album title; a folder of unrelated songs
-    /// agrees on nobody and gets nothing.
+    /// can print the artist under the album title, and its screen offers the
+    /// **Discography** button; a folder of unrelated songs agrees on nobody and
+    /// gets neither.
+    ///
+    /// "Agrees" is read the way a record's credits actually vary, not as
+    /// string equality (see `commonArtist`): a single "feat." or a "Prince and
+    /// the Revolution" among a dozen "Prince"s used to take the button away
+    /// from a perfectly good album.
     ///
     /// Derived from the tracks rather than stored on the folder, so it follows
-    /// an Edit Metadata fix and an album assembled by hand earns it too.
-    /// Computed for every folder in one pass and memoized beside the counts —
-    /// the folder list asks per row, per redraw.
+    /// an Edit Metadata or Edit Album fix the moment it's saved (the cache goes
+    /// with any change to `tracks`), and an album assembled by hand earns it
+    /// too. Computed for every folder in one pass and memoized beside the
+    /// counts — the folder list asks per row, per redraw.
     func folderArtist(of folderID: UUID) -> String? {
         if cachedFolderArtists == nil {
-            // A folder is in `byFolder` only while its tracks still agree;
-            // `mixed` is the set that has been ruled out for good, so a later
-            // track can't put a disqualified folder back.
-            var byFolder: [UUID: String] = [:]
-            var mixed: Set<UUID> = []
+            var credits: [UUID: [String]] = [:]
             for track in tracks where !track.isArchived {
-                guard let id = track.folderID, !mixed.contains(id) else { continue }
-                let artist = track.artist.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !artist.isEmpty, artist.lowercased() != "unknown" else {
-                    mixed.insert(id)
-                    byFolder[id] = nil
-                    continue
-                }
-                if let known = byFolder[id] {
-                    if known.localizedCaseInsensitiveCompare(artist) != .orderedSame {
-                        mixed.insert(id)
-                        byFolder[id] = nil
-                    }
-                } else {
+                guard let id = track.folderID else { continue }
+                credits[id, default: []].append(track.artist)
+            }
+            var byFolder: [UUID: String] = [:]
+            for (id, folderCredits) in credits {
+                if let artist = Self.commonArtist(of: folderCredits) {
                     byFolder[id] = artist
                 }
             }
             cachedFolderArtists = byFolder
         }
         return cachedFolderArtists?[folderID]
+    }
+
+    /// The artist every one of `credits` names, or nil when they don't share
+    /// one — or when any of them names nobody ("Unknown", the placeholder a
+    /// download starts with, or blank).
+    ///
+    /// Exact agreement, ignoring case, accents and stray spacing, comes first
+    /// and answers with the credit as written. Failing that, each credit is
+    /// broken into the names in it — "A feat. B", "A & B", "A, B", "A x B",
+    /// "A with B" all credit A — and the first name of the first credit that
+    /// every other credit also contains is the answer. A duo whose name has an
+    /// "&" in it survives that, since the whole credit is always one of the
+    /// candidates and is tried first.
+    nonisolated static func commonArtist(of credits: [String]) -> String? {
+        var cleaned: [String] = []
+        for credit in credits {
+            let artist = credit.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !artist.isEmpty, artist.lowercased() != "unknown" else { return nil }
+            cleaned.append(artist)
+        }
+        guard let first = cleaned.first else { return nil }
+        let firstKey = artistKey(first)
+        if cleaned.allSatisfy({ artistKey($0) == firstKey }) { return first }
+
+        let nameKeys = cleaned.map { Set(artistNames(in: $0).map(artistKey)) }
+        for name in artistNames(in: first) {
+            let key = artistKey(name)
+            if nameKeys.allSatisfy({ $0.contains(key) }) { return name }
+        }
+        return nil
+    }
+
+    /// What two spellings of one artist have in common: no case, no accents,
+    /// single spaces.
+    nonisolated static func artistKey(_ name: String) -> String {
+        name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+    }
+
+    /// The names a credit is made of, most inclusive first: the whole credit,
+    /// then what comes before any "feat."/"ft."/"featuring", then each name
+    /// once the joiners ("&", ",", "x", "and", "with", "/") are split apart.
+    nonisolated static func artistNames(in credit: String) -> [String] {
+        let delimiter = "\u{1F}"
+        func splitting(_ text: String, on separators: [String]) -> [String] {
+            var marked = text
+            for separator in separators {
+                marked = marked.replacingOccurrences(of: separator, with: delimiter,
+                                                     options: .caseInsensitive)
+            }
+            return marked.components(separatedBy: delimiter)
+                .map { $0.trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: "()[]"))) }
+                .filter { !$0.isEmpty }
+        }
+        let featuring = [" feat. ", " feat ", " ft. ", " ft ", " featuring ",
+                         "(feat. ", "(feat ", "(ft. ", "(ft ", "[feat. ", "[ft. "]
+        let joiners = [" & ", ", ", " x ", " × ", " and ", " with ", " / ", " + "]
+        var names = [credit]
+        if let primary = splitting(credit, on: featuring).first { names.append(primary) }
+        names += splitting(credit, on: featuring + joiners)
+        // Keep the order, drop repeats.
+        var seen: Set<String> = []
+        return names.filter { seen.insert(artistKey($0)).inserted }
+    }
+
+    /// The artist an album's **Edit** sheet offers to standardize on: the one
+    /// its tracks agree on, or failing that the credit most of them carry.
+    func suggestedArtist(of folderID: UUID) -> String {
+        if let agreed = folderArtist(of: folderID) { return agreed }
+        var counts: [String: Int] = [:]
+        for track in tracks(in: folderID) {
+            let artist = track.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !artist.isEmpty, artist.lowercased() != "unknown" else { continue }
+            counts[artist, default: 0] += 1
+        }
+        return counts.max { $0.value < $1.value || ($0.value == $1.value && $0.key > $1.key) }?.key ?? ""
     }
 
     /// True when `trackID` is an active member of `folderID` — the check that
@@ -2192,6 +2265,68 @@ final class LibraryStore: ObservableObject {
         }
         save()
         if tracks[index].sentToWatch { syncWatch() }
+    }
+
+    /// An album's **Edit** sheet: its name (the folder's) and one artist for
+    /// every track in it. The artist is written in a single change to the
+    /// library rather than track by track — a record's worth of edits is one
+    /// redraw, and the folder's agreed artist (and with it the Discography
+    /// button) is re-derived from the result.
+    func editAlbum(_ folder: Folder, name: String, artist: String) {
+        if name.trimmingCharacters(in: .whitespacesAndNewlines) != folder.name {
+            renameFolder(folder, to: name)
+        }
+        let trimmedArtist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedArtist.isEmpty else { return }
+        var updated = tracks
+        var changed = false
+        var touchesWatch = false
+        for index in updated.indices
+        where updated[index].folderID == folder.id && !updated[index].isArchived
+            && updated[index].artist != trimmedArtist {
+            updated[index].artist = trimmedArtist
+            changed = true
+            touchesWatch = touchesWatch || updated[index].sentToWatch
+        }
+        guard changed else { return }
+        tracks = updated
+        save()
+        // The artists are part of what `tracks.json` records.
+        refreshTracklistSidecar(folder.id)
+        if touchesWatch { syncWatch() }
+        appLog("Album \"\(folder.name)\": artist set to \"\(trimmedArtist)\" on every track.",
+               level: .success, category: "Library")
+    }
+
+    /// Swaps a track's file for its trimmed copy (the Player's **Trim**),
+    /// keeping everything else that makes it this track — its id, folder and
+    /// place in it, pins, plays and art — and moving what's measured in time
+    /// along with the cut: the length, a saved playhead, chapter markers (a
+    /// chapter cut away entirely goes; one cut into is clipped).
+    ///
+    /// Answers the *old* file's location, for the caller to remove once
+    /// nothing is reading it — the player may still have it open. Synced
+    /// tracks aren't trimmed: their file is someone's own, mirrored from a
+    /// folder outside the app.
+    func applyTrim(to trackID: UUID, fileName: String, duration: Double,
+                   removedFromStart start: Double) -> URL? {
+        guard let index = tracks.firstIndex(where: { $0.id == trackID }),
+              !tracks[index].isSynced else { return nil }
+        var track = tracks[index]
+        let oldURL = track.fileURL
+        track.fileName = fileName
+        track.duration = duration
+        track.lastPosition = min(max(0, track.lastPosition - start), duration)
+        track.chapters = track.chapters.compactMap { chapter in
+            let from = max(0, chapter.start - start)
+            let to = min(duration, chapter.end - start)
+            guard to > from else { return nil }
+            return Chapter(id: chapter.id, title: chapter.title, start: from, end: to)
+        }
+        tracks[index] = track
+        save()
+        if track.sentToWatch { syncWatch() }
+        return oldURL
     }
 
     /// Archives or unarchives a track.

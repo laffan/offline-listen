@@ -180,6 +180,14 @@ enum FolderCover {
 struct PlayerView: View {
     @EnvironmentObject private var playback: PlaybackManager
     @EnvironmentObject private var library: LibraryStore
+    /// For **Find Similar**: the station is a Sources entry, made by the model,
+    /// opened through the router.
+    @EnvironmentObject private var browse: BrowseStore
+    @EnvironmentObject private var aiSettings: AISettingsStore
+    @EnvironmentObject private var router: AppRouter
+    /// Find Similar is only offered online — the station is the model's and
+    /// YouTube's work, and neither is reachable without a connection.
+    @ObservedObject private var network = NetworkMonitor.shared
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     /// Called when the player is swiped down — the root takes it back to
@@ -213,6 +221,10 @@ struct PlayerView: View {
     /// the CC button uses, for the same reason: the list dismisses itself and
     /// nothing on this screen would otherwise change.
     @State private var artworkNotice: String?
+    /// The track whose **Trim** editor stands in for the scrubber and the
+    /// transport. Cleared when it's saved or cancelled, and when the track
+    /// changes — a trim belongs to the song it was opened on.
+    @State private var trimmingTrackID: UUID?
 
     /// Whether the picture is currently filling the screen — landscape
     /// (compact height) with a video track, or portrait after a tap on it.
@@ -266,6 +278,7 @@ struct PlayerView: View {
         .onChange(of: playback.currentTrack?.id) { _ in
             artworkActions = false
             artworkNotice = nil
+            trimmingTrackID = nil
         }
         .statusBarHidden(isFullscreenVideo)
         // A fresh track starts framed normally — the old one's fullscreen
@@ -337,10 +350,19 @@ struct PlayerView: View {
             }
             .padding(.horizontal)
 
-            scrubber
-            VStack(spacing: 14) {
-                controls
-                queueNeighbours
+            if trimmingTrackID == track.id {
+                // The waveform editor takes the scrubber's and the
+                // transport's place until it's saved or cancelled.
+                TrimEditorView(track: library.track(withID: track.id) ?? track) {
+                    withAnimation { trimmingTrackID = nil }
+                }
+                .transition(.opacity)
+            } else {
+                scrubber
+                VStack(spacing: 14) {
+                    controls
+                    queueNeighbours
+                }
             }
 
             Spacer()
@@ -530,14 +552,15 @@ struct PlayerView: View {
         .overlay { artworkOverlay(live) }
     }
 
-    /// What the sleeve shows once it has been tapped: the two things worth
-    /// doing to the song that is playing, and a tap anywhere else on the art
-    /// to put them away again.
+    /// What the sleeve shows once it has been tapped: the things worth doing to
+    /// the song that is playing — keep it, copy it onto a tape, start a station
+    /// from it, trim it — and a tap anywhere else on the art to put them away
+    /// again.
     @ViewBuilder
     private func artworkOverlay(_ track: Track) -> some View {
         if artworkActions {
             let pinned = library.isPinnedInRecent(track.id)
-            VStack(spacing: 12) {
+            VStack(spacing: 10) {
                 artworkButton(pinned ? "Unpin from Recent" : "Pin to Recent",
                               systemImage: pinned ? "pin.slash" : "pin") {
                     // The label flips under the finger, which is the whole
@@ -547,6 +570,21 @@ struct PlayerView: View {
                 artworkButton("Copy to Mixtape", systemImage: "plus.rectangle.on.folder") {
                     copyingToMixtape = track
                     withAnimation(.easeInOut(duration: 0.18)) { artworkActions = false }
+                }
+                if network.isOnline {
+                    artworkButton("Find Similar", systemImage: "dot.radiowaves.left.and.right") {
+                        findSimilar(to: track)
+                    }
+                }
+                // A synced file is somebody's own, mirrored from outside the
+                // app — not this app's to cut.
+                if !track.isSynced {
+                    artworkButton("Trim", systemImage: "scissors") {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            artworkActions = false
+                            trimmingTrackID = track.id
+                        }
+                    }
                 }
             }
             .padding(18)
@@ -570,6 +608,22 @@ struct PlayerView: View {
                 .padding(12)
                 .transition(.opacity)
         }
+    }
+
+    /// **Find Similar**: a Radio station seeded by this song, in Search ▸
+    /// Sources, and the app taken there to watch it fill. The model does the
+    /// work in the background, so the station's section says it's tuning in
+    /// until the first set lands.
+    private func findSimilar(to track: Track) {
+        guard aiSettings.isAuthenticated else {
+            withAnimation(.easeInOut(duration: 0.18)) { artworkActions = false }
+            flashOverArtwork("Stations are made by AI — add an Anthropic API key in Settings first.")
+            return
+        }
+        let seed = hasArtist(track) ? "\(track.artist) – \(track.title)" : track.title
+        let station = browse.radioStation(seededBy: seed)
+        withAnimation(.easeInOut(duration: 0.18)) { artworkActions = false }
+        router.pendingSource = station.id
     }
 
     private func artworkButton(_ title: String, systemImage: String,

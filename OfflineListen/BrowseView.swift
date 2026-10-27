@@ -66,6 +66,24 @@ struct SearchView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Clear of the screen's edges, so the outline the tab opens
+                // into has sides to draw.
+                .padding(.horizontal, SearchTabMetrics.gutter)
+            }
+            .overlayPreferenceValue(SelectedSearchTabKey.self) { anchor in
+                GeometryReader { proxy in
+                    if let anchor {
+                        SearchTabOutline(tab: proxy[anchor],
+                                         panelMinX: SearchTabMetrics.gutter,
+                                         panelMaxX: proxy.size.width - SearchTabMetrics.gutter)
+                            .stroke(Color.appSeparator, lineWidth: 1)
+                            .animation(.easeInOut(duration: 0.2), value: section)
+                    }
+                }
+                // Open at the foot: the sides run on under the mini player and
+                // the tab bar rather than stopping short of them.
+                .ignoresSafeArea(edges: .bottom)
+                .allowsHitTesting(false)
             }
             // Never shown — the section buttons stand where the bar would —
             // but it's what a pushed screen's back button reads.
@@ -128,12 +146,34 @@ struct SearchView: View {
     }
 }
 
-/// The Search tab's four buttons, where a navigation bar would be: a glyph
-/// each, with no name under it — four familiar icons read at a glance, and the
-/// names were costing the row half its height. The one showing wears the
-/// accent colour; VoiceOver still reads each by name. Two of them carry news from the
-/// section behind them — **Download** the number of downloads still working or
-/// waiting (the tab's own badge says the same from elsewhere in the app), and
+/// Shared by the tab strip and the panel beneath it, so the first tab's left
+/// edge and the panel's left edge are one line.
+private enum SearchTabMetrics {
+    /// How far the strip and the panel sit in from the screen's sides.
+    static let gutter: CGFloat = 6
+    /// The rounding on the tab's top corners and the panel's.
+    static let cornerRadius: CGFloat = 10
+}
+
+/// Where the selected tab is, for the outline that joins it to its panel.
+private struct SelectedSearchTabKey: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>?
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = value ?? nextValue()
+    }
+}
+
+/// The Search tab's four sections, as **tabs**: a glyph over its name, where a
+/// navigation bar would be. The names went for a while — four familiar icons
+/// read at a glance — and came back, because four icons are a puzzle the
+/// first few times and a name costs one caption line.
+///
+/// The selected tab is drawn the way a tab is: one hairline runs up its sides
+/// and over its top and carries on around the section's content, open where
+/// the two meet (`SearchTabOutline`). Which section you are in is then a shape
+/// rather than only a colour. Two of the tabs carry news from the section
+/// behind them — **Download** the number of downloads still working or waiting
+/// (the tab's own badge says the same from elsewhere in the app), and
 /// **Sources** a dot when a refresh has turned up items nobody has acted on.
 ///
 /// It observes the queue and the sources on its own so that a refresh or a
@@ -148,14 +188,13 @@ private struct SearchSectionBar: View {
     }
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             ForEach(SearchSection.allCases) { candidate in
                 button(candidate)
             }
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, SearchTabMetrics.gutter)
         .padding(.top, 4)
-        .padding(.bottom, 6)
     }
 
     private func button(_ candidate: SearchSection) -> some View {
@@ -163,17 +202,23 @@ private struct SearchSectionBar: View {
         return Button {
             selection = candidate
         } label: {
-            Image(systemName: candidate.systemImage)
-                .font(.title3.weight(.semibold))
-                .overlay(alignment: .topTrailing) { marker(for: candidate) }
-                .foregroundStyle(selected ? Color.accentColor : Color.secondary)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-                .background(selected ? Color.accentColor.opacity(0.12) : Color.clear,
-                            in: RoundedRectangle(cornerRadius: 10))
-                .contentShape(Rectangle())
+            VStack(spacing: 3) {
+                Image(systemName: candidate.systemImage)
+                    .font(.body.weight(.semibold))
+                    .overlay(alignment: .topTrailing) { marker(for: candidate) }
+                Text(candidate.displayName)
+                    .font(.caption.weight(selected ? .semibold : .regular))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.top, 8)
+            .padding(.bottom, 7)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .anchorPreference(key: SelectedSearchTabKey.self, value: .bounds) { selected ? $0 : nil }
         .accessibilityLabel(accessibilityLabel(for: candidate))
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
@@ -213,13 +258,95 @@ private struct SearchSectionBar: View {
     }
 }
 
-/// The sources screen: what each source has surfaced, ready to curate —
-/// download, preview, save or discard. The Search tab's **Sources** section.
+/// The outline of the selected tab and the panel it opens onto, as one line:
+/// up the panel's left side, around the tab, and down the panel's right side,
+/// left open along the stretch where the tab meets the panel and at the foot
+/// (which runs on under the bars). Where the tab sits flush with a side of the
+/// panel, its side *is* the panel's side and the line goes straight up.
+private struct SearchTabOutline: Shape {
+    /// The selected tab's frame, in the shape's own coordinates.
+    var tab: CGRect
+    /// The panel's left and right edges.
+    var panelMinX: CGFloat
+    var panelMaxX: CGFloat
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(tab.minX, tab.width) }
+        set {
+            tab.origin.x = newValue.first
+            tab.size.width = newValue.second
+        }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let r = SearchTabMetrics.cornerRadius
+        // The concave turn from the panel's top into a tab's side is gentler
+        // than the corners, so a narrow gap still reads as a curve.
+        let inner: CGFloat = 6
+        let left = panelMinX, right = panelMaxX, bottom = rect.maxY
+        let panelTop = tab.maxY
+        let tabTop = tab.minY
+        let tabLeft = max(tab.minX, left), tabRight = min(tab.maxX, right)
+
+        var path = Path()
+        path.move(to: CGPoint(x: left, y: bottom))
+        if tabLeft - left < 1 {
+            path.addArc(tangent1End: CGPoint(x: left, y: tabTop),
+                        tangent2End: CGPoint(x: tabRight, y: tabTop), radius: r)
+        } else {
+            path.addArc(tangent1End: CGPoint(x: left, y: panelTop),
+                        tangent2End: CGPoint(x: tabLeft, y: panelTop), radius: r)
+            path.addArc(tangent1End: CGPoint(x: tabLeft, y: panelTop),
+                        tangent2End: CGPoint(x: tabLeft, y: tabTop), radius: inner)
+            path.addArc(tangent1End: CGPoint(x: tabLeft, y: tabTop),
+                        tangent2End: CGPoint(x: tabRight, y: tabTop), radius: r)
+        }
+        if right - tabRight < 1 {
+            path.addArc(tangent1End: CGPoint(x: right, y: tabTop),
+                        tangent2End: CGPoint(x: right, y: bottom), radius: r)
+        } else {
+            path.addArc(tangent1End: CGPoint(x: tabRight, y: tabTop),
+                        tangent2End: CGPoint(x: tabRight, y: panelTop), radius: r)
+            path.addArc(tangent1End: CGPoint(x: tabRight, y: panelTop),
+                        tangent2End: CGPoint(x: right, y: panelTop), radius: inner)
+            path.addArc(tangent1End: CGPoint(x: right, y: panelTop),
+                        tangent2End: CGPoint(x: right, y: bottom), radius: r)
+        }
+        path.addLine(to: CGPoint(x: right, y: bottom))
+        return path
+    }
+}
+
+/// The sources screen — the Search tab's **Sources** section. Every source is
+/// a **section of its own**: its name and state as the header, and beneath it
+/// the tracks it has turned up, each with the Artist page's controls —
+/// download it, preview it, or (once it's in the library) play it — and a
+/// **Download All** above them that takes the whole list the way a record is
+/// taken, as one album folder in tracklist order.
+///
+/// It used to be a list of source *names*, each a screen to push into before
+/// anything it had found could be seen. The list a source makes is the point
+/// of having it, so that's what the screen shows; the source's own screen is
+/// still a tap away, for the full list, multi-select, **More**, and a Blog
+/// Agent's posts.
 struct BrowseSourcesView: View {
     @EnvironmentObject private var browse: BrowseStore
+    @EnvironmentObject private var router: AppRouter
 
     /// The kind picked from the "+" menu, driving the add sheet.
     @State private var addingKind: BrowseSourceKind?
+    /// The item being previewed (drives the modal), and the source list it was
+    /// tapped in — the modal's next/previous walk that list.
+    @State private var previewItem: BrowseItem?
+    @State private var previewQueue: [BrowseItem] = []
+    /// Sections folded shut by their header's chevron.
+    @State private var collapsed: Set<UUID> = []
+
+    /// Every source, in the order the "+" menu lists their kinds (stations
+    /// first), and in the order they were added within a kind.
+    private var orderedSources: [BrowseSource] {
+        BrowseSourceKind.addable.flatMap { browse.sources(of: $0) }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -248,6 +375,7 @@ struct BrowseSourcesView: View {
                 addMenu
             }
             .padding(.horizontal)
+            .padding(.top, 8)
             .padding(.bottom, 4)
 
             if browse.sources.isEmpty {
@@ -259,17 +387,14 @@ struct BrowseSourcesView: View {
         .sheet(item: $addingKind) { kind in
             AddBrowseSourceView(kind: kind)
         }
+        .sheet(item: $previewItem) { item in
+            BrowsePreviewView(item: item, mode: browse.downloadMode, queue: previewQueue)
+        }
     }
 
     private var addMenu: some View {
         Menu {
-            ForEach(BrowseSourceKind.addable) { kind in
-                Button {
-                    addingKind = kind
-                } label: {
-                    Label(kind.displayName, systemImage: kind.systemImage)
-                }
-            }
+            addButtons
         } label: {
             Image(systemName: "plus")
                 .font(.body.weight(.semibold))
@@ -277,21 +402,26 @@ struct BrowseSourcesView: View {
         .accessibilityLabel("Add source")
     }
 
+    @ViewBuilder
+    private var addButtons: some View {
+        ForEach(BrowseSourceKind.addable) { kind in
+            Button {
+                addingKind = kind
+            } label: {
+                Label(kind.displayName, systemImage: kind.systemImage)
+            }
+        }
+    }
+
     private var emptyState: some View {
         VStack(spacing: 16) {
             ContentUnavailableViewCompat(
                 title: "No sources yet",
                 systemImage: "sparkles.rectangle.stack",
-                description: "Add a YouTube channel or playlist, an RSS feed, or let AI dig up popular songs by artist, genre or country."
+                description: "Start a radio station from an artist or a song, follow a YouTube channel or playlist or an RSS feed, or let AI dig up popular songs by artist, genre or country."
             )
             Menu {
-                ForEach(BrowseSourceKind.addable) { kind in
-                    Button {
-                        addingKind = kind
-                    } label: {
-                        Label(kind.displayName, systemImage: kind.systemImage)
-                    }
-                }
+                addButtons
             } label: {
                 Label("Add a Source", systemImage: "plus")
                     .fontWeight(.semibold)
@@ -302,84 +432,174 @@ struct BrowseSourcesView: View {
     }
 
     private var sourceList: some View {
-        List {
-            ForEach(BrowseSourceKind.addable) { kind in
-                let ofKind = browse.sources(of: kind)
-                if !ofKind.isEmpty {
-                    Section(kind.pluralName) {
-                        ForEach(ofKind) { source in
-                            NavigationLink {
-                                // Discography-mode Artist sources open the
-                                // album-first browser; everything else keeps
-                                // the item list.
-                                if source.usesDiscographyBrowser {
-                                    ArtistDiscographySourceView(sourceID: source.id)
-                                } else {
-                                    BrowseSourceView(sourceID: source.id)
-                                }
-                            } label: {
-                                BrowseSourceRow(source: source)
-                            }
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                Button(role: .destructive) {
-                                    browse.removeSource(source)
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
-                                }
-                                // Catalogue sources refresh from their own
-                                // screen's toolbar; the swipe would no-op.
-                                if !source.usesDiscographyBrowser {
-                                    Button {
-                                        Task { await browse.refresh(source) }
-                                    } label: {
-                                        Label("Refresh", systemImage: "arrow.clockwise")
-                                    }
-                                    .tint(.blue)
-                                }
-                            }
+        ScrollViewReader { proxy in
+            List {
+                ForEach(orderedSources) { source in
+                    BrowseSourceSection(
+                        source: source,
+                        isCollapsed: collapsed.contains(source.id),
+                        onToggle: { toggle(source.id) },
+                        onPreview: { item, queue in
+                            browse.markPreviewed(item)
+                            previewQueue = queue
+                            previewItem = item
                         }
-                    }
+                    )
                 }
             }
+            .listStyle(.plain)
+            .miniPlayerClearance()
+            .refreshable { await browse.refreshAll() }
+            .onAppear { showPendingSource(with: proxy) }
+            .onChange(of: router.pendingSource) { _ in showPendingSource(with: proxy) }
         }
-        .insetGroupedListStyle()
-        .miniPlayerClearance()
-        .refreshable { await browse.refreshAll() }
+    }
+
+    private func toggle(_ id: UUID) {
+        withAnimation {
+            if collapsed.contains(id) { collapsed.remove(id) } else { collapsed.insert(id) }
+        }
+    }
+
+    /// Find Similar's station, scrolled to and opened. Each section's first
+    /// row carries the source's id, which is what `scrollTo` finds — so the
+    /// section is opened first, and the scroll waits a turn for it to draw.
+    private func showPendingSource(with proxy: ScrollViewProxy) {
+        guard let id = router.pendingSource,
+              browse.sources.contains(where: { $0.id == id }) else { return }
+        router.pendingSource = nil
+        collapsed.remove(id)
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            withAnimation { proxy.scrollTo(id, anchor: .top) }
+        }
     }
 }
 
-/// One source row: icon, name, and either a spinner (refreshing), the last
-/// error, or the new-item count.
-private struct BrowseSourceRow: View {
-    @EnvironmentObject private var browse: BrowseStore
+/// One source in the Sources list: a header naming it — with its state, its
+/// new-item count and a menu for the rest — over the tracks it has found.
+///
+/// How many tracks show is capped (`shownLimit`): a channel can list hundreds,
+/// and one source shouldn't push every other one off the bottom of the screen.
+/// The rest are behind **Show all**, the source's own screen. A discography-
+/// mode Artist source isn't a list of tracks at all but a catalogue, so its
+/// section is the way into the catalogue browser instead.
+private struct BrowseSourceSection: View {
     let source: BrowseSource
+    let isCollapsed: Bool
+    let onToggle: () -> Void
+    /// The tapped item and the source's whole visible list — the queue the
+    /// preview modal walks.
+    let onPreview: (BrowseItem, [BrowseItem]) -> Void
+
+    @EnvironmentObject private var browse: BrowseStore
+    @EnvironmentObject private var downloads: DownloadManager
+
+    /// A station's first set is twenty songs and reads as one; the other kinds
+    /// show the newest ten.
+    private var shownLimit: Int { source.kind == .radio ? 20 : 10 }
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: source.kind.systemImage)
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 26)
+        let items = browse.visibleItems(for: source.id)
+        Section {
+            if !isCollapsed {
+                content(items: items)
+            }
+        } header: {
+            header
+        }
+    }
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(source.name)
-                    .lineLimit(1)
+    @ViewBuilder
+    private func content(items: [BrowseItem]) -> some View {
+        if source.usesDiscographyBrowser {
+            NavigationLink {
+                ArtistDiscographySourceView(sourceID: source.id)
+            } label: {
+                Label("Open Discography", systemImage: "square.stack")
+            }
+            .id(source.id)
+        } else if items.isEmpty {
+            statusRow
+                .id(source.id)
+        } else {
+            SourceDownloadAllButton(source: source, items: items)
+                .id(source.id)
+            let shown = Array(items.prefix(shownLimit))
+            ForEach(Array(shown.enumerated()), id: \.element.id) { index, item in
+                trackRow(number: index + 1, item: item, queue: items)
+            }
+            NavigationLink {
+                BrowseSourceView(sourceID: source.id)
+            } label: {
+                Text(items.count > shown.count
+                     ? "Show all \(items.count)"
+                     : (source.kind == .blogAgent ? "Posts & artists" : "Open \(source.kind.displayName)"))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+            }
+        }
+    }
+
+    /// What a source with no tracks yet has to say: it's being fetched (a
+    /// station being put together, mostly — the add sheet closes at once and
+    /// the model does its work here), it failed, or it hasn't been asked.
+    @ViewBuilder
+    private var statusRow: some View {
+        if browse.refreshing.contains(source.id) {
+            HStack(spacing: 10) {
+                ProgressView().controlSize(.small)
+                Text(source.kind == .radio ? "Tuning in — finding music like \(source.input)…" : "Refreshing…")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 6)
+        } else {
+            HStack(spacing: 10) {
                 if let error = browse.lastError[source.id] {
                     Text(error)
                         .font(.caption)
                         .foregroundStyle(.orange)
-                        .lineLimit(2)
-                } else if let refreshed = source.lastRefreshed {
-                    Text("Updated \(refreshed.formatted(.relative(presentation: .named)))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
                 } else {
-                    Text("Never refreshed")
-                        .font(.caption)
+                    Text("Nothing here yet.")
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
+                Spacer(minLength: 8)
+                Button("Refresh") {
+                    Task { await browse.refresh(source) }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
+            .padding(.vertical, 4)
+        }
+    }
 
-            Spacer(minLength: 8)
+    private var header: some View {
+        HStack(spacing: 10) {
+            Button(action: onToggle) {
+                HStack(spacing: 10) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(isCollapsed ? 0 : 90))
+                    Image(systemName: source.kind.systemImage)
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 22)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(source.name)
+                            .lineLimit(1)
+                        subtitle
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(source.name), \(source.kind.displayName)")
+            .accessibilityHint(isCollapsed ? "Shows its tracks" : "Hides its tracks")
 
             if browse.refreshing.contains(source.id) {
                 ProgressView().controlSize(.small)
@@ -389,13 +609,287 @@ private struct BrowseSourceRow: View {
                     Text("\(count)")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
                         .background(Color.accentColor, in: Capsule())
+                        .accessibilityLabel("\(count) new")
                 }
             }
+            menu
         }
-        .padding(.vertical, 2)
+        .browseSectionHeaderStyle()
+    }
+
+    @ViewBuilder
+    private var subtitle: some View {
+        if let error = browse.lastError[source.id] {
+            Text(error)
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .lineLimit(1)
+        } else if let refreshed = source.lastRefreshed {
+            Text("\(source.kind.displayName) · Updated \(refreshed.formatted(.relative(presentation: .named)))")
+                .font(.caption.weight(.regular))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        } else {
+            Text(source.kind.displayName)
+                .font(.caption.weight(.regular))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var menu: some View {
+        Menu {
+            // Catalogue sources refresh from their own screen's toolbar.
+            if !source.usesDiscographyBrowser {
+                Button {
+                    Task { await browse.refresh(source) }
+                } label: {
+                    Label(source.kind == .radio ? "More Like This" : "Refresh",
+                          systemImage: "arrow.clockwise")
+                }
+                .disabled(browse.refreshing.contains(source.id))
+            }
+            Button(role: .destructive) {
+                browse.removeSource(source)
+            } label: {
+                Label("Delete Source", systemImage: "trash")
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.body)
+                .foregroundStyle(Color.accentColor)
+                .padding(.leading, 4)
+                .contentShape(Rectangle())
+        }
+        .accessibilityLabel("\(source.name) options")
+    }
+
+    private func trackRow(number: Int, item: BrowseItem, queue: [BrowseItem]) -> some View {
+        SourceTrackRow(number: number, item: item,
+                       onDownload: { download(item) },
+                       onPreview: { onPreview(item, queue) })
+            // Touch and hold to (re-)download in the current Audio/Video mode
+            // — the way back for an item grabbed in the wrong format.
+            .contextMenu {
+                Button {
+                    download(item)
+                } label: {
+                    Label(item.status == .new
+                            ? "Download (\(browse.downloadMode.displayName))"
+                            : "Download Again (\(browse.downloadMode.displayName))",
+                          systemImage: "arrow.down.circle")
+                }
+            }
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(role: .destructive) {
+                    browse.markDiscarded(item)
+                } label: {
+                    Label("Discard", systemImage: "xmark.bin")
+                }
+            }
+    }
+
+    /// One track to the queue, filed into the folder named after the source —
+    /// with the row's own name and artist riding along for the queue to show
+    /// (see `BrowseSourceView.enqueue`).
+    private func download(_ item: BrowseItem) {
+        let name = source.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let named = item.naming
+        if name.isEmpty {
+            downloads.enqueue(urlString: item.url, mode: browse.downloadMode,
+                              queuedTitle: named.title, queuedArtist: named.artist)
+        } else {
+            downloads.enqueue(urlString: item.url, mode: browse.downloadMode,
+                              browseFolderNamed: name,
+                              queuedTitle: named.title, queuedArtist: named.artist)
+        }
+        browse.markDownloaded(item)
+    }
+}
+
+/// A track under its source's header, laid out as the Artist page lays out a
+/// release's tracks: its number, the song (artist beneath), then **Download**
+/// — or, once it's in the library, the green play button — and **Preview**,
+/// whose icon fills in once it's been auditioned.
+struct SourceTrackRow: View {
+    let number: Int
+    let item: BrowseItem
+    let onDownload: () -> Void
+    let onPreview: () -> Void
+
+    @EnvironmentObject private var library: LibraryStore
+
+    var body: some View {
+        let named = item.naming
+        HStack(spacing: 10) {
+            Text("\(number).")
+                .font(.callout)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 22, alignment: .trailing)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(named.title)
+                    .font(.callout)
+                    .fontWeight(.medium)
+                    .lineLimit(2)
+                if let artist = named.artist {
+                    Text(artist)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 8)
+            if item.status == .downloaded || item.status == .saved
+                || library.track(forSourceURL: item.url) != nil {
+                BrowseTrackStatusButton(sourceURL: item.url,
+                                        pendingIcon: item.status == .saved
+                                            ? "checkmark.circle.fill" : "arrow.down.circle.fill",
+                                        pendingLabel: item.status == .saved
+                                            ? "Saved to Library" : "Sent to Downloads")
+            } else {
+                Button(action: onDownload) {
+                    Image(systemName: "arrow.down.circle")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Download \(named.title)")
+            }
+            Button(action: onPreview) {
+                Image(systemName: item.wasPreviewed ? "play.circle.fill" : "play.circle")
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel(item.wasPreviewed ? "Preview \(named.title) again" : "Preview \(named.title)")
+        }
+        .font(.title3)
+        .padding(.vertical, 3)
+    }
+}
+
+/// **Download All** for a source: every track it lists, queued the way the
+/// Artist page's **Download Album** queues a record — one album folder named
+/// after the source, in the list's own order, grouped as one row in the
+/// Download section. It counts the tracks in as they land and becomes **Play
+/// All** once the whole list is in one folder. Like that button, the state is
+/// read off the **library** past the moment of queueing, so it stays true
+/// across a redraw and still offers to play a list taken on an earlier visit.
+private struct SourceDownloadAllButton: View {
+    let source: BrowseSource
+    let items: [BrowseItem]
+
+    @EnvironmentObject private var browse: BrowseStore
+    @EnvironmentObject private var downloads: DownloadManager
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var playback: PlaybackManager
+
+    /// The links this button sent to the queue, which is what tells
+    /// "downloading" apart from "some of these happen to be in the library".
+    @State private var queuedURLs: Set<String> = []
+
+    private enum BulkState {
+        case idle(Int)
+        case downloading(landed: Int, total: Int)
+        case ready(UUID)
+    }
+
+    private var state: BulkState {
+        let landed = items.compactMap { library.track(forSourceURL: $0.url) }
+        let folders = Set(landed.compactMap(\.folderID))
+        if !items.isEmpty, landed.count == items.count, folders.count == 1, let folder = folders.first {
+            return .ready(folder)
+        }
+        if !queuedURLs.isEmpty {
+            let arrived = queuedURLs.filter { library.track(forSourceURL: $0) != nil }.count
+            return .downloading(landed: arrived, total: queuedURLs.count)
+        }
+        return .idle(items.count)
+    }
+
+    var body: some View {
+        let state = self.state
+        VStack(spacing: 6) {
+            Button {
+                if case .ready(let folderID) = state {
+                    playAll(in: folderID)
+                } else {
+                    downloadAll()
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: icon(for: state))
+                    Text(label(for: state))
+                        .font(.subheadline.weight(.semibold))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
+            .tint(isReady(state) ? Color.green : Color.accentColor)
+            .disabled(isDownloading(state))
+
+            if case .downloading(let landed, let total) = state, total > 0 {
+                ProgressView(value: Double(landed), total: Double(total))
+                    .progressViewStyle(.linear)
+            }
+        }
+        .padding(.vertical, 4)
+        // The capsule is a control, not a row to select.
+        .listRowSeparator(.hidden)
+    }
+
+    private func label(for state: BulkState) -> String {
+        switch state {
+        case .idle(let count): return "Download All (\(count))"
+        case .downloading(let landed, let total):
+            return landed >= total ? "Filing…" : "Downloading \(landed) of \(total)…"
+        case .ready: return "Play All"
+        }
+    }
+
+    private func icon(for state: BulkState) -> String {
+        switch state {
+        case .idle: return "arrow.down.circle.fill"
+        case .downloading: return "arrow.down.circle"
+        case .ready: return "play.circle.fill"
+        }
+    }
+
+    private func isReady(_ state: BulkState) -> Bool {
+        if case .ready = state { return true }
+        return false
+    }
+
+    private func isDownloading(_ state: BulkState) -> Bool {
+        if case .downloading(let landed, let total) = state { return landed < total }
+        return false
+    }
+
+    /// The whole list as one record. An AI list's rows are "Artist — Song"
+    /// pairs the model named, so those ride along as the track's metadata (and
+    /// spare it the organizer); a feed's rows are video titles, which the
+    /// download names better itself.
+    private func downloadAll() {
+        let tracks = items.map { item -> DownloadManager.AlbumTrack in
+            let named = item.naming
+            let knowsArtist = item.title.contains(" — ") && named.artist != nil
+            return DownloadManager.AlbumTrack(url: item.url,
+                                              title: knowsArtist ? named.title : nil,
+                                              artist: knowsArtist ? named.artist : nil,
+                                              artworkURL: item.artworkURL)
+        }
+        guard !tracks.isEmpty else { return }
+        _ = downloads.enqueueAlbum(named: source.name, tracks: tracks, mode: browse.downloadMode)
+        queuedURLs = Set(tracks.map(\.url))
+        browse.markDownloaded(items)
+    }
+
+    private func playAll(in folderID: UUID) {
+        let folderTracks = library.tracks(in: folderID)
+        guard let first = folderTracks.first else { return }
+        playback.play(first, in: folderTracks, restrictToCategory: false)
     }
 }
 
@@ -510,14 +1004,16 @@ struct AddBrowseSourceView: View {
                     }
                 }
             }
-            .navigationTitle("Add \(kind.displayName)")
+            .navigationTitle(kind == .radio ? "New Radio Station" : "Add \(kind.displayName)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Add") { add() }
+                    // A station is made rather than added: the model builds it
+                    // in the background once the sheet closes.
+                    Button(kind == .radio ? "Create" : "Add") { add() }
                         .fontWeight(.semibold)
                         .disabled(input.trimmingCharacters(in: .whitespaces).isEmpty
                                   || aiBlocked || spotifyBlocked)

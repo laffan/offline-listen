@@ -3,7 +3,8 @@ import SwiftUI
 /// A user folder: its tracks with tap-to-play and swipe actions, plus
 /// drag-to-reorder via the Reorder toolbar toggle. Folders can nest — any
 /// subfolders list above the tracks — and a mixtape folder shows its cover
-/// banner up top and an Edit Cover button below its tracks.
+/// banner up top and an Edit Cover button below its tracks. An album trades
+/// the folder button and Reorder for **Edit** (its name and artist).
 struct FolderDetailView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var playback: PlaybackManager
@@ -24,6 +25,9 @@ struct FolderDetailView: View {
     /// The subfolder a swipe-Delete is asking about (see `DeleteFolderConfirm`).
     @State private var deletingFolder: Folder?
     @State private var editingCover = false
+    /// The album's **Edit** sheet — its name and the one artist its tracks
+    /// should all carry.
+    @State private var editingAlbum = false
     /// The album-art sheets, and the change/reset dialog a tap on the sleeve
     /// opens first: one for a cover of the user's own, one for finding the
     /// record's sleeve in Spotify's catalogue.
@@ -93,6 +97,11 @@ struct FolderDetailView: View {
                 MixtapeCoverEditor(folder: folder)
             }
         }
+        .sheet(isPresented: $editingAlbum) {
+            if let folder {
+                AlbumEditSheet(folder: folder)
+            }
+        }
         .sheet(isPresented: $editingAlbumArt) {
             if let folder {
                 AlbumCoverEditor(folder: folder)
@@ -138,21 +147,28 @@ struct FolderDetailView: View {
         .deleteFolderConfirm(for: $deletingFolder)
         .toolbar {
             ToolbarItemGroup(placement: .navigationBarTrailing) {
-                // Mixtapes can't contain folders, so no subfolder creation there.
-                if !isMixtape && !editMode.isEditing {
-                    Button {
-                        newFolderName = ""
-                        showNewFolder = true
-                    } label: {
-                        Label("New Folder", systemImage: "folder.badge.plus")
+                if isAlbum {
+                    // A record holds no folders, and its order is the one its
+                    // download brought; what it does need is a way to make its
+                    // name and its tracks' artist say the same thing.
+                    Button("Edit") { editingAlbum = true }
+                } else {
+                    // Mixtapes can't contain folders, so no subfolder creation there.
+                    if !isMixtape && !editMode.isEditing {
+                        Button {
+                            newFolderName = ""
+                            showNewFolder = true
+                        } label: {
+                            Label("New Folder", systemImage: "folder.badge.plus")
+                        }
                     }
-                }
-                Button(editMode.isEditing ? "Done" : "Reorder") {
-                    withAnimation {
-                        editMode = editMode.isEditing ? .inactive : .active
+                    Button(editMode.isEditing ? "Done" : "Reorder") {
+                        withAnimation {
+                            editMode = editMode.isEditing ? .inactive : .active
+                        }
                     }
+                    .disabled(tracks.count < 2 && !editMode.isEditing)
                 }
-                .disabled(tracks.count < 2 && !editMode.isEditing)
             }
         }
     }
@@ -334,8 +350,9 @@ struct FolderDetailView: View {
                 .tint(.indigo)
             }
             .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                // Song/podcast classification only applies to audio tracks.
-                if !track.isVideo {
+                // Song/podcast classification only applies to audio tracks —
+                // and not to a record's or a mixtape's, which are songs.
+                if !track.isVideo && !isAlbum && !isMixtape {
                     Button {
                         library.setKind(track, .song)
                     } label: {
@@ -634,8 +651,8 @@ enum RecentTab: String, CaseIterable, Identifiable {
 /// **Ignored**. The lists themselves are `RecentTracksView`.
 ///
 /// No navigation bar: nothing here needs one — Clear sits at the foot of the
-/// log, the way History's does in Browse — so the tabs start at the top of the
-/// screen.
+/// log, the way History's does in Browse. The section showing heads the
+/// screen instead, as a large title over the tabs.
 struct RecentView: View {
     @EnvironmentObject private var library: LibraryStore
     /// Told which tab is showing, so a track starting here can be traced back
@@ -661,6 +678,16 @@ struct RecentView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                // The section's name as the screen's heading — the large
+                // title a navigation bar would carry, without the bar.
+                Text(tab.displayName)
+                    .font(.largeTitle.weight(.bold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal)
+                    .padding(.top, 4)
+                    .padding(.bottom, 4)
+                    .accessibilityAddTraits(.isHeader)
+
                 Picker("Section", selection: $tab) {
                     ForEach(RecentTab.allCases) { section in
                         Text(section.displayName).tag(section)

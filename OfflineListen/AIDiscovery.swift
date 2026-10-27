@@ -1,7 +1,7 @@
 import Foundation
 
-/// AI-driven song discovery for the Browse tab's Artist / Genre / Country
-/// sources: the model suggests popular songs (title + artist), and each
+/// AI-driven song discovery for the Browse tab's Artist / Genre / Country /
+/// Radio sources: the model suggests songs (title + artist), and each
 /// suggestion is resolved to a real YouTube link via the search scraper —
 /// the model is never trusted to produce video ids or URLs, which it happily
 /// hallucinates.
@@ -9,6 +9,13 @@ enum AIDiscovery {
     /// How many songs to ask for per refresh. Each one costs a YouTube search
     /// request, so this stays modest.
     private static let batchSize = 10
+    /// A station's first set wants to be long enough to listen *to*, not just
+    /// sample — so Radio asks for more per refresh than the lists do.
+    private static let radioBatchSize = 20
+
+    private static func batch(for kind: BrowseSourceKind) -> Int {
+        kind == .radio ? radioBatchSize : batchSize
+    }
 
     static func fetch(source: BrowseSource,
                       settings: AISettingsStore,
@@ -25,7 +32,7 @@ enum AIDiscovery {
         let raw = try await client.complete(
             system: systemPrompt,
             userText: prompt,
-            maxTokens: 1500
+            maxTokens: source.kind == .radio ? 2500 : 1500
         )
         appLog("AI response for \"\(source.name)\" (\(raw.count) chars):\n\(raw.prefix(1500))\(raw.count > 1500 ? "\n… [truncated in log]" : "")",
                level: .debug, category: "Browse")
@@ -101,12 +108,25 @@ enum AIDiscovery {
             } else {
                 subject = "List \(batchSize) popular, beloved songs from \(source.input) (by artists from that country), spanning eras and artists."
             }
+        case .radio:
+            let count = batch(for: .radio)
+            subject = """
+            Build a radio station seeded by "\(source.input)" (an artist, or a specific track). \
+            List \(count) songs a listener who loves it would want to hear next, the way \
+            Pandora or Spotify radio would: mostly by OTHER artists with a kindred sound, \
+            mood, era and scene — at most two by the seed artist themselves, and no more \
+            than two by any one artist. Mix touchstones with deeper cuts. Order them as a \
+            station that flows: start closest to the seed, then wander out gradually.
+            """
         default:
             subject = "List \(batchSize) popular songs related to \"\(source.input)\"."
         }
         guard !excludingTitles.isEmpty else { return subject }
-        let exclusions = excludingTitles.suffix(60).joined(separator: "; ")
-        return subject + "\n\nAlready listed — do NOT repeat any of these:\n" + exclusions
+        let exclusions = excludingTitles.suffix(source.kind == .radio ? 120 : 60).joined(separator: "; ")
+        let lead = source.kind == .radio
+            ? "\n\nThe station has already played these — do NOT repeat any of them; carry on from where they left off:\n"
+            : "\n\nAlready listed — do NOT repeat any of these:\n"
+        return subject + lead + exclusions
     }
 
     /// Parses the model's JSON array, tolerating surrounding text/fences by

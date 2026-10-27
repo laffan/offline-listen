@@ -11,18 +11,24 @@ locked.
 ## What's here
 
 Five screens (tabs), left to right: **Search**, **Library**, **Recent**,
-**Player**, **Settings**. None of them carries a header title — the vertical
-space goes to the content instead.
+**Player**, **Settings**. None of them carries a navigation bar — the vertical
+space goes to the content instead (Recent heads itself with the name of the
+list showing, in large type, where a bar's title would be).
 
 1. **Search** — everything for finding something to listen to, behind **four
-   buttons across the top**: **Browse**, **Download**, **Sources** and
+   tabs across the top**: **Browse**, **Download**, **Sources** and
    **Bookmarks**. It used to be two tabs — Browse, with the sources and the
    bookmarks behind buttons in its top-right corner, and Download — and the
    buttons that were a level down are now the tab's own organization. They
    stand where a navigation bar would (the tab has none at its top level; a
-   screen pushed from any section brings its own back), each a glyph alone —
-   no name beneath it — with the one showing in the accent colour (VoiceOver
-   still reads each by name). Two of them carry news from
+   screen pushed from any section brings its own back), each a glyph over its
+   name. They went glyph-only for a while and got their names back: four
+   icons are a puzzle the first few times, and a name costs one caption line.
+   The one showing is drawn **as a tab**: in the accent colour, with one
+   hairline running up its sides, over its top and on around the section
+   beneath it — open where the tab meets its content, and open at the foot,
+   where it runs on under the mini player and the tab bar — so which section
+   you're in is a shape, not only a colour. Two of them carry news from
    behind them: **Download** wears the number of downloads still working or
    waiting, and **Sources** a **dot** when a refresh has turned up items you
    haven't acted on. The same download count rides on the **Search tab's own
@@ -43,12 +49,15 @@ space goes to the content instead.
    [The Every Noise browser](#the-every-noise-browser)).
 
    **Download** — paste one or more URLs (whitespace/line-break separated; any
-   http(s) link is queued and the rest of a pasted blob is skipped), choose
+   http(s) link is queued and the rest of a pasted blob is skipped) into the
+   field — *URL or search YouTube*, its placeholder says — choose
    **Audio** or **Video** (default Audio) from the **toggle beside the input
    field** — the Library's own music-note and film glyphs — and watch the
    queue. **Paste** leads the field rather than trailing it: it's what you
    reach for before typing anything, and it becomes the clear button once
-   there's something to clear. The mode toggle has gone through three shapes:
+   there's something to clear. It's drawn at full strength in the accent
+   colour, where the clear button is muted: one is the field's first move,
+   the other a way out of it. The mode toggle has gone through three shapes:
    a segmented picker on its own line (a row of the screen to say what two
    icons say), then two small icons squeezed inside the field's trailing edge,
    and now a control of its own next to it — compact, but with glyphs big
@@ -212,26 +221,28 @@ space goes to the content instead.
    path, none of this touches the on-device yt-dlp module, so Spotify links work
    on a fresh install — only the downloads they spawn need the extractor.
 
-   With no navigation bar above it, the two things the bar used to carry sit
-   on a row of their own beneath the field: the **⋯** menu (**Refresh yt-dlp
-   engine**) on the left and **Clear** (finished/failed history) on the right.
+   With no navigation bar above it, **Clear** (finished/failed history) — what
+   the bar used to carry — sits on a row of its own beneath the field, on the
+   right. **Refresh yt-dlp engine**, which shared that row behind a **⋯** menu,
+   is maintenance rather than something done beside every download, and lives
+   in **Settings ▸ yt-dlp** now.
 
-   **Sources** are the feeds you keep tabs on (see
+   **Sources** are the feeds and stations you keep tabs on (see
    [Browse: keeping tabs on audio sources](#browse-keeping-tabs-on-audio-sources)):
-   YouTube channels/playlists, RSS feeds, a **Blog Agent** for blogs
-   without a feed, an **Artist** source (following their **Top 10**, an
-   AI-laid-out **Search Discography**, or their real **Spotify Discography**),
-   or AI-curated Genre / Country
-   lists; each refresh surfaces YouTube links, shown as compact
-   name-over-artist rows, and
-   every item offers **Download** (sends it to the download queue) and
-   **Preview** (a listen-first modal with **Save** / **Discard**). A **Select**
-   button in a source's list flips it into multi-select, so you can tick a
-   batch of items and download them all in one tap. An
-   **Audio/Video toggle** heads the section — the same one Download has — and
-   sets which mode both buttons (and the bulk download) act in; **Refresh
-   all** and **+** (add a source) share its row, there being no navigation bar
-   to carry them.
+   **Radio** stations an AI builds from an artist or a song, YouTube
+   channels/playlists, RSS feeds, a **Blog Agent** for blogs without a feed,
+   an **Artist** source (following their **Top 10**, an AI-laid-out **Search
+   Discography**, or their real **Spotify Discography**), or AI-curated Genre /
+   Country lists. **Each source is a playlist under its own header**: the
+   section lists the tracks it has turned up, numbered, each with the Artist
+   page's controls — **Download**, **Preview** (a listen-first modal with
+   **Save** / **Discard**), and the green play button once it's in the library
+   — and a **Download All** above them that takes the whole list as an album.
+   The header's chevron folds a source away; its **⋯** menu refreshes or
+   deletes it. An **Audio/Video toggle** heads the section — the same one
+   Download has — and sets which mode every button acts in; **Refresh all**
+   and **+** (add a source) share its row, there being no navigation bar to
+   carry them.
 
    **Bookmarks** is the [Saved for Later](#saved-for-later) list — the genres
    and artists you've put aside. A row opens the thing itself in **Browse**:
@@ -262,7 +273,8 @@ space goes to the content instead.
    A **filter** (All / Music /
    Podcasts / Video) sits at the top of the **All** tab. Swipe **left**
    for Delete/Share/Archive (and bulk versions via **Select**); swipe **right**
-   on an audio track to classify it **Song** or **Podcast**. Songs start from the
+   on an audio track to classify it **Song** or **Podcast** (everywhere but
+   inside an album or a mixtape, whose tracks are songs). Songs start from the
    beginning; podcasts (mic icon) and videos (film icon) resume where you left
    off and show a progress bar. Video tracks play with picture on the Player
    screen. Archived
@@ -389,7 +401,10 @@ space goes to the content instead.
 
    To **reorder** the tracks inside a folder, use the **Reorder** button in
    the folder's own screen — which also shows the folder's **cover** above the
-   list when it has one (see [Album art](#album-art)).
+   list when it has one (see [Album art](#album-art)). An **album** has neither
+   Reorder nor the new-folder button: a record holds no folders, and its order
+   is the one its download brought. It has **Edit** instead (see
+   [Album folders](#album-folders)).
 
    **The "Synced" grouping.** With several sync folders mirrored in, the
    folders that mirror them can crowd out your own. Settings ▸ Local Sync ▸
@@ -454,7 +469,8 @@ space goes to the content instead.
    record's cover out of a grid of theirs), **Custom Album Art** and
    **Reset**, and a
    **Discography** button at the foot of its track list opens the artist's
-   catalogue. **Convert to Folder** is the way back. See
+   catalogue. **Edit**, in the album's toolbar, renames the record and sets
+   one artist on every song in it. **Convert to Folder** is the way back. See
    [Album folders](#album-folders).
 
 3. **Recent** — a tab of its own, between the Library and the Player, because
@@ -469,8 +485,10 @@ space goes to the content instead.
    *heard* is recognised fastest by its sleeves. Nothing on this screen lives
    anywhere — the tracks stay in whatever folder they're in — so every list
    here is a set of references, and **swiping a row right** pins it (or, if
-   it's pinned, lets it go) in all three. There's no navigation bar: nothing
-   needs one, so the tabs start at the top of the screen.
+   it's pinned, lets it go) in all three. There's no navigation bar — nothing
+   needs one — but the screen is headed all the same: the name of the list
+   showing (**Pinned**, **Recent**, **Ignored**) in large type above the tabs,
+   where a bar's large title would be.
 
    **Pinned.** A log scrolls, which is exactly wrong for the one track you
    keep going back to; a pin keeps it. Newest pin first, and pinning the same
@@ -547,14 +565,14 @@ space goes to the content instead.
    back. The track restored at launch has no record, and goes back to the
    Library.
 
-   **Tapping the sleeve turns it over**, onto the two things worth doing to
-   the song you are listening to: **Pin to Recent**, which keeps it in the
+   **Tapping the sleeve turns it over**, onto the things worth doing to the
+   song you are listening to: **Pin to Recent**, which keeps it in the
    Recent tab's **Pinned** list where the log can't scroll it away (and reads
-   *Unpin* once it's there, so a second tap isn't a no-op), and **Copy to
-   Mixtape**. The
+   *Unpin* once it's there, so a second tap isn't a no-op), **Copy to
+   Mixtape**, **Find Similar** and **Trim**. The
    actions sit *on* the artwork rather than under it because the player is a
    tight column — a row of buttons wedged in would push the scrubber and the
-   transport down permanently, for two things you reach for occasionally — and
+   transport down permanently, for things you reach for occasionally — and
    the sleeve is the one thing on the screen big enough to be an obvious target
    with nothing else to do. Tapping anywhere else on it puts them away, and so
    does the track changing: they belong to the song that was playing.
@@ -568,6 +586,33 @@ space goes to the content instead.
    **Copy to Folder** the Library's track menus offer, with its own file, so
    the original stays exactly where it is — and says so over the sleeve. The
    tape the song is already playing from isn't offered.
+
+   **Find Similar** — offered only while the phone is online, since the
+   station is the model's and YouTube's work — makes a **Radio** station
+   seeded by the song ("Artist – Title") in Search ▸ **Sources** and takes you
+   there: the Search tab, the Sources section, scrolled to the station's
+   section, which says it's tuning in until the model's first set lands (see
+   [Radio](#radio)). Asking twice for the same song goes back to the station
+   it already made. Without an Anthropic key it says so over the sleeve
+   instead.
+
+   **Trim** swaps the scrubber and the transport for the track's **waveform**,
+   read off the file (fifty peaks a second, so there's detail to zoom into),
+   with a **handle at either end** to drag inwards; the stretch kept is in the
+   accent colour, the rest dimmed, with the playhead running across it and a
+   tap on the waveform seeking there. While a handle is held, a **magnified**
+   six seconds of waveform around it float above it, the cut marked down the
+   middle — the overview squeezes a whole song into the phone's width, which
+   finds the end of a long fade but won't place a cut on the beat. Letting go
+   plays from the cut (the out-point from three seconds before it), so it's
+   heard rather than guessed. **Save** asks once, then rewrites the file to
+   the kept stretch (AVFoundation's export, as Break Chapters uses) — a cut
+   rather than a bookmark, so the watch, the widget and a local sync all get
+   the shorter track. Everything else about the track stays: its id, its
+   folder and place in it, pins, plays, art; a saved playhead and chapter
+   markers move with the cut. Playback carries on where it was in the new
+   file, and the old file goes only once the player has let go of it. Synced
+   tracks aren't offered it — their file is someone's own.
 
    Beneath the transport, the **previous track** is named
    on the left and the **next track** on the right (labelled as such, with
@@ -613,8 +658,14 @@ space goes to the content instead.
    **Local Sync** section, a
    **Blog Agent** section (posts per
    refresh / songs per post limits for the Blog Agent sources in Search ▸
-   Sources),
+   Sources), a **yt-dlp** section,
    and the **Log** as a section beneath them.
+   - **yt-dlp.** **Refresh yt-dlp engine** throws away the embedded module
+     and fetches a current one — the fix for downloads that used to work and
+     suddenly don't — with a spinner while it runs and a line saying whether it
+     landed. (It used to be a **⋯** menu on the Download section's queue row.
+     On the Mac this section is the existing one that updates the bundled
+     binary.)
    - **Subtitles.** Whether captions show at all (the same switch the Player's
      CC button flips), their **text size**, a **colour** swatch and what sits
      **behind the text** (None / Dim / Solid), over a live sample — the only
@@ -778,10 +829,38 @@ redraws never re-read disk.
 The Search tab's **Sources** section watches a set of user-configured **sources** and turns
 what
 they surface into a curated to-listen list. Every source, whatever its type,
-produces the same thing: **YouTube links with metadata** — each shown as a
-compact row of just the artist/song title (no description clutter) and two
-actions per item, both acting in the mode set by the **Audio/Video toggle**
-atop the Sources screen:
+produces the same thing: **YouTube links with metadata** — a playlist of
+tracks.
+
+**Each source is a section of the list, its tracks beneath its header.** It
+used to be a list of source *names*, each a screen to push into before
+anything it had found could be seen; the list a source makes is the point of
+having it, so that's what the section shows. The header carries the source's
+icon and name, when it last refreshed (or its error), its count of new items,
+a chevron that folds the section shut, and a **⋯** menu — **Refresh** (**More
+Like This** on a station) and **Delete Source**. Under it, the tracks are
+numbered rows laid out the way the Artist page lays out a release: song over
+artist, then **Download** — or the green play button, once it's in the
+library — and **Preview**. A section shows the first ten (a station its first
+twenty); **Show all** at its foot opens the source's own screen, which has the
+full list, multi-select, **More**, and a Blog Agent's posts. A discography-mode
+Artist source is a catalogue rather than a list of tracks, so its section is
+the way into the catalogue browser instead. A source with nothing yet says
+whether it's being fetched (a new station: *Tuning in — finding music like
+…*), failed, or simply hasn't been asked.
+
+**Download All** heads each source's tracks and takes the whole list the way
+the Artist page's **Download Album** takes a record: one **album folder named
+after the source**, the tracks in the list's own order, grouped as one
+collapsible row in the Download section. An AI list's rows are "Artist — Song"
+pairs the model named, so those ride along as the tracks' metadata (and spare
+them the organizer); a feed's rows are video titles, which the download names
+better itself. The button counts the list in — *Downloading 3 of 20…* over a
+bar — and becomes **Play All** once every track is in the one folder, reading
+that off the library so it holds across a redraw and a relaunch.
+
+Both per-track actions act in the mode set by the **Audio/Video toggle** atop
+the Sources screen:
 
 - **Download** — sends the link straight to the download queue in the
   toggle's mode, **with the row's own name and artist**: the list has them
@@ -947,10 +1026,11 @@ single item whose row button has already given way to the dealt-with marker.
 (For a track already in the library, the Library's **Convert to
 Video/Audio** does the same job while also replacing the original file.)
 
-Seven **source types**, in two families:
+Eight **source types**, in two families:
 
 | Type | How it works |
 |------|--------------|
+| **Radio** | AI: a station seeded by an **artist or a track** — what Pandora or Spotify radio does. Name one and press **Create**; the sheet closes and the model builds the station in the background (see [Radio](#radio)). |
 | **YouTube Channel** | Scrape/RSS: watches the channel's upload feed (`/feeds/videos.xml`). Accepts a channel URL, `@handle`, bare `UC…` id, or plain channel name — see [Resolving a channel](#resolving-a-channel). |
 | **YouTube Playlist** | Scrape/RSS: watches the playlist's feed. Accepts a playlist URL (anything with `list=`) or a bare playlist id. Items keep the **playlist page's own order** — a playlist is curated, so unlike every other source its list isn't sorted newest-first. |
 | **RSS Feed** | RSS reader: parses any RSS/Atom feed and keeps **only the posts that contain YouTube links** (a music blog's roundups, a newsletter's song-of-the-day). A post with several links yields one item per video. |
@@ -984,6 +1064,23 @@ Country, on a refresh the model is told what it already suggested so it digs
 deeper instead of repeating itself (so refreshing keeps surfacing the
 next-most-popular tracks); refreshing a discography re-lays the catalogue and
 replaces the cached first pass.
+
+### Radio
+
+A **Radio** source asks for one thing — an artist, or a song ("Björk – Jóga")
+— and the model lays out a **station of twenty songs** a listener who loves it
+would want to hear next: mostly by *other* artists with a kindred sound, mood,
+era and scene, no more than two by the seed artist and two by anyone else,
+touchstones mixed with deeper cuts, and ordered to flow — closest to the seed
+first, wandering out gradually. Each is matched to a YouTube video the way
+every AI list is (the model is never asked for links). The station lists in
+that order rather than newest first, and **More Like This** (the header's ⋯
+menu, or a refresh) asks for the next twenty with everything already played
+excluded, appended after the last. It's named after its seed — "Björk – Jóga
+Radio" — unless you name it, and it's the source the Player's **Find
+Similar** creates (reusing a station already seeded by the same song). Like
+the other AI kinds it needs the Anthropic key from Settings; the prompt and
+response are in the Log under `Browse`.
 
 **Agent blockers.** Sites behind bot protection refuse automated readers —
 a 403/429 for non-browser clients, or a Cloudflare-style challenge
@@ -1769,6 +1866,31 @@ catalogue is read. The button appears only when the folder's tracks agree on
 folder's name — because a compilation has no single catalogue to send anyone
 to.
 
+"Agree" used to mean *spelled identically*, and that is why some albums never
+showed the button: one "feat." or one "Prince and the Revolution" among a
+dozen "Prince"s, and the record agreed on nobody. Agreement is now read the
+way credits actually vary (`LibraryStore.commonArtist`): identical apart from
+case, accents and spacing first; failing that, each credit is split into the
+names in it — "A feat. B", "A & B", "A, B", "A x B", "A with B" all credit A
+— and the first name every track credits is the album's artist. (The whole
+credit is always tried first, so a duo with an "&" in its name survives the
+split.) A track still crediting **Unknown** rules the folder out, as before.
+It's derived from the tracks, not stored, so it's re-checked after every
+metadata edit — the button appears the moment the tracks have an artist in
+common.
+
+**Edit.** An album's toolbar carries **Edit** in place of the new-folder and
+**Reorder** buttons — a record holds no folders, and its order is the one its
+download brought. It opens a sheet with the album's **name** and one
+**artist**, prefilled with the artist the tracks agree on (or the credit most
+of them carry), and — when the tracks don't agree — the credits they carry
+now, with how many tracks wear each, any of which can be tapped to use it.
+Save renames the folder and writes the artist onto **every track in the
+album** in one change, which is the standardizing a record pulled together
+from several uploads usually needs; the artist line under the folder's name
+and the Discography button follow at once. A synced album's `tracks.json` is
+rewritten to match, and anything on the watch is re-sent.
+
 Album-ness is a flag on the folder (`isAlbum` in `folders.json`) rather than
 something re-derived per redraw, so the Folders tab's cover view can group by
 it cheaply. Folders saved before the flag existed read back as albums if they
@@ -1859,7 +1981,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 |------|------|
 | `OfflineListenApp.swift` | App entry; wires up the shared stores. |
 | `Models.swift` | `Track`, `Folder`, `DownloadMode`, `LibraryFilter`, `FolderSort`, `FolderViewMode`, paths, helpers. |
-| `LibraryStore.swift` | Persists the library to `Documents/library.json` and folders to `Documents/folders.json` (and each track's last-played date to `Documents/last-played.json`, which the Recent tab's Ignored list sorts by); owns the local moves across the sync boundary (queueing replica ops), the importer's reconcile primitives, and the mixtape/album conversions — including the album cover write that lands on the folder *and* every song in it, and the reset that puts the downloaded one (or a colour) back. |
+| `LibraryStore.swift` | Persists the library to `Documents/library.json` and folders to `Documents/folders.json` (and each track's last-played date to `Documents/last-played.json`, which the Recent tab's Ignored list sorts by); owns the local moves across the sync boundary (queueing replica ops), the importer's reconcile primitives, and the mixtape/album conversions — including the album cover write that lands on the folder *and* every song in it, and the reset that puts the downloaded one (or a colour) back. Also the folder's agreed artist (`commonArtist`, the credit-splitting rule behind the Discography button), the album **Edit** that renames a record and sets one artist across it, and `applyTrim`, which hands a track its trimmed file. |
 | `LocalSync.swift` | `LocalSyncStore` — the sync folder's security-scoped bookmark, the stamped manifest + journaled exporter, the coordinated importer (placeholder-aware copies), kqueue monitoring, and the off-main tree scan. |
 | `DownloadManager.swift` | Download queue (two concurrent slots) + `DownloadJob` + persisted history; `enqueueAlbum`, which files a whole release into one folder in tracklist order with the catalogue's own titles/artists and marks its jobs so the Download section groups them; `AlbumDownloadProgress`, the per-record tally the group's header reads (the jobs publish only to their own rows); `ArtworkFetcher`, the best-effort album-art fetch a finished download (or an album folder) triggers; and `VideoQualityChooser`, which puts the source's real rendition list to the user mid-extraction (once per video, hand-queued downloads only). |
 | `PythonGate.swift` | App-wide async mutex serializing every embedded-Python call, so the two-slot pipeline never runs concurrent interpreter work. |
@@ -1880,6 +2002,8 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `PlaylistResolver.swift` | Detects playlist links and flat-resolves their entries (on-device yt-dlp) so a playlist downloads into a folder. |
 | `ChapterSplitter.swift` | Exports one file per chapter (AVFoundation) for "Break Chapters into Playlist". |
 | `VideoMerger.swift` | Muxes a video-only + audio-only stream into one MP4. |
+| `NetworkMonitor.swift` | One `NWPathMonitor` for the app — whether the device is online, for the controls that do nothing useful offline (the Player's Find Similar). |
+| `TrimEditor.swift` | The Player's **Trim**: the waveform read off the file (`Waveform`, AVAssetReader at 8 kHz mono, a peak per 20 ms), the bars drawn for any stretch of it, the two-handle editor with the magnifier over the handle being dragged, and the export that hands the track its trimmed file. |
 | `PlaybackManager.swift` | `AVPlayer` engine (audio + video), audio session (including interruption/route-change handling), the lock screen (its own and any **borrowed** by a `RemoteAudioSource` — see [Lending the lock screen out](#lending-the-lock-screen-out)), and the frozen-playhead watchdog that keeps autoplay advancing; calls `onStart` as each track starts, which is where the root notes the tab it was started on; exposes the queue's next/previous entries for the Player's neighbour labels. |
 | `Logger.swift` | `LogStore` — thread-safe, app-wide log sink. |
 | `AISettings.swift` | `AISettingsStore` (model/key/assist, Keychain-backed), `AIModel`, `Keychain` helper. |
@@ -1893,11 +2017,11 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `BrowseStore.swift` | Persists sources/items to `Documents/browse.json`; orchestrates refreshes and the new/downloaded/saved/discarded lifecycle. |
 | `FeedParser.swift` | Minimal RSS 2.0 + Atom parser (XMLParser) shared by the YouTube feeds and the generic RSS reader. |
 | `BrowseFetchers.swift` | YouTube channel/playlist feed fetch (+ channel-id resolution by page scrape), the YouTube-link-filtered RSS reader, and the search-result resolver. |
-| `AIDiscovery.swift` | AI song discovery for Artist/Genre/Country sources (suggestions via the Messages API, links via the search resolver). |
+| `AIDiscovery.swift` | AI song discovery for Radio/Artist/Genre/Country sources (suggestions via the Messages API, links via the search resolver) — including the station prompt a Radio source asks with. |
 | `BlogAgent.swift` | The Blog Agent source: homepage fetch → AI link triage → article reads → per-article summary + artist extraction + YouTube-link harvest, with bot-protection ("agent blocked") detection. |
 | `DiscographyAgent.swift` | The AI catalogue layout behind Search Discography mode: albums + track names + a Highlights list, one model call, no YouTube work (matching moved into the browser, on demand). |
 | `DiscographyBrowserView.swift` | The shared album-first discography browser — artist header (portrait, name, Learn More bio), the Artist Sample Track row atop the Top 10, cover thumbnails/full art, names first, per-release YouTube search, **Download Album**, pinned Top 10, and the whole-catalogue song search that scrolls to and highlights its hit — plus its two catalogue providers (Spotify live / AI layout), the Wikipedia lookup + AI bio sheet, and the Browse-source wrapper that caches the first pass. |
-| `BrowseView.swift` | The Search tab: `SearchSection` and `SearchView` — the four section buttons (with the download count and the sources dot) over Browse, Download, Sources and Bookmarks, kept alive behind one another — plus the **Sources** section itself: sources grouped by type, add-source sheet, refresh. |
+| `BrowseView.swift` | The Search tab: `SearchSection` and `SearchView` — the four section tabs (glyph over name, with the download count and the sources dot) and the outline that joins the selected one to its panel (`SearchTabOutline`), over Browse, Download, Sources and Bookmarks, kept alive behind one another — plus the **Sources** section itself: a section per source with its tracks beneath the header (`SourceTrackRow`), the whole-list **Download All**, the scroll to a station Find Similar made, the add-source sheet, refresh. |
 | `EveryNoiseData.swift` | The bundled Every Noise dataset: models, the lazy/LRU shard-loading store, the memory-mapped global artist search (`ENArtistIndex`), and the 30-second preview player. |
 | `EveryNoiseUpdates.swift` | `ENUpdateStore` — the opt-in, heavily throttled Spotify harvest that records what the frozen dataset is missing as you browse; the exportable JSONL it writes for `tools/everynoise/merge_updates.py`; `merged(_:genre:)`, which draws the findings onto the genre's map straight away; and `ENDataFolder`, the separately bookmarked folder a copy of the records is kept in. |
 | `NoiseMapView.swift` | The virtualized `UIScrollView` scatter map (spatial grid + recycled labels) both noise maps render through — opens centered on its canvas, with the draggable scroll-pill ring on the right edge. |
@@ -1909,7 +2033,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `*View.swift` | The SwiftUI screens. The five tabs, in order: Search (`BrowseView.swift`'s `SearchView`, whose Download section is `DownloadView`), Library, Recent (`RecentView`, in `FolderView.swift`), Player and Settings — which embeds the Log; none of them sets a navigation title. `RootView.swift` holds the `TabView`, the Search tab's download badge, and the Player's swipe-down back to where its track was started. `DownloadView.swift` also holds the queue's album grouping — the collapsible record with its cover, count and whole-album bar. `LibraryView.swift` also holds `LibraryTab`, the Folders/Random/Watch/All strip (and the Random tab's hand, dealt on each visit and kept for a return), the Folders tab's two shapes (the list, and the cover view's album grid), the shared track-menu entries every list drops into its `contextMenu` (Sync to Local, Send to Watch, View Discography, **Copy to Folder**, **Find Alternative**, AI Organize, Get Album Art, Get Subtitles, Convert Format), and Find Alternative's own search screen. `PlayerView.swift` also holds the tap-to-seek scrubber, the caption overlay (and its own 5 Hz playhead clock), the actions a tap on the sleeve reveals and the `MixtapePickerView` behind Copy to Mixtape, the `MiniPlayerBar` the other tabs inset above the tab bar, and the album-art loaders (`TrackArtwork`, `FolderArtwork`, `FolderCover`) — each a bounded `ImageCache` with a full decode for the big slots and an ImageIO thumbnail for the row-sized ones. |
 | `FolderView.swift` | Folder detail (tap-to-play, reorder, subfolders, mixtape header/Edit Cover, the album sleeve that opens its art options and the Discography row beneath its tracks), the discography push a library album makes, plus the Library's **Random** tab (`RandomTracksView`) and the **Recent** tab — `RecentTab`, `RecentView` (the Pinned/Recent/Ignored strip and the Ignored snapshot it takes per visit) and `RecentTracksView`, the three lists. |
 | `MixtapeViews.swift` | Mixtape banner rendering (non-destructive crop), the shared folder-row label, and the Edit Cover sheet (PhotosPicker + drag/pinch + font picker). |
-| `AlbumViews.swift` | The album side of a folder: the stand-in colour palette, the square sleeve (cover or colour) the folder screen and the cover grid draw, the grid's own cell, the Custom Album Art sheet — PhotosPicker, square framing, and the crop that turns the framing into the JPEG copied onto every song — and **Retrieve Album Art**'s finder: the artist search (memoized for the session), the chosen artist's covers as a grid, and the pick that hands one to `ArtworkFetcher`. |
+| `AlbumViews.swift` | The album side of a folder: the stand-in colour palette, the square sleeve (cover or colour) the folder screen and the cover grid draw, the grid's own cell, the Custom Album Art sheet — PhotosPicker, square framing, and the crop that turns the framing into the JPEG copied onto every song — **Retrieve Album Art**'s finder: the artist search (memoized for the session), the chosen artist's covers as a grid, and the pick that hands one to `ArtworkFetcher` — and the album's **Edit** sheet (`AlbumEditSheet`). |
 | `WatchFolderView.swift` | The phone's Library **Watch** tab (manage what's been sent to the watch). |
 | `WatchManifest.swift` | Wire format shared by the iPhone and watch targets (the sync manifest, the remote-control `RemoteNowPlaying`/`RemoteCommand` types, + WC keys). |
 | `WatchSync.swift` | Phone-side WatchConnectivity bridge: pushes the manifest + audio files, handles the watch's "Clear all". |

@@ -703,3 +703,111 @@ private struct AlbumArtCoverGrid: View {
         onPicked()
     }
 }
+
+/// An album's **Edit** sheet: the record's name and the artist every one of
+/// its songs credits. Downloads name their tracks however their source did —
+/// "Prince", "Prince & The Revolution", "PRINCE" — and a record that can't
+/// agree with itself on who made it loses the artist line under its name and
+/// the Discography button at its foot. Saving writes the one artist onto every
+/// track, so both come back the moment it's saved.
+struct AlbumEditSheet: View {
+    @EnvironmentObject private var library: LibraryStore
+    @Environment(\.dismiss) private var dismiss
+
+    let folder: Folder
+    @State private var name: String
+    @State private var artist: String
+
+    init(folder: Folder) {
+        self.folder = folder
+        _name = State(initialValue: folder.name)
+        _artist = State(initialValue: "")
+    }
+
+    private var trackCount: Int { library.trackCount(in: folder.id) }
+
+    private struct Credit: Identifiable {
+        let name: String
+        let count: Int
+        var id: String { name }
+    }
+
+    /// The different credits the tracks carry now, most common first — so the
+    /// spellings being standardized are in sight, and one can be picked.
+    private var currentCredits: [Credit] {
+        var counts: [String: Int] = [:]
+        for track in library.tracks(in: folder.id) {
+            let credit = track.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+            counts[credit.isEmpty ? "Unknown" : credit, default: 0] += 1
+        }
+        return counts.map { Credit(name: $0.key, count: $0.value) }
+            .sorted { $0.count != $1.count ? $0.count > $1.count : $0.name < $1.name }
+    }
+
+    private var canSave: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Album") {
+                    TextField("Album name", text: $name)
+                        .textInputAutocapitalization(.words)
+                }
+                Section {
+                    TextField("Artist", text: $artist)
+                        .textInputAutocapitalization(.words)
+                        .autocorrectionDisabled()
+                } header: {
+                    Text("Artist")
+                } footer: {
+                    Text(trackCount == 1
+                         ? "Applies to the album's one track."
+                         : "Applies to all \(trackCount) tracks in the album.")
+                }
+                let credits = currentCredits
+                if credits.count > 1 {
+                    Section {
+                        ForEach(credits) { credit in
+                            Button {
+                                artist = credit.name
+                            } label: {
+                                HStack {
+                                    Text(credit.name)
+                                        .foregroundStyle(.primary)
+                                    Spacer()
+                                    Text("\(credit.count)")
+                                        .foregroundStyle(.secondary)
+                                        .monospacedDigit()
+                                }
+                            }
+                        }
+                    } header: {
+                        Text("Credited now")
+                    } footer: {
+                        Text("The tracks don't agree on an artist yet. Tap one to use it, or type the name you want.")
+                    }
+                }
+            }
+            .navigationTitle("Edit Album")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        library.editAlbum(folder, name: name, artist: artist)
+                        dismiss()
+                    }
+                    .disabled(!canSave)
+                }
+            }
+            .onAppear {
+                if artist.isEmpty { artist = library.suggestedArtist(of: folder.id) }
+            }
+        }
+    }
+}

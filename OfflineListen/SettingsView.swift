@@ -95,6 +95,11 @@ struct SettingsView: View {
     @State private var ytDlpError: String?
     /// Bumped after an update so the version and source are re-read.
     @State private var ytDlpRevision = 0
+    #else
+    /// The engine refresh's progress and verdict, for the row's spinner and
+    /// the line beneath it.
+    @State private var refreshingEngine = false
+    @State private var engineRefreshResult: Bool?
     #endif
 
     @State private var spotifyIDInput = ""
@@ -152,6 +157,9 @@ struct SettingsView: View {
                 everyNoiseDataSection
                 localSyncSection
                 blogAgentSection
+                #if !os(macOS)
+                engineSection
+                #endif
                 logSection
             }
             .settingsFormChrome()
@@ -888,6 +896,52 @@ struct SettingsView: View {
             }
         }
     }
+
+    // MARK: - Download engine
+
+    #if !os(macOS)
+    /// iOS's counterpart of the Mac's yt-dlp section: the embedded module is
+    /// fetched on first use, and **Refresh** throws it away and fetches a
+    /// current one. It used to be a menu on the Download section's queue row —
+    /// maintenance, sat beside the one control that's used every day.
+    private var engineSection: some View {
+        Section {
+            Button {
+                refreshEngine()
+            } label: {
+                HStack {
+                    Label("Refresh yt-dlp engine", systemImage: "arrow.triangle.2.circlepath")
+                    if refreshingEngine {
+                        Spacer()
+                        ProgressView().controlSize(.small)
+                    }
+                }
+            }
+            .disabled(refreshingEngine)
+
+            if let engineRefreshResult {
+                Text(engineRefreshResult
+                     ? "Engine refreshed."
+                     : "The refresh didn't land — see the Log for why.")
+                    .font(.footnote)
+                    .foregroundStyle(engineRefreshResult ? Color.secondary : Color.red)
+            }
+        } header: {
+            Text("yt-dlp")
+        } footer: {
+            Text("Downloads try the built-in extractors first and fall back to yt-dlp. A stale copy shows up as downloads that used to work and suddenly don't; refreshing fetches the current one.")
+        }
+    }
+
+    private func refreshEngine() {
+        refreshingEngine = true
+        engineRefreshResult = nil
+        Task {
+            engineRefreshResult = await YoutubeDLExtractor.refreshEngine()
+            refreshingEngine = false
+        }
+    }
+    #endif
 
     // MARK: - Log
 
