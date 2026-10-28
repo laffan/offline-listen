@@ -203,6 +203,7 @@ enum PlayContext: Equatable {
 /// back to the songs that are playing rather than to whatever a later visit
 /// dealt.
 struct LibraryPlace: Equatable {
+    var media: LibraryMedia = .audio
     var tab: LibraryTab = .folders
     var path: [LibraryRoute] = []
     var query: String = ""

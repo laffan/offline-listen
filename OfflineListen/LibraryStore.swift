@@ -23,6 +23,10 @@ final class LibraryStore: ObservableObject {
     /// **Ignored** list sorts by. Not published: it changes only as a track
     /// starts, which writes the log in the same breath, and the log is.
     private var lastPlayedDates: [UUID: Date] = [:]
+    /// The videos watched to the end (`watched-videos.json`) — the video
+    /// library's **Watched** section. Set when a video plays out, or its saved
+    /// playhead reaches the last couple of percent; cleared by hand.
+    @Published private(set) var watchedVideoIDs: Set<UUID> = []
     /// Bumped whenever a mixtape cover image is (re)written, so views that
     /// render covers from disk know to reload even when the style is unchanged.
     @Published private(set) var coverRevision = 0
@@ -571,6 +575,7 @@ final class LibraryStore: ObservableObject {
         loadRecents()
         loadRecentPins()
         loadLastPlayed()
+        loadWatchedVideos()
         defer {
             loadFolders()
             // Not in `loadRecents`: the log is only ids, and resolving them
@@ -694,6 +699,41 @@ final class LibraryStore: ObservableObject {
     /// When the track was last played, if that's known.
     func lastPlayed(_ trackID: UUID) -> Date? {
         lastPlayedDates[trackID]
+    }
+
+    // MARK: - Watched videos
+
+    func isWatched(_ trackID: UUID) -> Bool {
+        watchedVideoIDs.contains(trackID)
+    }
+
+    /// Files a video under **Watched**, or takes it back out. Starting a
+    /// watched video again leaves it there — seeing something twice doesn't
+    /// unsee it — so the way back is the cell's menu.
+    func setWatched(_ trackID: UUID, _ watched: Bool) {
+        let changed = watched
+            ? watchedVideoIDs.insert(trackID).inserted
+            : watchedVideoIDs.remove(trackID) != nil
+        guard changed else { return }
+        saveWatchedVideos()
+    }
+
+    private func loadWatchedVideos() {
+        guard let data = try? Data(contentsOf: AppPaths.watchedVideos) else { return }
+        do {
+            watchedVideoIDs = try JSONDecoder().decode(Set<UUID>.self, from: data)
+        } catch {
+            print("[LibraryStore] failed to decode watched videos: \(error)")
+        }
+    }
+
+    private func saveWatchedVideos() {
+        do {
+            let data = try JSONEncoder().encode(watchedVideoIDs)
+            try data.write(to: AppPaths.watchedVideos, options: .atomic)
+        } catch {
+            print("[LibraryStore] failed to save watched videos: \(error)")
+        }
     }
 
     /// The Recent tab's **Ignored** list: the `count` active songs that have
@@ -2431,6 +2471,11 @@ final class LibraryStore: ObservableObject {
         guard abs(tracks[index].lastPosition - position) >= 1 else { return }
         tracks[index].lastPosition = position
         save()
+        // Stopping in the closing credits is as good as the end.
+        let track = tracks[index]
+        if track.isVideo, track.duration > 0, position >= track.duration * 0.98 {
+            setWatched(id, true)
+        }
         if tracks[index].kind == .podcast, tracks[index].sentToWatch {
             WatchSync.shared.sendPosition(id: id, position: position)
         }

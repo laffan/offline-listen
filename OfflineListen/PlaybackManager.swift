@@ -754,8 +754,11 @@ final class PlaybackManager: NSObject, ObservableObject {
         // first one just started. Cleared by `loadCurrent` and by any seek.
         guard !didFinishCurrent else { return }
         didFinishCurrent = true
-        // A finished podcast or video resets so a later tap starts it fresh.
+        // A finished podcast or video resets so a later tap starts it fresh —
+        // and a video that played out is filed under the video library's
+        // Watched, since its playhead alone can no longer say so.
         if let track = currentTrack, track.remembersPosition {
+            if track.isVideo { library.setWatched(track.id, true) }
             library.updatePosition(for: track.id, to: 0)
         }
         resetStopDetection()

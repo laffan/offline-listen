@@ -59,6 +59,14 @@ enum AppPaths {
         documents.appendingPathComponent("last-played.json")
     }
 
+    /// The videos that have been watched to the end, for the video library's
+    /// **Watched** section. Its own record because a finished video's saved
+    /// playhead goes back to 0 — which is also what a video never started
+    /// reads as.
+    static var watchedVideos: URL {
+        documents.appendingPathComponent("watched-videos.json")
+    }
+
     /// The user-chosen sync folders, resolved from their security-scoped
     /// bookmarks by `LocalSyncStore` at launch, keyed by each root's id.
     /// These are *replicas*: the app never plays from them — synced files are
@@ -270,6 +278,35 @@ enum VideoQuality: String, Codable, CaseIterable, Identifiable {
 }
 
 /// Library list filter.
+/// Which of the Library's two libraries is showing: the **audio** one (its
+/// Folders / Random / Watch / All tabs) or the **video** one (a grid of
+/// thumbnails). Picked from the toggle in the Library's top-left corner.
+enum LibraryMedia: String, CaseIterable, Identifiable {
+    case audio
+    case video
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .audio: return "Audio"
+        case .video: return "Video"
+        }
+    }
+
+    /// The Library's own music and film glyphs.
+    var icon: String {
+        switch self {
+        case .audio: return "music.note"
+        case .video: return "film"
+        }
+    }
+
+    func matches(_ track: Track) -> Bool {
+        track.isVideo == (self == .video)
+    }
+}
+
 enum LibraryFilter: String, CaseIterable, Identifiable {
     case all
     case music
@@ -277,6 +314,11 @@ enum LibraryFilter: String, CaseIterable, Identifiable {
     case video
 
     var id: String { rawValue }
+
+    /// What the audio library's **All** tab offers. Video has a library of its
+    /// own now, so the filter no longer needs to reach it.
+    static var audioCases: [LibraryFilter] { [.all, .music, .podcasts] }
+
     var displayName: String {
         switch self {
         case .all: return "All"

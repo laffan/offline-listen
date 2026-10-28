@@ -49,6 +49,7 @@
 		1B00000000000000000002E5 /* AIDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E5 /* AIDiscovery.swift */; };
 		1B00000000000000000002E6 /* BrowseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E6 /* BrowseView.swift */; };
 		1B00000000000000000002E7 /* BrowseSourceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E7 /* BrowseSourceView.swift */; };
+		1B00000000000000000002EF /* VideoLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002EF /* VideoLibraryView.swift */; };
 		1B00000000000000000002EE /* TrimEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002EE /* TrimEditor.swift */; };
 		1B00000000000000000002ED /* NetworkMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002ED /* NetworkMonitor.swift */; };
 		1B00000000000000000002E8 /* BrowsePreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00000000000000000002E8 /* BrowsePreviewView.swift */; };
@@ -196,6 +197,7 @@
 		1A00000000000000000002E5 /* AIDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIDiscovery.swift; sourceTree = "<group>"; };
 		1A00000000000000000002E6 /* BrowseView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseView.swift; sourceTree = "<group>"; };
 		1A00000000000000000002E7 /* BrowseSourceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseSourceView.swift; sourceTree = "<group>"; };
+		1A00000000000000000002EF /* VideoLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoLibraryView.swift; sourceTree = "<group>"; };
 		1A00000000000000000002EE /* TrimEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrimEditor.swift; sourceTree = "<group>"; };
 		1A00000000000000000002ED /* NetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkMonitor.swift; sourceTree = "<group>"; };
 		1A00000000000000000002E8 /* BrowsePreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowsePreviewView.swift; sourceTree = "<group>"; };
@@ -325,6 +327,7 @@
 				1A000000000000000005F02 /* NoiseMapViewMac.swift */,
 				1A00000000000000000002E6 /* BrowseView.swift */,
 				1A00000000000000000002E7 /* BrowseSourceView.swift */,
+				1A00000000000000000002EF /* VideoLibraryView.swift */,
 				1A00000000000000000002EE /* TrimEditor.swift */,
 				1A00000000000000000002ED /* NetworkMonitor.swift */,
 				1A00000000000000000002E8 /* BrowsePreviewView.swift */,
@@ -642,6 +645,7 @@
 				1B000000000000000005F02 /* NoiseMapViewMac.swift in Sources */,
 				1B00000000000000000002E6 /* BrowseView.swift in Sources */,
 				1B00000000000000000002E7 /* BrowseSourceView.swift in Sources */,
+				1B00000000000000000002EF /* VideoLibraryView.swift in Sources */,
 				1B00000000000000000002EE /* TrimEditor.swift in Sources */,
 				1B00000000000000000002ED /* NetworkMonitor.swift in Sources */,
 				1B00000000000000000002E8 /* BrowsePreviewView.swift in Sources */,

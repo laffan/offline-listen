@@ -343,6 +343,10 @@ struct LibraryView: View {
     /// you were just listening to is one tab away (and already on the mini
     /// player).
     @State private var tab: LibraryTab = .folders
+    /// Which library is showing — audio (the tabs) or video (the thumbnail
+    /// grid). Kept between launches: someone who comes here for films comes
+    /// back for them.
+    @AppStorage("libraryMedia") private var media: LibraryMedia = .audio
     /// The **Random** tab's hand, by track id. Held here rather than in the
     /// tab's own view so that it survives the tab being switched away from —
     /// it is dealt again on each *visit*, not each time SwiftUI rebuilds it.
@@ -372,10 +376,11 @@ struct LibraryView: View {
     /// once per keystroke.
     @State private var query = ""
 
-    /// The **All** tab shows every active track, filed or not — the Folders
-    /// tab is one way in, this list is the full flat view.
+    /// The **All** tab shows every active audio track, filed or not — the
+    /// Folders tab is one way in, this list is the full flat view. Videos are
+    /// the video library's.
     private var filteredTracks: [Track] {
-        library.activeTracks.filter { filter.matches($0) }
+        library.activeTracks.filter { !$0.isVideo && filter.matches($0) }
     }
 
     private var isSearching: Bool {
@@ -388,14 +393,18 @@ struct LibraryView: View {
         library.tracks.isEmpty && library.folders.isEmpty
     }
 
-    /// Search results honour the media-type filter, so a search inside
-    /// "Podcasts" stays inside podcasts.
+    /// Search answers inside the library showing — the videos in the video
+    /// library, and in the audio one the media-type filter too, so a search
+    /// inside "Podcasts" stays inside podcasts.
     private var trackResults: [Track] {
-        library.searchTracks(matching: query).filter { filter.matches($0) }
+        library.searchTracks(matching: query).filter { track in
+            media == .video ? track.isVideo : (!track.isVideo && filter.matches(track))
+        }
     }
 
+    /// Folders belong to the audio library's tabs, so only it finds them.
     private var folderResults: [Folder] {
-        library.searchFolders(matching: query)
+        media == .video ? [] : library.searchFolders(matching: query)
     }
 
     /// Wraps `path` to reject a consecutive-duplicate push synchronously, before
@@ -429,6 +438,8 @@ struct LibraryView: View {
                     // Search answers across the whole library, so the tabs step
                     // aside rather than claim the results belong to one of them.
                     searchList
+                } else if media == .video {
+                    VideoLibraryView(onPlay: onPlay)
                 } else {
                     tabBar
                     // Greedy so an empty section's placeholder centers in the
@@ -470,6 +481,10 @@ struct LibraryView: View {
                 notePlace()
             }
             .onChange(of: path) { _ in notePlace() }
+            .onChange(of: media) { _ in
+                if editMode.isEditing { endEditing() }
+                notePlace()
+            }
             .onChange(of: query) { _ in notePlace() }
             .onChange(of: randomPicks) { _ in notePlace() }
             // A visit — the Library picked from the tab bar — deals the Random
@@ -891,7 +906,7 @@ struct LibraryView: View {
     /// The media-type filter, sitting where the "Tracks" header used to.
     private var filterHeader: some View {
         Picker("Filter", selection: $filter) {
-            ForEach(LibraryFilter.allCases) { f in
+            ForEach(LibraryFilter.audioCases) { f in
                 Text(f.displayName).tag(f)
             }
         }
@@ -900,8 +915,30 @@ struct LibraryView: View {
         .padding(.vertical, 4)
     }
 
-    /// List or covers: the Folders tab's own view switch, in the top-left
-    /// corner opposite the sort and New Folder buttons.
+    /// The audio/video toggle: the Library's music and film glyphs side by
+    /// side, the library showing in the accent colour. Two plain glyphs
+    /// rather than a segmented picker, for the reason `folderViewMenu` gives —
+    /// a toolbar wraps its item in chrome of its own, and a picker's would
+    /// stack inside it.
+    private var mediaToggle: some View {
+        HStack(spacing: 16) {
+            ForEach(LibraryMedia.allCases) { candidate in
+                Button {
+                    media = candidate
+                } label: {
+                    Image(systemName: candidate.icon)
+                        .fontWeight(media == candidate ? .semibold : .regular)
+                        .foregroundStyle(media == candidate ? Color.accentColor : Color.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(candidate.displayName) library")
+                .accessibilityAddTraits(media == candidate ? .isSelected : [])
+            }
+        }
+    }
+
+    /// List or covers: the Folders tab's own view switch, beside the sort and
+    /// New Folder buttons.
     ///
     /// A **menu**, like the sort control it faces — not the segmented picker it
     /// started as. A picker brings its own background, and a toolbar wraps its
@@ -1024,7 +1061,7 @@ struct LibraryView: View {
     /// continues through after it, and what the chapter sheet advances within.
     @ViewBuilder
     private func row(for track: Track, in queue: [Track],
-                     showsArtwork: Bool = false) -> some View {
+                     showsArtwork: Bool = true) -> some View {
         let base = TrackRow(
             track: track,
             isCurrent: playback.currentTrack?.id == track.id,
@@ -1162,11 +1199,12 @@ struct LibraryView: View {
             }
         }
 
-        // The Folders tab's view switch, in the corner opposite its own
-        // actions. Nothing to switch between on an empty library.
-        if tab == .folders && !isEmptyLibrary && !isSearching && !editMode.isEditing {
+        // Audio or video, in the top-left corner — which library this is,
+        // and so the first thing on the screen. Nothing to switch between on
+        // an empty library.
+        if !isEmptyLibrary && !editMode.isEditing {
             ToolbarItem(placement: .navigationBarLeading) {
-                folderViewMenu
+                mediaToggle
             }
         }
 
@@ -1178,8 +1216,12 @@ struct LibraryView: View {
             // New Folder also has to survive the empty-library welcome, which
             // stands in for the tabs — otherwise a fresh install has no way to
             // make its first folder at all.
-            if (tab == .folders || isEmptyLibrary) && !isSearching && !editMode.isEditing {
+            if (isEmptyLibrary || (media == .audio && tab == .folders)) && !isSearching && !editMode.isEditing {
                 if !isEmptyLibrary {
+                    // The view switch sat in the top-left corner until the
+                    // audio/video toggle took it; it joins the other folder
+                    // controls here.
+                    folderViewMenu
                     folderSortMenu
                 }
                 Button {
@@ -1193,7 +1235,7 @@ struct LibraryView: View {
             // the other two: leaving All (or clearing a search) drops Done for
             // the render before `onChange` closes edit mode, and a Done button
             // that blinks out is worse than one that lingers a frame.
-            if tab == .all || isSearching || editMode.isEditing {
+            if (media == .audio && tab == .all) || isSearching || editMode.isEditing {
                 Button(editMode.isEditing ? "Done" : "Select") {
                     withAnimation {
                         if editMode.isEditing {
@@ -1260,7 +1302,7 @@ struct LibraryView: View {
     /// Tells the router where the Library is, for a track that starts here to
     /// remember. Cheap — the router holds it in a plain property.
     private func notePlace() {
-        router.libraryPlace = LibraryPlace(tab: tab, path: path, query: query,
+        router.libraryPlace = LibraryPlace(media: media, tab: tab, path: path, query: query,
                                            randomPicks: tab == .random ? randomPicks : [])
     }
 
@@ -1276,6 +1318,7 @@ struct LibraryView: View {
             if tab != .random { keepRandomPicks = true }
             if !place.randomPicks.isEmpty { randomPicks = place.randomPicks }
         }
+        media = place.media
         tab = place.tab
         searchText = place.query
         query = place.query
@@ -1493,12 +1536,15 @@ struct TrackRow: View {
     /// Recent folder shows when the track was played there instead.
     var trailingDetail: String? = nil
     /// Draws the track's **album art** in the glyph's place when it has any.
-    /// Opt-in rather than everywhere: a list you're scanning for one title
-    /// reads fastest as text, while **Recent** is a list of things you've
-    /// *heard*, where the sleeve is the fastest way to recognise one. Drawn
-    /// from `TrackArtwork.thumbnail`, never the full decode — a cover is stored
-    /// at the size it arrived and this slot is 38 points wide.
-    var showsArtwork: Bool = false
+    /// On by default — every list: All, Random, a folder, the Archive, as well
+    /// as Recent and search results, which had it first. It used to be opt-in,
+    /// on the theory that a list scanned for a title reads fastest as text; in
+    /// practice a sleeve is what a track is recognised by wherever it's
+    /// listed, and a row without one keeps its glyph in the same 38-point
+    /// slot, so the titles still line up. Drawn from `TrackArtwork.thumbnail`,
+    /// never the full decode — a cover is stored at the size it arrived and
+    /// this slot is 38 points wide.
+    var showsArtwork: Bool = true
 
     private var progress: Double {
         track.duration > 0 ? min(track.lastPosition / track.duration, 1) : 0

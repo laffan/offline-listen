@@ -249,7 +249,15 @@ list showing, in large type, where a bar's title would be).
    the section switches and the map pushes the genre, the artist on their
    genre's map, or the Spotify discography, exactly as a History row would.
 
-2. **Library** — downloaded tracks; tap to play. Four **tabs** across the top
+2. **Library** — downloaded tracks; tap to play. It is **two libraries**, one
+   for **audio** and one for **video**, switched by the **music / film
+   toggle** in its top-left corner (the library showing in the accent colour;
+   the choice is kept between launches). Video used to be one filter of the
+   All tab, a line of text among a library's worth of songs, and a film
+   downloaded to watch later was hard to find again — see
+   [The video library](#the-video-library) below.
+
+   In the audio library, four **tabs** across the top
    divide it — **Folders**, **Random**, **Watch**, **All** — so each
    section is one tap from the others rather than a screen you push into and
    come back out of. It opens on **Folders**: the library's own shape — the
@@ -257,21 +265,28 @@ list showing, in large type, where a bar's title would be).
    were just listening to has a tab of the app's own now (**Recent**, beside
    this one) and is already on the mini player.
    **All** lists
-   **every** track — filed into a folder or not — so it's the full flat view
-   of the library (folders are one way in, not the only one). A **search**
+   **every** audio track — filed into a folder or not — so it's the full flat
+   view of the library (folders are one way in, not the only one). A **search**
    field sits above
    the tabs: type anything and the list becomes results — matching **folders**
    first, then every track whose **title or artist** matches (the tabs step
-   aside while it does, since a search answers across all of them). Matching
+   aside while it does, since a search answers across all of them). It
+   searches the library showing: videos in the video library, audio — with
+   the media-type filter applied — in the audio one. Matching
    ignores
-   case and accents, so "beyonce" finds "Beyoncé", and the media-type filter
-   still applies. Result rows wear their **album art** where the flat list
-   doesn't: a list you scroll for a title reads fastest as text, but a handful
-   of answers to "where is that record?" is picked out fastest by the sleeve —
-   the same reason Recent shows them. Results come back **as you type** — see
+   case and accents, so "beyonce" finds "Beyoncé". Results come back **as you
+   type** — see
    [Why the library is fast](#why-the-library-is-fast) for what that costs.
+
+   **Every track row wears its album art** where the track has any — All,
+   Random, a folder, the Archive, the Watch tab, search results and Recent
+   alike — in place of the media glyph, with the playing colour moved to a dot
+   on the sleeve's corner. It used to be only search results and Recent, on the
+   theory that a list scanned for a title reads fastest as text; in practice a
+   sleeve is what a song is recognised by wherever it's listed. A track with no
+   art keeps its glyph in the same 38-point slot, so titles still line up.
    A **filter** (All / Music /
-   Podcasts / Video) sits at the top of the **All** tab. Swipe **left**
+   Podcasts) sits at the top of the **All** tab. Swipe **left**
    for Delete/Share/Archive (and bulk versions via **Select**); swipe **right**
    on an audio track to classify it **Song** or **Podcast** (everywhere but
    inside an album or a mixtape, whose tracks are songs). Songs start from the
@@ -280,6 +295,28 @@ list showing, in large type, where a bar's title would be).
    screen. Archived
    tracks (and archived folders) live in the **Archive**, pinned to the bottom of
    the folder list.
+
+   <a id="the-video-library"></a>**The video library** is a grid of
+   pictures, **two across**, each a frame grabbed from the video at **where
+   you left off** (`AVAssetImageGenerator`, memoized per five seconds of
+   playhead, so the picture follows your progress without a fresh grab for
+   every second), with how far through it you are as a bar across its foot
+   and the time left — or, for one not yet started, its length — in the
+   corner. A video not started (or finished, whose playhead goes back to 0)
+   shows a frame a few seconds in, past the black a video usually opens on.
+   The **most recently watched** come first; one never played counts from its
+   arrival, so a new download lands at the top. Videos **watched to the end**
+   move to a **Watched** section beneath the rest (*Up Next*). "The end" is
+   the video playing out, or its saved playhead stopping in the last 2% — the
+   credits — and it's kept in `Documents/watched-videos.json`, since a
+   finished video's playhead is reset to 0 and can no longer say so itself.
+   Watching one again leaves it in Watched; touch and hold a video for **Mark
+   as Unwatched** / **Mark as Watched**, **Start Over**, Edit Metadata, Copy to
+   Folder, Get Subtitles, Convert to Audio, the source link, Archive and
+   Delete. Tapping one plays it and the rest of its section after it. Like the
+   Folders tab's cover view it's a scroll view rather than a list, so every
+   cell has its own tap and its own menu. The Player's swipe-down comes back
+   here, to the video library, when a video was started from it.
 
    **Autoplay.** When a track finishes, playback advances to the next track in
    the same list and keeps going to the end — it doesn't loop. (What makes
@@ -423,8 +460,9 @@ list showing, in large type, where a bar's title would be).
    folder and drag** it into place; the order persists to `folders.json`.
    Folders persist to `Documents/folders.json`.
 
-   **Two ways to look at them.** A **view button** in the Folders tab's
-   top-left corner — a menu, like the sort control it faces — switches
+   **Two ways to look at them.** A **view button** among the Folders tab's
+   controls on the right — a menu, like the sort control beside it (it sat in
+   the top-left corner until the audio/video toggle took that) — switches
    between the **list** (everything in one column, as above) and **covers**:
    three groups stacked down the screen, **albums** as a grid of their
    sleeves, then the **mixtapes** in their banner rows, then the plain
@@ -1980,8 +2018,8 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | File | Role |
 |------|------|
 | `OfflineListenApp.swift` | App entry; wires up the shared stores. |
-| `Models.swift` | `Track`, `Folder`, `DownloadMode`, `LibraryFilter`, `FolderSort`, `FolderViewMode`, paths, helpers. |
-| `LibraryStore.swift` | Persists the library to `Documents/library.json` and folders to `Documents/folders.json` (and each track's last-played date to `Documents/last-played.json`, which the Recent tab's Ignored list sorts by); owns the local moves across the sync boundary (queueing replica ops), the importer's reconcile primitives, and the mixtape/album conversions — including the album cover write that lands on the folder *and* every song in it, and the reset that puts the downloaded one (or a colour) back. Also the folder's agreed artist (`commonArtist`, the credit-splitting rule behind the Discography button), the album **Edit** that renames a record and sets one artist across it, and `applyTrim`, which hands a track its trimmed file. |
+| `Models.swift` | `Track`, `Folder`, `DownloadMode`, `LibraryMedia`, `LibraryFilter`, `FolderSort`, `FolderViewMode`, paths, helpers. |
+| `LibraryStore.swift` | Persists the library to `Documents/library.json` and folders to `Documents/folders.json` (and each track's last-played date to `Documents/last-played.json`, which the Recent tab's Ignored list sorts by, and the videos watched to the end to `Documents/watched-videos.json`); owns the local moves across the sync boundary (queueing replica ops), the importer's reconcile primitives, and the mixtape/album conversions — including the album cover write that lands on the folder *and* every song in it, and the reset that puts the downloaded one (or a colour) back. Also the folder's agreed artist (`commonArtist`, the credit-splitting rule behind the Discography button), the album **Edit** that renames a record and sets one artist across it, and `applyTrim`, which hands a track its trimmed file. |
 | `LocalSync.swift` | `LocalSyncStore` — the sync folder's security-scoped bookmark, the stamped manifest + journaled exporter, the coordinated importer (placeholder-aware copies), kqueue monitoring, and the off-main tree scan. |
 | `DownloadManager.swift` | Download queue (two concurrent slots) + `DownloadJob` + persisted history; `enqueueAlbum`, which files a whole release into one folder in tracklist order with the catalogue's own titles/artists and marks its jobs so the Download section groups them; `AlbumDownloadProgress`, the per-record tally the group's header reads (the jobs publish only to their own rows); `ArtworkFetcher`, the best-effort album-art fetch a finished download (or an album folder) triggers; and `VideoQualityChooser`, which puts the source's real rendition list to the user mid-extraction (once per video, hand-queued downloads only). |
 | `PythonGate.swift` | App-wide async mutex serializing every embedded-Python call, so the two-slot pipeline never runs concurrent interpreter work. |
@@ -2030,10 +2068,11 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `EveryNoiseData/` | Bundled (folder reference): `genres.json` index + per-genre artist shards from the one-time `tools/everynoise/scrape.py`, plus the derived `artists.idx.z` from `build_artist_index.py`. |
 | `BrowseSourceView.swift` | One source's items with per-row Download/Preview/Discard, plus a **Select** mode for bulk download; also `BrowseTrackStatusButton`, the green play button every browse list shows once a download is in the library. |
 | `BrowsePreviewView.swift` | The preview modal: pipeline download, mini player with prev/play-pause/next over the queue it was opened with (auto-advancing at the end of each track — off its own frozen-playhead watchdog, not just the end notification — phone locked or not), the lock-screen metadata it borrows while it plays, Save/Discard. |
-| `*View.swift` | The SwiftUI screens. The five tabs, in order: Search (`BrowseView.swift`'s `SearchView`, whose Download section is `DownloadView`), Library, Recent (`RecentView`, in `FolderView.swift`), Player and Settings — which embeds the Log; none of them sets a navigation title. `RootView.swift` holds the `TabView`, the Search tab's download badge, and the Player's swipe-down back to where its track was started. `DownloadView.swift` also holds the queue's album grouping — the collapsible record with its cover, count and whole-album bar. `LibraryView.swift` also holds `LibraryTab`, the Folders/Random/Watch/All strip (and the Random tab's hand, dealt on each visit and kept for a return), the Folders tab's two shapes (the list, and the cover view's album grid), the shared track-menu entries every list drops into its `contextMenu` (Sync to Local, Send to Watch, View Discography, **Copy to Folder**, **Find Alternative**, AI Organize, Get Album Art, Get Subtitles, Convert Format), and Find Alternative's own search screen. `PlayerView.swift` also holds the tap-to-seek scrubber, the caption overlay (and its own 5 Hz playhead clock), the actions a tap on the sleeve reveals and the `MixtapePickerView` behind Copy to Mixtape, the `MiniPlayerBar` the other tabs inset above the tab bar, and the album-art loaders (`TrackArtwork`, `FolderArtwork`, `FolderCover`) — each a bounded `ImageCache` with a full decode for the big slots and an ImageIO thumbnail for the row-sized ones. |
+| `*View.swift` | The SwiftUI screens. The five tabs, in order: Search (`BrowseView.swift`'s `SearchView`, whose Download section is `DownloadView`), Library, Recent (`RecentView`, in `FolderView.swift`), Player and Settings — which embeds the Log; none of them sets a navigation title. `RootView.swift` holds the `TabView`, the Search tab's download badge, and the Player's swipe-down back to where its track was started. `DownloadView.swift` also holds the queue's album grouping — the collapsible record with its cover, count and whole-album bar. `LibraryView.swift` also holds the audio/video toggle in its top-left corner, `LibraryTab`, the Folders/Random/Watch/All strip (and the Random tab's hand, dealt on each visit and kept for a return), the Folders tab's two shapes (the list, and the cover view's album grid), the shared track-menu entries every list drops into its `contextMenu` (Sync to Local, Send to Watch, View Discography, **Copy to Folder**, **Find Alternative**, AI Organize, Get Album Art, Get Subtitles, Convert Format), and Find Alternative's own search screen. `PlayerView.swift` also holds the tap-to-seek scrubber, the caption overlay (and its own 5 Hz playhead clock), the actions a tap on the sleeve reveals and the `MixtapePickerView` behind Copy to Mixtape, the `MiniPlayerBar` the other tabs inset above the tab bar, and the album-art loaders (`TrackArtwork`, `FolderArtwork`, `FolderCover`) — each a bounded `ImageCache` with a full decode for the big slots and an ImageIO thumbnail for the row-sized ones. |
 | `FolderView.swift` | Folder detail (tap-to-play, reorder, subfolders, mixtape header/Edit Cover, the album sleeve that opens its art options and the Discography row beneath its tracks), the discography push a library album makes, plus the Library's **Random** tab (`RandomTracksView`) and the **Recent** tab — `RecentTab`, `RecentView` (the Pinned/Recent/Ignored strip and the Ignored snapshot it takes per visit) and `RecentTracksView`, the three lists. |
 | `MixtapeViews.swift` | Mixtape banner rendering (non-destructive crop), the shared folder-row label, and the Edit Cover sheet (PhotosPicker + drag/pinch + font picker). |
 | `AlbumViews.swift` | The album side of a folder: the stand-in colour palette, the square sleeve (cover or colour) the folder screen and the cover grid draw, the grid's own cell, the Custom Album Art sheet — PhotosPicker, square framing, and the crop that turns the framing into the JPEG copied onto every song — **Retrieve Album Art**'s finder: the artist search (memoized for the session), the chosen artist's covers as a grid, and the pick that hands one to `ArtworkFetcher` — and the album's **Edit** sheet (`AlbumEditSheet`). |
+| `VideoLibraryView.swift` | The Library's **video** side: the two-across grid of frames at each video's playhead (`VideoFrames`, the memoized `AVAssetImageGenerator` grab), most recently watched first, with the Watched section beneath and each cell's menu. |
 | `WatchFolderView.swift` | The phone's Library **Watch** tab (manage what's been sent to the watch). |
 | `WatchManifest.swift` | Wire format shared by the iPhone and watch targets (the sync manifest, the remote-control `RemoteNowPlaying`/`RemoteCommand` types, + WC keys). |
 | `WatchSync.swift` | Phone-side WatchConnectivity bridge: pushes the manifest + audio files, handles the watch's "Clear all". |
