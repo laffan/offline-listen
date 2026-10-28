@@ -915,26 +915,40 @@ struct LibraryView: View {
         .padding(.vertical, 4)
     }
 
-    /// The audio/video toggle: the Library's music and film glyphs side by
-    /// side, the library showing in the accent colour. Two plain glyphs
-    /// rather than a segmented picker, for the reason `folderViewMenu` gives —
-    /// a toolbar wraps its item in chrome of its own, and a picker's would
-    /// stack inside it.
+    /// The audio/video toggle: the Library's music and film glyphs as two
+    /// segments, the library showing on a tinted pill in the accent colour.
+    ///
+    /// Each glyph sits in a fixed segment with room around it, and the pair is
+    /// inset from its own edges. Packed tight, as it first was, the music note
+    /// ran into the edge of the capsule the toolbar draws around its items.
+    /// The pill is tinted rather than solid and the control carries no
+    /// background of its own, for the reason `folderViewMenu` gives: the
+    /// toolbar already wraps the item in chrome, and a second box would stack
+    /// inside it.
     private var mediaToggle: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 2) {
             ForEach(LibraryMedia.allCases) { candidate in
+                let selected = media == candidate
                 Button {
-                    media = candidate
+                    withAnimation(.easeInOut(duration: 0.15)) { media = candidate }
                 } label: {
                     Image(systemName: candidate.icon)
-                        .fontWeight(media == candidate ? .semibold : .regular)
-                        .foregroundStyle(media == candidate ? Color.accentColor : Color.secondary)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                        .frame(width: 38, height: 30)
+                        .background {
+                            if selected {
+                                Capsule().fill(Color.accentColor.opacity(0.16))
+                            }
+                        }
+                        .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("\(candidate.displayName) library")
-                .accessibilityAddTraits(media == candidate ? .isSelected : [])
+                .accessibilityAddTraits(selected ? .isSelected : [])
             }
         }
+        .padding(.horizontal, 4)
     }
 
     /// List or covers: the Folders tab's own view switch, beside the sort and

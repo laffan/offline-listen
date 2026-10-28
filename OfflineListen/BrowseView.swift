@@ -66,6 +66,10 @@ struct SearchView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Room under the tab's line before a section starts — the same
+                // as the sections leave at their sides, so the content sits in
+                // the outline rather than butting up against its top.
+                .padding(.top, SearchTabMetrics.contentInset)
                 // Clear of the screen's edges, so the outline the tab opens
                 // into has sides to draw.
                 .padding(.horizontal, SearchTabMetrics.gutter)
@@ -153,6 +157,10 @@ private enum SearchTabMetrics {
     static let gutter: CGFloat = 6
     /// The rounding on the tab's top corners and the panel's.
     static let cornerRadius: CGFloat = 10
+    /// The gap between the panel's top edge and the section inside it —
+    /// matched to the standard 16-point side padding the sections use, so
+    /// the content is framed evenly.
+    static let contentInset: CGFloat = 16
 }
 
 /// Where the selected tab is, for the outline that joins it to its panel.
@@ -375,7 +383,6 @@ struct BrowseSourcesView: View {
                 addMenu
             }
             .padding(.horizontal)
-            .padding(.top, 8)
             .padding(.bottom, 4)
 
             if browse.sources.isEmpty {

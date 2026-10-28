@@ -28,7 +28,9 @@ list showing, in large type, where a bar's title would be).
    hairline running up its sides, over its top and on around the section
    beneath it — open where the tab meets its content, and open at the foot,
    where it runs on under the mini player and the tab bar — so which section
-   you're in is a shape, not only a colour. Two of them carry news from
+   you're in is a shape, not only a colour. Each section starts 16 points
+   below the tab's line, the same as the padding at its sides, so its content
+   is framed evenly inside the outline. Two of them carry news from
    behind them: **Download** wears the number of downloads still working or
    waiting, and **Sources** a **dot** when a refresh has turned up items you
    haven't acted on. The same download count rides on the **Search tab's own
@@ -251,8 +253,8 @@ list showing, in large type, where a bar's title would be).
 
 2. **Library** — downloaded tracks; tap to play. It is **two libraries**, one
    for **audio** and one for **video**, switched by the **music / film
-   toggle** in its top-left corner (the library showing in the accent colour;
-   the choice is kept between launches). Video used to be one filter of the
+   toggle** in its top-left corner — two fixed-width segments, the library
+   showing on a tinted pill in the accent colour, kept between launches. Video used to be one filter of the
    All tab, a line of text among a library's worth of songs, and a film
    downloaded to watch later was hard to find again — see
    [The video library](#the-video-library) below.

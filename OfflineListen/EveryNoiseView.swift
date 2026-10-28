@@ -630,7 +630,8 @@ struct ENModeBar: View {
             }
         }
         .padding(.horizontal)
-        .padding(.bottom, 8)
+        // A clear gap between the controls and the map or list they drive.
+        .padding(.bottom, 14)
     }
 
     /// What Find is pointed at — genre, artist, or Spotify — as a control of

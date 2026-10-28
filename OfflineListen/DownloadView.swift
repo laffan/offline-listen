@@ -78,7 +78,6 @@ struct DownloadView: View {
                 .miniPlayerClearance()
             }
         }
-        .padding(.top, 4)
         .onChange(of: isActive) { active in
             if !active { urlFieldFocused = false }
         }
