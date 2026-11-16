@@ -1,5 +1,8 @@
 import SwiftUI
 import UniformTypeIdentifiers
+#if os(iOS) && canImport(ActivityKit)
+import ActivityKit
+#endif
 
 private extension View {
     /// Settings' `Form`, dressed for the platform it's on.
@@ -132,6 +135,10 @@ struct SettingsView: View {
     @AppStorage(SubtitleSettings.colorKey) private var subtitleColorHex = SubtitleSettings.defaultColorHex
     @AppStorage(SubtitleSettings.backdropKey) private var subtitleBackdrop = SubtitleBackdrop.dim.rawValue
 
+    /// The lock screen player's switch — the same key `LockScreenPlayer`
+    /// reads on every snapshot, so flipping it takes effect at once.
+    @AppStorage(LockScreenPlayerSettings.enabledKey) private var lockScreenPlayerEnabled = true
+
     // The Blog Agent's limits — same keys `BlogAgentSettings` reads at
     // refresh time, so a change here applies to the next refresh.
     @AppStorage(BlogAgentSettings.maxPostsKey)
@@ -154,6 +161,11 @@ struct SettingsView: View {
                 aiSection
                 spotifySection
                 subtitlesSection
+                #if os(iOS) && canImport(ActivityKit)
+                if #available(iOS 17.0, *) {
+                    lockScreenSection
+                }
+                #endif
                 everyNoiseDataSection
                 localSyncSection
                 blogAgentSection
@@ -575,6 +587,36 @@ struct SettingsView: View {
         .opacity(subtitlesEnabled ? 1 : 0.35)
         .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
     }
+
+    // MARK: - Lock screen
+
+    #if os(iOS) && canImport(ActivityKit)
+    /// The lock screen player (a Live Activity) on or off. It's on by default
+    /// — it's the point of the feature — but it sits alongside iOS's own Now
+    /// Playing controls rather than replacing them, which not everyone will
+    /// want twice over; and iOS can switch Live Activities off for the app
+    /// altogether, which is worth saying here rather than leaving the switch to
+    /// look broken.
+    @available(iOS 17.0, *)
+    private var lockScreenSection: some View {
+        Section {
+            Toggle("Lock Screen Player", isOn: $lockScreenPlayerEnabled)
+                .onChange(of: lockScreenPlayerEnabled) { _ in
+                    LockScreenPlayer.shared.settingChanged()
+                }
+            if lockScreenPlayerEnabled, !ActivityAuthorizationInfo().areActivitiesEnabled {
+                Label("Live Activities are off for Offline Listen in iOS Settings, so the lock screen player can't appear.",
+                      systemImage: "exclamationmark.triangle")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Lock Screen")
+        } footer: {
+            Text("Puts the Player's controls on the lock screen while something plays: previous, back 15, play/pause, forward 30, next, and the tracks either side. It appears below iOS's own Now Playing controls, which stay as they are. Swipe it away and it stays away until you next start a track.")
+        }
+    }
+    #endif
 
     // MARK: - Blog Agent
 

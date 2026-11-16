@@ -35,6 +35,29 @@ struct RemoteAudioInfo {
     var elapsed: Double
     var isPlaying: Bool
     var artwork: MPMediaItemArtwork?
+    /// The library's own cover file for the thing playing (`AppPaths.artwork`),
+    /// when it has one. The lock screen player copies covers into the App
+    /// Group by this name rather than re-encoding `artwork`; a borrower has no
+    /// file and leaves it nil.
+    var artworkFileName: String? = nil
+    /// The queue either side — what the Player names under its transport and
+    /// the lock screen player names under its own. `afterNext` is one further
+    /// on: what becomes "next" when the track changes on a locked phone and the
+    /// lock screen has to work that out for itself.
+    var previous: QueueNeighbour? = nil
+    var next: QueueNeighbour? = nil
+    var afterNext: QueueNeighbour? = nil
+}
+
+/// A queue entry beside the one playing, as the lock screen names it.
+struct QueueNeighbour: Equatable {
+    var title: String
+    var artist: String
+    /// Seconds; 0 when unknown (a Browse preview's next item, before it has
+    /// been fetched).
+    var duration: Double
+    /// The library's cover file, when it has one.
+    var artworkFileName: String? = nil
 }
 
 /// A player *other than* the library's own that is making sound and should own
@@ -59,7 +82,15 @@ protocol RemoteAudioSource: AnyObject {
     func remoteTogglePlayPause()
     func remoteNext()
     func remotePrevious()
+    /// Straight to the previous entry, whatever the playhead — what a control
+    /// that *names* the previous track asks for.
+    func remotePlayPreviousTrack()
     func remoteSeek(to time: Double)
+}
+
+@MainActor
+extension RemoteAudioSource {
+    func remotePlayPreviousTrack() { remotePrevious() }
 }
 
 @MainActor
@@ -87,6 +118,13 @@ final class PlaybackManager: NSObject, ObservableObject {
     /// album's discography, the preview modal), and only the tab they're
     /// showing in knows where "there" is.
     var onStart: (() -> Void)?
+    /// Every now-playing snapshot, as it is published (at the ticker's 2 Hz
+    /// while something is loaded), or nil when nothing is. The lock screen
+    /// player's feed — it decides for itself which ones are worth an update.
+    var onLockScreenChange: ((RemoteAudioInfo?) -> Void)?
+    /// Called as `play` starts a track from the app — the lock screen player's
+    /// cue that a Live Activity someone swiped away may come back.
+    var onLockScreenStart: (() -> Void)?
 
     private var queue: [Track] = []
     private var index = 0
@@ -133,6 +171,8 @@ final class PlaybackManager: NSObject, ObservableObject {
     /// loaded once per track change — `updateNowPlaying` runs at 2 Hz and
     /// must never touch the disk.
     private var lockScreenArtwork: MPMediaItemArtwork?
+    /// The cover file behind `lockScreenArtwork`, read at the same moment.
+    private var lockScreenArtworkFileName: String?
     /// The Browse preview modal while it has borrowed the lock screen (see
     /// `beginRemoteAudio`). Weak on purpose: a modal torn down without handing
     /// back mustn't keep the lock screen hostage.
@@ -191,6 +231,7 @@ final class PlaybackManager: NSObject, ObservableObject {
         // preview modal's Save hand-off is exactly this call.
         remoteAudio = nil
         onStart?()
+        onLockScreenStart?()
         let pool = tracks.isEmpty ? [track] : tracks
         queue = restrictToCategory ? pool.filter { $0.playbackCategory == track.playbackCategory } : pool
         if queue.isEmpty { queue = [track] }
@@ -215,6 +256,12 @@ final class PlaybackManager: NSObject, ObservableObject {
     /// when you're more than three seconds in.
     var previousTrack: Track? {
         queue.indices.contains(index - 1) ? queue[index - 1] : nil
+    }
+
+    /// Whether anything is loaded that a play button could act on — the
+    /// library's own track, or a borrower's.
+    var hasSomethingToPlay: Bool {
+        currentTrack != nil || remoteAudio != nil
     }
 
     func next() {
@@ -290,7 +337,13 @@ final class PlaybackManager: NSObject, ObservableObject {
 
         guard let idString = UserDefaults.standard.string(forKey: Keys.trackID),
               let id = UUID(uuidString: idString),
-              let track = library.tracks.first(where: { $0.id == id }) else { return }
+              let track = library.tracks.first(where: { $0.id == id }) else {
+            // Nothing to restore — say so, so a lock screen player left over
+            // from the last run (the app was killed with it up) is taken down
+            // rather than left showing a track that isn't loaded.
+            updateNowPlaying()
+            return
+        }
 
         let pool = track.isArchived ? library.archivedTracks : library.activeTracks
         let sameCategory = pool.filter { $0.playbackCategory == track.playbackCategory }
@@ -381,6 +434,7 @@ final class PlaybackManager: NSObject, ObservableObject {
         lockScreenArtwork = TrackArtwork.image(for: liveTrack).map { image in
             MPMediaItemArtwork(boundsSize: image.size) { _ in image }
         }
+        lockScreenArtworkFileName = lockScreenArtwork == nil ? nil : liveTrack.artworkFileName
     }
 
     private func resume() {
@@ -935,6 +989,10 @@ final class PlaybackManager: NSObject, ObservableObject {
         if let remoteAudio { remoteAudio.remotePrevious() } else { previous() }
     }
 
+    func remotePlayPreviousTrack() {
+        if let remoteAudio { remoteAudio.remotePlayPreviousTrack() } else { playPreviousTrack() }
+    }
+
     func remoteSeek(to time: Double) {
         if let remoteAudio { remoteAudio.remoteSeek(to: time) } else { seek(to: time) }
     }
@@ -1037,7 +1095,9 @@ final class PlaybackManager: NSObject, ObservableObject {
             center.nowPlayingInfo = nil
             center.playbackState = .stopped
             lockScreenArtwork = nil
+            lockScreenArtworkFileName = nil
             onNowPlayingChange?(nil)
+            onLockScreenChange?(nil)
             return
         }
         publish(RemoteAudioInfo(id: track.id,
@@ -1046,9 +1106,25 @@ final class PlaybackManager: NSObject, ObservableObject {
                                 duration: duration,
                                 elapsed: currentTime,
                                 isPlaying: isPlaying,
-                                artwork: lockScreenArtwork),
+                                artwork: lockScreenArtwork,
+                                artworkFileName: lockScreenArtworkFileName,
+                                previous: neighbour(at: index - 1),
+                                next: neighbour(at: index + 1),
+                                afterNext: neighbour(at: index + 2)),
                 to: center,
                 isPodcast: track.playbackCategory == .podcast)
+    }
+
+    /// The queue entry at `position`, as the lock screen names it. Read off the
+    /// queue's own snapshot — the same one the Player's neighbour labels read —
+    /// rather than looked up in the library on every tick.
+    private func neighbour(at position: Int) -> QueueNeighbour? {
+        guard queue.indices.contains(position) else { return nil }
+        let track = queue[position]
+        return QueueNeighbour(title: track.title,
+                              artist: track.artist,
+                              duration: track.duration,
+                              artworkFileName: track.artworkFileName)
     }
 
     /// Writes one snapshot to the lock screen / Control Center and mirrors it to
@@ -1083,5 +1159,8 @@ final class PlaybackManager: NSObject, ObservableObject {
                                             elapsed: info.elapsed,
                                             isPlaying: info.isPlaying,
                                             isPodcast: isPodcast))
+        // So does the lock screen player, which throttles itself: it only
+        // updates its Live Activity when something it shows has changed.
+        onLockScreenChange?(info)
     }
 }

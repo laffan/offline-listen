@@ -74,6 +74,16 @@ struct OfflineListenApp: App {
         // Best-effort immediate push (no-ops until the session activates).
         library.syncWatch()
 
+        // The lock screen player: the Player's controls as a Live Activity,
+        // fed from the same now-playing snapshot. Installed here, before any
+        // view exists, because one of its buttons can launch the app in the
+        // background to run — and that launch never draws a screen.
+        #if os(iOS) && canImport(ActivityKit)
+        if #available(iOS 17.0, *) {
+            LockScreenPlayer.shared.install(on: playback)
+        }
+        #endif
+
         // The queue's background handler has to be registered before launch
         // finishes — this is the last moment that counts as "before". Through
         // the local instance, not the `@StateObject`: reading a state object's
@@ -152,6 +162,14 @@ struct OfflineListenApp: App {
                         // The write is skipped when the copy is already
                         // current, so this costs nothing in the ordinary case.
                         everyNoiseUpdates.writeToDataFolder()
+                        // The only moment a lock screen player can be put up,
+                        // and the moment to catch it up on anything the
+                        // background wasn't allowed to tell it.
+                        #if os(iOS) && canImport(ActivityKit)
+                        if #available(iOS 17.0, *) {
+                            LockScreenPlayer.shared.sceneDidBecomeActive()
+                        }
+                        #endif
                     } else {
                         playback.saveState()
                         // Snapshot the queue — finished rows with their

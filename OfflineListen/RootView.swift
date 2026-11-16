@@ -81,6 +81,7 @@ struct RootView: View {
             notePlayStarts()
             routeBrowse()
             routeTrack()
+            routePlayer()
         }
         .onChange(of: selection) { tab in
             if !returning { router.noteVisit(to: tab) }
@@ -95,6 +96,7 @@ struct RootView: View {
             selection = .search
         }
         .onChange(of: router.pendingTrackID) { _ in routeTrack() }
+        .onChange(of: router.pendingPlayer) { _ in routePlayer() }
     }
 
     /// Has every track that starts note the tab it was started on. `play` is
@@ -151,6 +153,15 @@ struct RootView: View {
         }
         playback.play(track, in: library.recentTracks)
         router.notePlayStarted(in: .recent(.recent))
+        selection = .player
+    }
+
+    /// A tap on the lock screen player: the Player tab, with whatever is
+    /// loaded. Nothing is started — the tap is "show me", and the controls
+    /// that change anything were the buttons beside it.
+    private func routePlayer() {
+        guard router.pendingPlayer else { return }
+        router.pendingPlayer = false
         selection = .player
     }
 }

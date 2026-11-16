@@ -153,6 +153,8 @@ enum WidgetDeepLink: Hashable {
     case browse(BrowseTarget)
     /// Start playing this track.
     case track(id: UUID)
+    /// The Player tab, as it is — what tapping the lock screen player opens.
+    case player
 
     /// The three shapes a browse row can re-open, mirroring what the browser's
     /// own History rows do: a genre's artist map, an artist selected on that
@@ -185,6 +187,8 @@ enum WidgetDeepLink: Hashable {
         case .track(let id):
             components.host = "track"
             components.queryItems = [URLQueryItem(name: "id", value: id.uuidString)]
+        case .player:
+            components.host = "player"
         }
         // The components are ours and always well-formed; the fallback keeps
         // the widget's `Link` non-optional rather than adding a branch to
@@ -219,6 +223,8 @@ enum WidgetDeepLink: Hashable {
         case "track":
             guard let raw = value("id"), let id = UUID(uuidString: raw) else { return nil }
             self = .track(id: id)
+        case "player":
+            self = .player
         default:
             return nil
         }

@@ -1108,7 +1108,19 @@ final class BrowsePreviewModel: ObservableObject, RemoteAudioSource {
                                duration: duration,
                                elapsed: currentTime,
                                isPlaying: isPlaying,
-                               artwork: artwork)
+                               artwork: artwork,
+                               previous: neighbour(at: index - 1),
+                               next: neighbour(at: index + 1),
+                               afterNext: neighbour(at: index + 2))
+    }
+
+    /// The queue entry at `position`, named the way the lock screen player
+    /// names the library's. No length: an item's isn't known until it has
+    /// been fetched.
+    private func neighbour(at position: Int) -> QueueNeighbour? {
+        guard items.indices.contains(position) else { return nil }
+        let named = splitTitle(of: items[position])
+        return QueueNeighbour(title: named.title, artist: named.artist, duration: 0)
     }
 
     func remotePlay() { if !isPlaying { togglePlayPause() } }
@@ -1127,6 +1139,11 @@ final class BrowsePreviewModel: ObservableObject, RemoteAudioSource {
         } else {
             previous()
         }
+    }
+
+    /// The lock screen player's **Previous Track** name: straight there.
+    func remotePlayPreviousTrack() {
+        if canGoPrevious { previous() } else { scrub(to: 0) }
     }
 
     func remoteSeek(to time: Double) {

@@ -116,6 +116,9 @@ final class AppRouter: ObservableObject {
     @Published var pendingBrowse: WidgetDeepLink.BrowseTarget?
     /// A track to start playing, cleared by `RootView` once it has.
     @Published var pendingTrackID: UUID?
+    /// Set by a tap on the lock screen player: the Player tab, cleared by
+    /// `RootView` once it's showing.
+    @Published var pendingPlayer = false
 
     // MARK: Where the playing track came from
 
@@ -183,6 +186,8 @@ final class AppRouter: ObservableObject {
             pendingBrowse = target
         case .track(let id):
             pendingTrackID = id
+        case .player:
+            pendingPlayer = true
         }
         appLog("Widget opened \(url.absoluteString)", category: "Widget")
         return true
