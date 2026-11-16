@@ -16,7 +16,9 @@ import AppIntents
 /// track buttons *or* the skip intervals, never both (see
 /// `PlaybackManager.updateTransportButtons`). So the activity carries only the
 /// rest of the Player's transport: **back 15** and **forward 30**, the names
-/// of the **previous and next tracks**, and a way into the **Recent** tab.
+/// of the **previous and next tracks**, and a way into the **Recent** tab —
+/// plus, while playback is paused, a **Close** button that takes the panel
+/// down (see `ContentState.showsClose`).
 ///
 /// The app half lives in `LockScreenPlayer.swift`; the views in the widget
 /// extension's `LockScreenPlayerActivity.swift`.
@@ -48,13 +50,17 @@ enum LockScreenCommand: String, Codable {
     case skipForward
     /// The **Next Track** name.
     case next
+    /// The **Close** button: take the lock screen player down. Not a
+    /// transport command — nothing about playback changes.
+    case close
 }
 
 /// Where a lock-screen tap lands in the app. The intents below are compiled
 /// into the widget extension too (a `Button(intent:)` has to be able to name
-/// them), but the system runs an `AudioPlaybackIntent` in the **app's**
-/// process — so the extension's copy never performs anything, and this
-/// handler, which only the app installs, is nil there.
+/// them), but the system runs an `AudioPlaybackIntent` or a
+/// `LiveActivityIntent` in the **app's** process — so the extension's copy
+/// never performs anything, and this handler, which only the app installs, is
+/// nil there.
 @MainActor
 enum LockScreenTransport {
     static var handler: ((LockScreenCommand) async -> Void)?
@@ -91,6 +97,19 @@ struct LockScreenPlayerAttributes: ActivityAttributes {
         /// When the playing track is due to end and `next` to start — also the
         /// activity's stale date. Nil while paused, or with nothing after this.
         var rollOverAt: Date?
+
+        /// Whether the panel offers **Close**.
+        ///
+        /// What it would like to know is whether the app is still running,
+        /// and it can't: a Live Activity is drawn by the system from the last
+        /// state the app sent, with no way to ask after the app itself. But
+        /// the case that leaves it behind is narrow. An app that is playing is
+        /// awake, is told when it's being closed, and takes the panel down on
+        /// its way out. One that is paused is suspended by iOS within seconds,
+        /// and a suspended app is killed — swiped away, or reclaimed for
+        /// memory — without being told anything. So "paused" is exactly when
+        /// the app may have gone without a word, and that's when Close shows.
+        var showsClose: Bool { !isPlaying }
 
         /// What to draw, given whether the system has marked the activity
         /// stale.
@@ -185,6 +204,30 @@ struct LockScreenNextIntent: AudioPlaybackIntent {
 
     func perform() async throws -> some IntentResult {
         await LockScreenTransport.run(.next)
+        return .result()
+    }
+}
+
+/// **Close.** A `LiveActivityIntent` rather than an audio one: it changes the
+/// panel, not the playback. The system runs it in the app's process,
+/// launching the app in the background if it had been killed — which is the
+/// case Close exists for, and which works either way: the app hears it and
+/// notes that the panel was closed on purpose, and the activities are ended
+/// here as well, so an app that came up without its handler (or found nothing
+/// of its own to end) still leaves nothing behind.
+@available(iOS 17.0, *)
+struct LockScreenCloseIntent: LiveActivityIntent {
+    static var title: LocalizedStringResource = "Close Lock Screen Player"
+    static var description = IntentDescription("Takes the lock screen player down.")
+    static var isDiscoverable: Bool { false }
+
+    init() {}
+
+    func perform() async throws -> some IntentResult {
+        await LockScreenTransport.run(.close)
+        for activity in Activity<LockScreenPlayerAttributes>.activities {
+            await activity.end(nil, dismissalPolicy: .immediate)
+        }
         return .result()
     }
 }

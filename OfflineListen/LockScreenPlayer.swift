@@ -72,6 +72,9 @@ final class LockScreenPlayer {
     /// until a track is started from the app: removing it is an answer.
     private var dismissedByPerson = false
     private var terminationObserver: NSObjectProtocol?
+    /// The second send of a pause made in the background (see
+    /// `resendAfterAudioStops`).
+    private var pauseResend: Task<Void, Never>?
 
     private init() {}
 
@@ -146,9 +149,35 @@ final class LockScreenPlayer {
         }
 
         guard force || signature != sentSignature || playheadJumped(info) else { return }
+        let wasPlaying = sentSignature?.isPlaying ?? false
         let state = makeState(from: info)
         note(info, signature: signature)
         send(state, to: activity)
+        if wasPlaying, !info.isPlaying,
+           UIApplication.shared.applicationState != .active {
+            resendAfterAudioStops()
+        }
+    }
+
+    /// A pause made with the app in the background — from iOS's own controls,
+    /// the headphones, a call — is the update that puts **Close** on the
+    /// panel, and the one most likely to be dropped: it's sent the instant the
+    /// audio stops, while iOS may still count the app as "only playing
+    /// background media", the state it refuses updates from. So it's sent
+    /// again a few seconds on, when that should no longer hold, with the app
+    /// kept awake for it — a paused app in the background is otherwise
+    /// suspended before the second send could go.
+    private func resendAfterAudioStops() {
+        pauseResend?.cancel()
+        let awake = BackgroundActivity("Lock screen player")
+        pauseResend = Task { [weak self] in
+            defer { awake.end() }
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            guard !Task.isCancelled, let self,
+                  let latest = self.latest, !latest.isPlaying else { return }
+            self.refresh(force: true)
+            await self.updateChain?.value
+        }
     }
 
     /// Whether the playhead is somewhere other than where the last update's
@@ -295,8 +324,16 @@ final class LockScreenPlayer {
     /// an update made while an intent is running is the one the background
     /// rules are likeliest to let through.
     private func perform(_ command: LockScreenCommand) async {
-        guard let playback else { return }
         appLog("Lock screen player: \(command.rawValue).", level: .debug, category: "Player")
+        if command == .close {
+            // Closed on purpose: the same answer as a swipe-away, so it stays
+            // down until a track is next started from the app.
+            dismissedByPerson = true
+            end(reason: "closed from the lock screen")
+            await updateChain?.value
+            return
+        }
+        guard let playback else { return }
         // Woken from cold by a button on an activity an earlier run left up
         // (this launch is taking it down): nothing is loaded yet, so load
         // what was, and act on that.
@@ -312,6 +349,8 @@ final class LockScreenPlayer {
             playback.remoteSkipForward()
         case .next:
             playback.remoteNext()
+        case .close:
+            break
         }
         await updateChain?.value
     }

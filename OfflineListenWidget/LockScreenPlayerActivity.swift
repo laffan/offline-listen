@@ -11,6 +11,7 @@ import WidgetKit
 ///
 /// ```
 ///  ↺15            [ ⟲ Recent ]            30↻
+///                    ✕ Close          (while paused)
 ///  PREVIOUS TRACK                  NEXT TRACK
 ///  Title                                Title
 ///  Artist                              Artist
@@ -19,8 +20,10 @@ import WidgetKit
 /// The skip buttons sit at the edges, over the side of the queue they lean
 /// toward; **Recent** opens the app on the Recent tab's Recent list; and the
 /// track names are tappable as they are under the Player's transport —
-/// previous goes straight there, next is the next track. A tap anywhere else
-/// opens the Player.
+/// previous goes straight there, next is the next track. While playback is
+/// paused — when the app may have been closed without a chance to take the
+/// panel down — **Close** sits under Recent (see `ContentState.showsClose`). A
+/// tap anywhere else opens the Player.
 ///
 /// Every button is an `AudioPlaybackIntent` (see `LockScreenPlayerShared.swift`)
 /// that the system runs in the app, so a tap acts on whatever is making sound
@@ -62,11 +65,16 @@ struct LockScreenCompanionView: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            HStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 0) {
                 SkipButton(intent: LockScreenSkipBackwardIntent(),
                            glyph: "gobackward.15", label: "Back 15 seconds")
                     .frame(maxWidth: .infinity, alignment: .leading)
-                RecentButton()
+                VStack(spacing: 6) {
+                    RecentButton()
+                    if state.showsClose {
+                        CloseButton()
+                    }
+                }
                 SkipButton(intent: LockScreenSkipForwardIntent(),
                            glyph: "goforward.30", label: "Forward 30 seconds")
                     .frame(maxWidth: .infinity, alignment: .trailing)
@@ -127,6 +135,24 @@ private struct RecentButton: View {
                 .background(PlayerPalette.accent.opacity(0.18), in: Capsule())
         }
         .accessibilityHint("Opens the Recent tab")
+    }
+}
+
+/// Takes the panel down. Quieter than Recent — it's a way out, not a place to
+/// go — and only there while paused.
+private struct CloseButton: View {
+    var body: some View {
+        Button(intent: LockScreenCloseIntent()) {
+            Label("Close", systemImage: "xmark")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .overlay { Capsule().strokeBorder(Color.secondary.opacity(0.5), lineWidth: 1) }
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Close the lock screen player")
     }
 }
 

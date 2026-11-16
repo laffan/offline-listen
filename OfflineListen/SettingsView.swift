@@ -612,7 +612,7 @@ struct SettingsView: View {
         } header: {
             Text("Lock Screen")
         } footer: {
-            Text("Adds what iOS's own Now Playing controls leave out, just below them on the lock screen while something plays: back 15, forward 30, the previous and next tracks, and a button into Recent. Swipe it away and it stays away until you next start a track.")
+            Text("Adds what iOS's own Now Playing controls leave out, just below them on the lock screen while something plays: back 15, forward 30, the previous and next tracks, and a button into Recent — and, while paused, Close. Close it or swipe it away and it stays away until you next start a track.")
         }
     }
     #endif

@@ -698,7 +698,8 @@ list showing, in large type, where a bar's title would be).
    Activity** (iOS 17 and later) adds what they leave out: **back 15** and
    **forward 30**, the **previous and next tracks** by name (tappable, as they
    are under the Player's transport), and a **Recent** button that opens the
-   app on the Recent tab. A tap anywhere else on it opens the Player. It goes
+   app on the Recent tab — with **Close** beneath it while playback is
+   paused. A tap anywhere else on it opens the Player. It goes
    up when a track starts playing with the app open, follows the queue from
    there, and can be switched off in Settings ▸ Lock Screen. How it's built,
    and the limits iOS puts on it, are in
@@ -2096,7 +2097,7 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `WatchManifest.swift` | Wire format shared by the iPhone and watch targets (the sync manifest, the remote-control `RemoteNowPlaying`/`RemoteCommand` types, + WC keys). |
 | `WatchSync.swift` | Phone-side WatchConnectivity bridge: pushes the manifest + audio files, handles the watch's "Clear all". |
 | `WidgetShared.swift` | Wire format shared by the app and the widget targets (the genre/artist/song rows the widget draws, their App Group storage, and the `offlinelisten://` deep links each row opens) — the same trick `WatchManifest.swift` uses for the watch. |
-| `LockScreenPlayerShared.swift` | The lock screen player's wire format, compiled into the app and the widget extension: the Live Activity's attributes and content state (including the roll-over that shifts the neighbour names along when the activity goes stale), the neighbour rows, the four button intents, and the `LockScreenTransport` hook they call into. |
+| `LockScreenPlayerShared.swift` | The lock screen player's wire format, compiled into the app and the widget extension: the Live Activity's attributes and content state (including the roll-over that shifts the neighbour names along when the activity goes stale, and when **Close** shows), the neighbour rows, the button intents, and the `LockScreenTransport` hook they call into. |
 | `LockScreenPlayer.swift` | The app's half of the lock screen player: starts, updates and ends the Live Activity off `PlaybackManager`'s now-playing snapshots (updating only when the track, its neighbours or play/pause change, or the playhead jumps), runs the buttons' taps through the `remote…` transport, and honours the Settings switch and a swipe-away. The views are in the widget extension's `LockScreenPlayerActivity.swift`. |
 | `WidgetBridge.swift` | The app's half: republishes the snapshot from the Recent log and the Every Noise visit log (genres and artists as separate deduplicated lists), reloads the widget's timeline when it actually changed, and `AppRouter`, which parks a tapped row (or a Bookmarks row) until the screen that can act on it is up — and holds the `PlayContext` the Player's swipe-down goes back to, with the Library's and Search tab's current spots kept up to date for it. |
 
@@ -2644,6 +2645,7 @@ nothing repeated:
 
 ```
  ↺15            [ ⟲ Recent ]            30↻
+                   ✕ Close          (while paused)
  PREVIOUS TRACK                  NEXT TRACK
  Title                                Title
  Artist                              Artist
@@ -2661,6 +2663,8 @@ nothing repeated:
   (`offlinelisten://recent`) — a `Link`, since it goes somewhere rather than
   doing something. A tap anywhere else opens the Player
   (`offlinelisten://player`).
+- **Close**, beneath Recent while playback is paused, takes the panel down —
+  see below for why only then.
 
 The views live in the widget extension (`LockScreenPlayerActivity.swift`), the
 app's half in `LockScreenPlayer.swift`, and the shared state and button
@@ -2699,7 +2703,25 @@ its app goes away, so the app does it — as far as iOS tells it anything:
   suspend it, then swiped away or reclaimed for memory — the app is killed
   without being told, and nothing it could have done runs. The activity stays
   until the app is next launched, which takes down anything an earlier run
-  left up before doing anything else.
+  left up before doing anything else — or until **Close** is tapped.
+
+**Close is there for that second case.** What it would like to know is
+whether the app is still running, and a Live Activity can't: it's drawn by
+the system from the last state the app sent, with no way to ask after the app.
+But the case that leaves it behind only arises after a pause — a playing app
+is awake and is told it's closing — so **Close** shows whenever playback is
+paused (`ContentState.showsClose`). It's a `LiveActivityIntent`, which iOS runs
+in the app, launching it in the background if it had been killed; the intent
+ends the activity itself as well, so it works whether or not the app is still
+there. Closing it counts like a swipe-away: it stays down until a track is next
+started. (iOS also offers its own way out — swipe the activity left on the
+lock screen — which does the same.)
+
+The pause that puts **Close** up is an update, and a pause made with the phone
+locked is the one most likely to be dropped: it's sent the instant the audio
+stops, while iOS may still count the app as only playing background audio. So
+a pause made in the background is sent again six seconds later, with the app
+held awake for it (a paused app is otherwise suspended before then).
 
 **Updating it — and the limit that shapes it.** The app hears every
 now-playing snapshot the system controls get (twice a second) and sends an
