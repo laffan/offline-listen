@@ -81,7 +81,7 @@ struct RootView: View {
             notePlayStarts()
             routeBrowse()
             routeTrack()
-            routePlayer()
+            routeTab()
         }
         .onChange(of: selection) { tab in
             if !returning { router.noteVisit(to: tab) }
@@ -96,7 +96,7 @@ struct RootView: View {
             selection = .search
         }
         .onChange(of: router.pendingTrackID) { _ in routeTrack() }
-        .onChange(of: router.pendingPlayer) { _ in routePlayer() }
+        .onChange(of: router.pendingTab) { _ in routeTab() }
     }
 
     /// Has every track that starts note the tab it was started on. `play` is
@@ -156,12 +156,13 @@ struct RootView: View {
         selection = .player
     }
 
-    /// A tap on the lock screen player: the Player tab, with whatever is
-    /// loaded. Nothing is started — the tap is "show me", and the controls
-    /// that change anything were the buttons beside it.
-    private func routePlayer() {
-        guard router.pendingPlayer else { return }
-        router.pendingPlayer = false
-        selection = .player
+    /// A tap on the lock screen player: the Player tab, or Recent from its
+    /// Recent button. Nothing is started — the tap is "show me", and the
+    /// controls that change anything were the buttons beside it. Arriving on
+    /// Recent this way is a visit, like picking it from the tab bar.
+    private func routeTab() {
+        guard let tab = router.pendingTab else { return }
+        router.pendingTab = nil
+        selection = tab
     }
 }

@@ -155,6 +155,9 @@ enum WidgetDeepLink: Hashable {
     case track(id: UUID)
     /// The Player tab, as it is — what tapping the lock screen player opens.
     case player
+    /// The Recent tab's **Recent** list — the lock screen player's Recent
+    /// button.
+    case recent
 
     /// The three shapes a browse row can re-open, mirroring what the browser's
     /// own History rows do: a genre's artist map, an artist selected on that
@@ -189,6 +192,8 @@ enum WidgetDeepLink: Hashable {
             components.queryItems = [URLQueryItem(name: "id", value: id.uuidString)]
         case .player:
             components.host = "player"
+        case .recent:
+            components.host = "recent"
         }
         // The components are ours and always well-formed; the fallback keeps
         // the widget's `Link` non-optional rather than adding a branch to
@@ -225,6 +230,8 @@ enum WidgetDeepLink: Hashable {
             self = .track(id: id)
         case "player":
             self = .player
+        case "recent":
+            self = .recent
         default:
             return nil
         }

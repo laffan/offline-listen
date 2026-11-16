@@ -692,18 +692,17 @@ list showing, in large type, where a bar's title would be).
    the same height as extra scroll inset, and their scan/artist-preview bars
    pad themselves by it, since the maps run edge to edge under the tab bar.
 
-   **The lock screen player.** The same controls go on the lock screen as a
-   **Live Activity** (iOS 17 and later): the cover, title and artist, a
-   progress bar with the elapsed time and the track's length, **previous /
-   back 15 / play-pause / forward 30 / next** in the Player's order, and the
-   **previous and next tracks named** beneath, each tappable as they are under
-   the Player's transport. A tap anywhere else opens the app on the Player.
-   It sits *below* iOS's own Now Playing controls rather than replacing them —
-   no app can — and in the Dynamic Island as a cover and a progress ring that
-   long-press into the same controls. It goes up when a track starts playing
-   with the app open, follows the queue from there, and can be switched off in
-   Settings ▸ Lock Screen. How it's built, and the limits iOS puts on it, are
-   in [The lock screen player](#the-lock-screen-player).
+   **The lock screen player.** iOS's own Now Playing controls on the lock
+   screen already carry the cover, the title, the progress bar, play/pause
+   and next/previous — and nothing more. Just beneath them, a **Live
+   Activity** (iOS 17 and later) adds what they leave out: **back 15** and
+   **forward 30**, the **previous and next tracks** by name (tappable, as they
+   are under the Player's transport), and a **Recent** button that opens the
+   app on the Recent tab. A tap anywhere else on it opens the Player. It goes
+   up when a track starts playing with the app open, follows the queue from
+   there, and can be switched off in Settings ▸ Lock Screen. How it's built,
+   and the limits iOS puts on it, are in
+   [The lock screen player](#the-lock-screen-player).
 
 5. **Settings** — AI configuration on top, then **Spotify** credentials, a
    **Subtitles** section, an
@@ -2097,8 +2096,8 @@ URL  ──►  extractor (native / yt-dlp)  ──►  chunked download  ──
 | `WatchManifest.swift` | Wire format shared by the iPhone and watch targets (the sync manifest, the remote-control `RemoteNowPlaying`/`RemoteCommand` types, + WC keys). |
 | `WatchSync.swift` | Phone-side WatchConnectivity bridge: pushes the manifest + audio files, handles the watch's "Clear all". |
 | `WidgetShared.swift` | Wire format shared by the app and the widget targets (the genre/artist/song rows the widget draws, their App Group storage, and the `offlinelisten://` deep links each row opens) — the same trick `WatchManifest.swift` uses for the watch. |
-| `LockScreenPlayerShared.swift` | The lock screen player's wire format, compiled into the app and the widget extension: the Live Activity's attributes and content state (including the roll-over that draws the next track when the activity goes stale), the neighbour rows, the six button intents, the `LockScreenTransport` hook they call into, and where the cover thumbnails live in the App Group. |
-| `LockScreenPlayer.swift` | The app's half of the lock screen player: starts, updates and ends the Live Activity off `PlaybackManager`'s now-playing snapshots (updating only on visible changes or playhead jumps), writes the cover thumbnails, runs the buttons' taps through the `remote…` transport, and honours the Settings switch and a swipe-away. The views are in the widget extension's `LockScreenPlayerActivity.swift`. |
+| `LockScreenPlayerShared.swift` | The lock screen player's wire format, compiled into the app and the widget extension: the Live Activity's attributes and content state (including the roll-over that shifts the neighbour names along when the activity goes stale), the neighbour rows, the four button intents, and the `LockScreenTransport` hook they call into. |
+| `LockScreenPlayer.swift` | The app's half of the lock screen player: starts, updates and ends the Live Activity off `PlaybackManager`'s now-playing snapshots (updating only when the track, its neighbours or play/pause change, or the playhead jumps), runs the buttons' taps through the `remote…` transport, and honours the Settings switch and a swipe-away. The views are in the widget extension's `LockScreenPlayerActivity.swift`. |
 | `WidgetBridge.swift` | The app's half: republishes the snapshot from the Recent log and the Every Noise visit log (genres and artists as separate deduplicated lists), reloads the widget's timeline when it actually changed, and `AppRouter`, which parks a tapped row (or a Bookmarks row) until the screen that can act on it is up — and holds the `PlayContext` the Player's swipe-down goes back to, with the Library's and Search tab's current spots kept up to date for it. |
 
 The companion watch app lives under `OfflineListenWatch/` (see
@@ -2315,8 +2314,8 @@ and declares the entitlement, but — exactly as with the Share Extension —
 
 The same extension draws the **lock screen player**'s Live Activity, so the
 setup above covers it too; the app's `Info.plist` already carries
-`NSSupportsLiveActivities`. The App Group is how its covers reach it — without
-the group it draws the gradient stand-in instead.
+`NSSupportsLiveActivities`. It reads nothing from the App Group — everything it
+shows travels in the activity's own state.
 
 The widget target deploys to **iOS 17**, while the app stays on 16. That's what
 the options pane costs: a configurable widget needs a configuration intent, and
@@ -2633,74 +2632,89 @@ whose controls call `next()` / `previous()` / `skipForward()` directly.
 
 ### The lock screen player
 
-The system's Now Playing controls take **metadata and commands, not a
-layout**: three buttons, one side pair, no room for anything else. The Player
-tab has more than that — both the track buttons *and* the 15/30-second jumps,
-and the names of the tracks either side — and none of it can be added there.
+The lock screen has two panels while something plays, meant to be read as
+one. **iOS's own Now Playing controls** take metadata and commands, not a
+layout: the cover, title and artist, the progress bar, play/pause and one side
+pair — next/previous for songs, the 30/15-second jumps for podcasts (see
+above). The Player tab has more than that, and none of it can be added there.
 The one surface on the lock screen an app gets to draw for itself is a **Live
-Activity**, so that's what the lock screen player is: an `ActivityKit` activity
-whose views live in the widget extension (`LockScreenPlayerActivity.swift`),
-fed by the app (`LockScreenPlayer.swift`), with the shared state and button
+Activity**, which appears just below. So the lock screen player is an
+`ActivityKit` activity carrying only what the system's panel lacks, with
+nothing repeated:
+
+```
+ ↺15            [ ⟲ Recent ]            30↻
+ PREVIOUS TRACK                  NEXT TRACK
+ Title                                Title
+ Artist                              Artist
+```
+
+- **Back 15 and forward 30**, at the edges, each over the side of the queue it
+  leans toward. For a song the system's panel has next/previous, so between
+  the two every button the Player has is on the lock screen; for a podcast the
+  system's panel already has the jumps, and these repeat them.
+- **The previous and next tracks**, labelled as the Player labels them, title
+  over artist. Tappable the same way: **Previous Track** goes straight there
+  whatever the playhead (`playPreviousTrack()`), **Next Track** is the next
+  track.
+- **Recent** opens the app on the Recent tab's **Recent** list
+  (`offlinelisten://recent`) — a `Link`, since it goes somewhere rather than
+  doing something. A tap anywhere else opens the Player
+  (`offlinelisten://player`).
+
+The views live in the widget extension (`LockScreenPlayerActivity.swift`), the
+app's half in `LockScreenPlayer.swift`, and the shared state and button
 intents in `LockScreenPlayerShared.swift`, compiled into both. It needs **iOS
 17**, for buttons in a Live Activity; on 16 the app simply doesn't offer it.
-
-**What it shows.** Cover, title and artist; elapsed time, a bar and the track's
-length; the five transport buttons; and the previous and next tracks, labelled
-as the Player labels them, title and artist on one line to stay inside the
-160 points a lock-screen Live Activity is allowed before iOS cuts it off. The
-Dynamic Island gets a cover and a progress ring, and the expanded view has the
-same controls. Tapping the activity anywhere but a button opens the app on the
-Player (`offlinelisten://player`).
+The Dynamic Island, where iOS's own Now Playing already sits while audio
+plays, gets a small glyph that expands into the same controls.
 
 **The buttons run in the app.** Each is its own `AudioPlaybackIntent` — the
 conformance that has iOS run the intent in the app's process (waking it if it
 was suspended, or launching it in the background if it had been killed) rather
 than in the widget extension. They go through the same `remote…` transport as
 the system's own controls and the watch, so they drive whatever is making
-sound, a Browse preview included; the ⏮ button keeps `previous()`'s
-restart-if-three-seconds-in rule, and the **Previous Track** name goes straight
-there, as the Player's does. A button pressed on an activity left over from a
-run the app no longer has — killed with the activity up — restores the last
-session first and acts on that, so play really plays.
+sound, a Browse preview included. A button pressed on an activity left over
+from a run the app no longer has — killed with the activity up — restores the
+last session first and acts on that.
 
 **When it appears.** iOS only lets an app *start* a Live Activity from the
 foreground, so it goes up when a track starts playing with the app open, or
 the next time the app is opened with something playing. A paused track
-doesn't get one put up for it (one already up stays, showing paused). Swiping
-it away is taken as an answer: it doesn't come back until a track is next
-started from the app. iOS ends any Live Activity after eight hours; a new one
-goes up the next time the app is opened. With nothing loaded, or the Settings
-switch off, it's taken down.
+doesn't get one put up for it (one already up stays). Swiping it away is taken
+as an answer: it doesn't come back until a track is next started from the app.
+iOS ends any Live Activity after eight hours; a new one goes up the next time
+the app is opened. With nothing loaded, or the Settings switch off, it's taken
+down.
 
 **Updating it — and the limit that shapes it.** The app hears every
 now-playing snapshot the system controls get (twice a second) and sends an
-update only when something the activity shows has changed — track, play/pause,
-neighbours, cover, length — or the playhead *jumps* (a seek, a skip). It
-doesn't send one for the playhead moving: the elapsed time and the bar are
-SwiftUI timer views (`Text(timerInterval:)`, `ProgressView(timerInterval:)`)
-that the system runs by itself from a start time and a length.
+update only when the track, its neighbours or play/pause change, or the
+playhead *jumps* (a seek, a skip) — the last because it moves the moment the
+next track is due, which matters below.
 
-That matters because of a limit Apple's documentation doesn't state. The
-ActivityKit docs say an app may update its Live Activity from the background,
-but developers report — with the device log line `Process is only playing
+That's because of a limit Apple's documentation doesn't state. The ActivityKit
+docs say an app may update its Live Activity from the background, but
+developers report — with the device log line `Process is only playing
 background media so is forbidden to update activity` — that iOS **drops
 updates from an app whose only background work is playing audio**, which is
 exactly this app with the phone locked. Apple's engineers in those threads
 point to push updates from a server, which an offline app doesn't have. The
 reports run from iOS 16 through 18 with one unconfirmed claim that 18.3 allows
 it; nothing newer was found either way, so on a current phone it has to be
-seen on the device. The player is built to stay right as far as it can either
-way:
+seen on the device. With the panel down to names, the only thing a dropped
+update can leave wrong is which tracks are named, and the player is built to
+keep even that right as far as it can:
 
-- **The next track rolls in on its own.** Every update carries the next track
-  (and the one after) and sets the activity's *stale date* to the moment the
-  playing track is due to end. iOS redraws a Live Activity when it goes stale
-  whether or not the app could reach it, and the views then draw the next
-  track as the one playing, its bar running from that moment
-  (`ContentState.presented(isStale:)`). There's only one stale transition, so
-  this covers one track change — the common case of locking the phone partway
-  through a song. When the app's own update does get through, it says the same
-  thing, so the two never disagree.
+- **The names shift along on their own.** Every update carries the playing
+  track and the one after next, and sets the activity's *stale date* to the
+  moment the playing track is due to end. iOS redraws a Live Activity when it
+  goes stale whether or not the app could reach it, and the views then shift
+  the names along by one — the track that just finished becomes **Previous**,
+  the one after next becomes **Next** (`ContentState.presented(isStale:)`).
+  There's only one stale transition, so this covers one track change — the
+  common case of locking the phone partway through a song. When the app's own
+  update does get through, it says the same thing, so the two never disagree.
 - **A tap's update is sent while its intent is still running.** The intent
   waits until the update the tap caused has been handed to ActivityKit; that
   window, initiated by the person through the system, is the likeliest to be
@@ -2709,23 +2723,17 @@ way:
   fresh update, which is never refused.
 
 What can still go wrong with the phone locked: after **two or more** automatic
-track changes the activity may name a track that has already finished, until
-the next tap or the app is opened. iOS's own Now Playing controls above it are
-updated by the system and are always right.
+track changes the names may be a track behind, until the next tap or the app
+is opened. The system's panel above is updated by iOS itself and is always
+right, so what's playing is never in doubt.
 
 **One more thing to check on the device.** Apple's interactivity docs say
 widget and Live Activity buttons on a *locked* phone run only once the person
-has authenticated. If that holds for these buttons, a tap on the lock screen
-player may ask for Face ID or the passcode where the system's Now Playing
-buttons don't; a later developer report has Live Activity buttons working from
-the lock screen without saying whether the phone was locked.
-
-Covers go into the **App Group** container (`LockScreenArtwork/`), shrunk to
-150 pixels — a Live Activity runs in its own sandbox and can't read
-`Documents/`, and ActivityKit refuses to start one whose images are larger than
-the space they're drawn in. Without the App Group (see
-[Required Xcode setup for the widget](#required-xcode-setup-for-the-widget))
-the player still works, with the Player's gradient stand-in for every cover.
+has authenticated. If that holds for these buttons, back 15 and forward 30 may
+ask for Face ID or the passcode where the system's own buttons don't; a later
+developer report has Live Activity buttons working from the lock screen
+without saying whether the phone was locked. **Recent** opens the app, which
+needs unlocking anyway.
 
 ## Audio vs. Video
 

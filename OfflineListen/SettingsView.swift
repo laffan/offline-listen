@@ -592,11 +592,10 @@ struct SettingsView: View {
 
     #if os(iOS) && canImport(ActivityKit)
     /// The lock screen player (a Live Activity) on or off. It's on by default
-    /// — it's the point of the feature — but it sits alongside iOS's own Now
-    /// Playing controls rather than replacing them, which not everyone will
-    /// want twice over; and iOS can switch Live Activities off for the app
-    /// altogether, which is worth saying here rather than leaving the switch to
-    /// look broken.
+    /// — it's the point of the feature — but it adds a second panel under
+    /// iOS's own Now Playing controls, which not everyone will want; and iOS
+    /// can switch Live Activities off for the app altogether, which is worth
+    /// saying here rather than leaving the switch to look broken.
     @available(iOS 17.0, *)
     private var lockScreenSection: some View {
         Section {
@@ -613,7 +612,7 @@ struct SettingsView: View {
         } header: {
             Text("Lock Screen")
         } footer: {
-            Text("Puts the Player's controls on the lock screen while something plays: previous, back 15, play/pause, forward 30, next, and the tracks either side. It appears below iOS's own Now Playing controls, which stay as they are. Swipe it away and it stays away until you next start a track.")
+            Text("Adds what iOS's own Now Playing controls leave out, just below them on the lock screen while something plays: back 15, forward 30, the previous and next tracks, and a button into Recent. Swipe it away and it stays away until you next start a track.")
         }
     }
     #endif

@@ -35,15 +35,10 @@ struct RemoteAudioInfo {
     var elapsed: Double
     var isPlaying: Bool
     var artwork: MPMediaItemArtwork?
-    /// The library's own cover file for the thing playing (`AppPaths.artwork`),
-    /// when it has one. The lock screen player copies covers into the App
-    /// Group by this name rather than re-encoding `artwork`; a borrower has no
-    /// file and leaves it nil.
-    var artworkFileName: String? = nil
     /// The queue either side — what the Player names under its transport and
-    /// the lock screen player names under its own. `afterNext` is one further
-    /// on: what becomes "next" when the track changes on a locked phone and the
-    /// lock screen has to work that out for itself.
+    /// the lock screen player names on the lock screen. `afterNext` is one
+    /// further on: what becomes "next" when the track changes on a locked phone
+    /// and the lock screen has to work that out for itself.
     var previous: QueueNeighbour? = nil
     var next: QueueNeighbour? = nil
     var afterNext: QueueNeighbour? = nil
@@ -53,11 +48,6 @@ struct RemoteAudioInfo {
 struct QueueNeighbour: Equatable {
     var title: String
     var artist: String
-    /// Seconds; 0 when unknown (a Browse preview's next item, before it has
-    /// been fetched).
-    var duration: Double
-    /// The library's cover file, when it has one.
-    var artworkFileName: String? = nil
 }
 
 /// A player *other than* the library's own that is making sound and should own
@@ -171,8 +161,6 @@ final class PlaybackManager: NSObject, ObservableObject {
     /// loaded once per track change — `updateNowPlaying` runs at 2 Hz and
     /// must never touch the disk.
     private var lockScreenArtwork: MPMediaItemArtwork?
-    /// The cover file behind `lockScreenArtwork`, read at the same moment.
-    private var lockScreenArtworkFileName: String?
     /// The Browse preview modal while it has borrowed the lock screen (see
     /// `beginRemoteAudio`). Weak on purpose: a modal torn down without handing
     /// back mustn't keep the lock screen hostage.
@@ -434,7 +422,6 @@ final class PlaybackManager: NSObject, ObservableObject {
         lockScreenArtwork = TrackArtwork.image(for: liveTrack).map { image in
             MPMediaItemArtwork(boundsSize: image.size) { _ in image }
         }
-        lockScreenArtworkFileName = lockScreenArtwork == nil ? nil : liveTrack.artworkFileName
     }
 
     private func resume() {
@@ -1095,7 +1082,6 @@ final class PlaybackManager: NSObject, ObservableObject {
             center.nowPlayingInfo = nil
             center.playbackState = .stopped
             lockScreenArtwork = nil
-            lockScreenArtworkFileName = nil
             onNowPlayingChange?(nil)
             onLockScreenChange?(nil)
             return
@@ -1107,7 +1093,6 @@ final class PlaybackManager: NSObject, ObservableObject {
                                 elapsed: currentTime,
                                 isPlaying: isPlaying,
                                 artwork: lockScreenArtwork,
-                                artworkFileName: lockScreenArtworkFileName,
                                 previous: neighbour(at: index - 1),
                                 next: neighbour(at: index + 1),
                                 afterNext: neighbour(at: index + 2)),
@@ -1121,10 +1106,7 @@ final class PlaybackManager: NSObject, ObservableObject {
     private func neighbour(at position: Int) -> QueueNeighbour? {
         guard queue.indices.contains(position) else { return nil }
         let track = queue[position]
-        return QueueNeighbour(title: track.title,
-                              artist: track.artist,
-                              duration: track.duration,
-                              artworkFileName: track.artworkFileName)
+        return QueueNeighbour(title: track.title, artist: track.artist)
     }
 
     /// Writes one snapshot to the lock screen / Control Center and mirrors it to

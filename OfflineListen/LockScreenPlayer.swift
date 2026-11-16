@@ -1,7 +1,6 @@
 import Foundation
 #if os(iOS) && canImport(ActivityKit)
 import ActivityKit
-import MediaPlayer
 import UIKit
 #endif
 
@@ -21,22 +20,23 @@ enum LockScreenPlayerSettings {
 /// with whatever `PlaybackManager` is publishing, and runs the taps made on it.
 ///
 /// It's fed the same snapshot the system's Now Playing controls and the watch
-/// get (`onLockScreenChange`, at the ticker's 2 Hz), and most of those change
-/// nothing it shows: the playhead moving is drawn by the activity's own timer
-/// views. So an update goes out only when something visible changes — the
-/// track, play/pause, the neighbours, the cover, the length — or when the
-/// playhead jumps (a seek, a skip) rather than moves.
+/// get (`onLockScreenChange`, at the ticker's 2 Hz), and almost none of those
+/// change anything it shows. What it shows is the tracks either side, so an
+/// update goes out when the track, the neighbours or play/pause change — and
+/// also when the playhead *jumps* (a seek, a skip) or the length is corrected,
+/// since either moves the moment the next track is due, which the activity
+/// keeps as its stale date (see below).
 ///
 /// **What iOS lets it do, and when.** A Live Activity can only be *started*
 /// with the app in the foreground, so it starts when playback starts in the
 /// app, or the next time the app is opened. Updating one from the background is
 /// documented as allowed, but developers report that iOS drops updates from a
 /// process that is only playing background audio — exactly this app with the
-/// phone locked. The state is built to survive that: the bar runs off its own
-/// clock, the next track is carried ahead of time and rolls in when the
-/// current one is due to end (`ContentState.presented(isStale:)`), every
-/// update a tap causes is sent while the tap's intent is still running, and
-/// the whole thing is brought up to date whenever the app comes forward.
+/// phone locked. The state is built to survive that: the next track's
+/// neighbours are carried ahead of time and shift in when the current track is
+/// due to end (`ContentState.presented(isStale:)`), every update a tap causes
+/// is sent while the tap's intent is still running, and the whole thing is
+/// brought up to date whenever the app comes forward.
 @available(iOS 17.0, *)
 @MainActor
 final class LockScreenPlayer {
@@ -53,10 +53,13 @@ final class LockScreenPlayer {
 
     /// The latest snapshot, whether or not it was worth an update.
     private var latest: RemoteAudioInfo?
-    /// What the activity was last given, and the parts of the snapshot it was
-    /// built from, for telling a real change from the ticker repeating itself.
-    private var sent: State?
+    /// The parts of the snapshot the last update was built from, for telling
+    /// a real change from the ticker repeating itself.
     private var sentSignature: Signature?
+    /// Where the playhead was when the last update was built, and when — the
+    /// clock the stale date was set by. A playhead that has wandered off it
+    /// has jumped, and the stale date with it.
+    private var sentClock: (elapsed: Double, at: Date, isPlaying: Bool)?
     /// The snapshot a start was last tried for and refused (Live Activities
     /// switched off for the app in iOS Settings, say), so the ticker doesn't
     /// ask again twice a second. Cleared by anything that forces a refresh.
@@ -64,10 +67,6 @@ final class LockScreenPlayer {
     /// True once the person has swiped the activity away. It isn't put back
     /// until a track is started from the app: removing it is an answer.
     private var dismissedByPerson = false
-
-    /// The cover thumbnail made for a borrower's artwork, which has no file to
-    /// key it by — kept so a seek doesn't re-encode it.
-    private var borrowedArtwork: (id: UUID, object: ObjectIdentifier, file: String)?
 
     private init() {}
 
@@ -133,17 +132,25 @@ final class LockScreenPlayer {
             return
         }
 
-        let jumped = sent.map { abs(Self.expectedElapsed(of: $0) - info.elapsed) > 2 } ?? true
-        guard force || jumped || signature != sentSignature else { return }
+        guard force || signature != sentSignature || playheadJumped(info) else { return }
         let state = makeState(from: info)
-        sent = state
-        sentSignature = signature
+        note(info, signature: signature)
         send(state, to: activity)
     }
 
-    /// Where `state`'s playhead has got to by now, by its own clock.
-    private static func expectedElapsed(of state: State) -> Double {
-        state.isPlaying ? state.elapsed + Date().timeIntervalSince(state.anchor) : state.elapsed
+    /// Whether the playhead is somewhere other than where the last update's
+    /// clock says it should be by now.
+    private func playheadJumped(_ info: RemoteAudioInfo) -> Bool {
+        guard let sentClock else { return true }
+        let expected = sentClock.isPlaying
+            ? sentClock.elapsed + Date().timeIntervalSince(sentClock.at)
+            : sentClock.elapsed
+        return abs(expected - info.elapsed) > 2
+    }
+
+    private func note(_ info: RemoteAudioInfo, signature: Signature) {
+        sentSignature = signature
+        sentClock = (info.elapsed, Date(), info.isPlaying)
     }
 
     private static func isLive(_ activity: Activity<LockScreenPlayerAttributes>) -> Bool {
@@ -166,10 +173,9 @@ final class LockScreenPlayer {
                 attributes: LockScreenPlayerAttributes(),
                 content: ActivityContent(state: state, staleDate: state.rollOverAt),
                 pushType: nil)
-            sent = state
-            sentSignature = signature
+            note(info, signature: signature)
             adopt(activity)
-            appLog("Lock screen player up for \"\(state.title)\".", level: .debug, category: "Player")
+            appLog("Lock screen player up beside \"\(state.title)\".", level: .debug, category: "Player")
         } catch {
             refusedStart = signature
             appLog("Couldn't put the lock screen player up: \(error.localizedDescription)",
@@ -228,8 +234,8 @@ final class LockScreenPlayer {
     }
 
     private func end(reason: String?) {
-        sent = nil
         sentSignature = nil
+        sentClock = nil
         guard let activity else { return }
         self.activity = nil
         stateObserver?.cancel()
@@ -269,14 +275,10 @@ final class LockScreenPlayer {
             playback.restoreLastSession()
         }
         switch command {
-        case .previous:
-            playback.remotePrevious()
         case .previousTrack:
             playback.remotePlayPreviousTrack()
         case .skipBackward:
             playback.remoteSkipBackward()
-        case .togglePlayPause:
-            playback.remoteTogglePlayPause()
         case .skipForward:
             playback.remoteSkipForward()
         case .next:
@@ -288,33 +290,24 @@ final class LockScreenPlayer {
     // MARK: - State
 
     private func makeState(from info: RemoteAudioInfo) -> State {
-        let now = Date()
-        let next = info.next.map { neighbour($0) }
         let remaining = info.duration - info.elapsed
         // Only a track that is playing, with something after it and a known
         // end, can roll over on its own.
-        let rollOverAt: Date? = info.isPlaying && next != nil && info.duration > 0 && remaining > 0
-            ? now.addingTimeInterval(remaining)
+        let rollOverAt: Date? = info.isPlaying && info.next != nil && info.duration > 0 && remaining > 0
+            ? Date().addingTimeInterval(remaining)
             : nil
         return State(trackID: info.id,
                      title: Self.clip(info.title),
                      artist: Self.clip(info.artist),
-                     artworkFile: artworkFile(for: info),
                      isPlaying: info.isPlaying,
-                     duration: max(0, info.duration),
-                     elapsed: max(0, info.elapsed),
-                     anchor: now,
-                     previous: info.previous.map { neighbour($0) },
-                     next: next,
-                     afterNext: info.afterNext.map { neighbour($0) },
+                     previous: info.previous.map { Self.neighbour($0) },
+                     next: info.next.map { Self.neighbour($0) },
+                     afterNext: info.afterNext.map { Self.neighbour($0) },
                      rollOverAt: rollOverAt)
     }
 
-    private func neighbour(_ entry: QueueNeighbour) -> LockScreenNeighbour {
-        LockScreenNeighbour(title: Self.clip(entry.title),
-                            artist: Self.clip(entry.artist),
-                            duration: max(0, entry.duration),
-                            artworkFile: entry.artworkFileName.flatMap { thumbnail(forLibraryArtwork: $0) })
+    private static func neighbour(_ entry: QueueNeighbour) -> LockScreenNeighbour {
+        LockScreenNeighbour(title: clip(entry.title), artist: clip(entry.artist))
     }
 
     /// ActivityKit caps a payload at 4 KB, and four tracks' names go in each.
@@ -324,108 +317,18 @@ final class LockScreenPlayer {
         text.count > 120 ? String(text.prefix(119)) + "…" : text
     }
 
-    // MARK: - Artwork
-
-    private func artworkFile(for info: RemoteAudioInfo) -> String? {
-        if let name = info.artworkFileName {
-            return thumbnail(forLibraryArtwork: name)
-        }
-        if let artwork = info.artwork {
-            return thumbnail(forBorrowed: artwork, id: info.id)
-        }
-        return nil
-    }
-
-    /// A library cover, shrunk into the App Group. Named after the cover file
-    /// and remade only when the cover is newer than the copy — Get Album Art
-    /// rewrites a cover under the same name.
-    private func thumbnail(forLibraryArtwork name: String) -> String? {
-        let source = AppPaths.artwork.appendingPathComponent(name)
-        let file = "track-" + (name as NSString).deletingPathExtension + ".jpg"
-        guard let destination = LockScreenArtwork.url(for: file) else { return nil }
-        if let made = Self.modificationDate(of: destination),
-           let cover = Self.modificationDate(of: source), made >= cover {
-            return file
-        }
-        guard let image = ImageDecoding.thumbnail(at: source, maxPixel: LockScreenArtwork.maxPixel) else {
-            return nil
-        }
-        return write(image, as: file)
-    }
-
-    /// A borrower's cover (a Browse preview's, fetched from the web), which
-    /// arrives as an `MPMediaItemArtwork` with no file behind it.
-    private func thumbnail(forBorrowed artwork: MPMediaItemArtwork, id: UUID) -> String? {
-        let object = ObjectIdentifier(artwork)
-        if let borrowedArtwork, borrowedArtwork.id == id, borrowedArtwork.object == object {
-            return borrowedArtwork.file
-        }
-        let side = CGFloat(LockScreenArtwork.maxPixel)
-        guard let source = artwork.image(at: CGSize(width: side, height: side)) else { return nil }
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        let aspect = source.size.width / max(source.size.height, 1)
-        let size = aspect >= 1
-            ? CGSize(width: side, height: (side / aspect).rounded())
-            : CGSize(width: (side * aspect).rounded(), height: side)
-        let image = UIGraphicsImageRenderer(size: size, format: format).image { _ in
-            source.draw(in: CGRect(origin: .zero, size: size))
-        }
-        let file = "preview-\(id.uuidString).jpg"
-        guard let written = write(image, as: file) else { return nil }
-        borrowedArtwork = (id, object, written)
-        return written
-    }
-
-    private func write(_ image: UIImage, as file: String) -> String? {
-        guard let directory = LockScreenArtwork.directory,
-              let data = image.jpegData(compressionQuality: 0.85) else { return nil }
-        let fileManager = FileManager.default
-        do {
-            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-            try data.write(to: directory.appendingPathComponent(file), options: .atomic)
-        } catch {
-            appLog("Couldn't write a lock screen cover: \(error.localizedDescription)",
-                   level: .warning, category: "Player")
-            return nil
-        }
-        prune(directory)
-        return file
-    }
-
-    /// Keeps the folder to the newest few — enough for every track the
-    /// activity names at once, with room for a queue's worth beside them.
-    private func prune(_ directory: URL) {
-        let fileManager = FileManager.default
-        guard let files = try? fileManager.contentsOfDirectory(
-            at: directory, includingPropertiesForKeys: [.contentModificationDateKey]),
-              files.count > LockScreenArtwork.keep else { return }
-        let oldestFirst = files.sorted {
-            (Self.modificationDate(of: $0) ?? .distantPast) < (Self.modificationDate(of: $1) ?? .distantPast)
-        }
-        for file in oldestFirst.prefix(files.count - LockScreenArtwork.keep) {
-            try? fileManager.removeItem(at: file)
-        }
-    }
-
-    private static func modificationDate(of url: URL) -> Date? {
-        (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
-    }
-
     // MARK: - What counts as a change
 
-    /// The parts of a snapshot the activity shows, other than the moving
-    /// playhead. Two snapshots with the same signature draw the same thing.
+    /// The parts of a snapshot that decide what the activity shows or when it
+    /// rolls over, other than the moving playhead.
     private struct Signature: Equatable {
         var id: UUID
         var title: String
         var artist: String
         var isPlaying: Bool
         /// Whole seconds: the ticker refines a length by fractions as the item
-        /// loads, and nobody can see that.
+        /// loads, and that moves the roll-over by nothing worth an update.
         var duration: Int
-        var artworkFileName: String?
-        var artwork: ObjectIdentifier?
         var previous: QueueNeighbour?
         var next: QueueNeighbour?
         var afterNext: QueueNeighbour?
@@ -436,8 +339,6 @@ final class LockScreenPlayer {
             artist = info.artist
             isPlaying = info.isPlaying
             duration = info.duration.isFinite ? Int(info.duration) : 0
-            artworkFileName = info.artworkFileName
-            artwork = info.artwork.map { ObjectIdentifier($0) }
             previous = info.previous
             next = info.next
             afterNext = info.afterNext

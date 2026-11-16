@@ -1115,12 +1115,11 @@ final class BrowsePreviewModel: ObservableObject, RemoteAudioSource {
     }
 
     /// The queue entry at `position`, named the way the lock screen player
-    /// names the library's. No length: an item's isn't known until it has
-    /// been fetched.
+    /// names the library's.
     private func neighbour(at position: Int) -> QueueNeighbour? {
         guard items.indices.contains(position) else { return nil }
         let named = splitTitle(of: items[position])
-        return QueueNeighbour(title: named.title, artist: named.artist, duration: 0)
+        return QueueNeighbour(title: named.title, artist: named.artist)
     }
 
     func remotePlay() { if !isPlaying { togglePlayPause() } }
