@@ -2675,8 +2675,8 @@ was suspended, or launching it in the background if it had been killed) rather
 than in the widget extension. They go through the same `remote…` transport as
 the system's own controls and the watch, so they drive whatever is making
 sound, a Browse preview included. A button pressed on an activity left over
-from a run the app no longer has — killed with the activity up — restores the
-last session first and acts on that.
+from a run the app no longer has (see below) launches it, takes the leftover
+down, restores the last session and acts on that.
 
 **When it appears.** iOS only lets an app *start* a Live Activity from the
 foreground, so it goes up when a track starts playing with the app open, or
@@ -2686,6 +2686,20 @@ as an answer: it doesn't come back until a track is next started from the app.
 iOS ends any Live Activity after eight hours; a new one goes up the next time
 the app is opened. With nothing loaded, or the Settings switch off, it's taken
 down.
+
+**When the app is closed, it goes too.** iOS doesn't end a Live Activity when
+its app goes away, so the app does it — as far as iOS tells it anything:
+
+- **Closed while awake** — swiped away from the app switcher while playing,
+  or while still in front — the app is told it's terminating
+  (`UIApplication.willTerminateNotification`) and takes the activity down
+  before it exits, holding the main thread up to two seconds for ActivityKit
+  to have it. It disappears with iOS's own Now Playing controls.
+- **Closed while suspended** — paused, in the background long enough for iOS to
+  suspend it, then swiped away or reclaimed for memory — the app is killed
+  without being told, and nothing it could have done runs. The activity stays
+  until the app is next launched, which takes down anything an earlier run
+  left up before doing anything else.
 
 **Updating it — and the limit that shapes it.** The app hears every
 now-playing snapshot the system controls get (twice a second) and sends an

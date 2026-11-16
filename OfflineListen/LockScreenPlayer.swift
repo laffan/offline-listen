@@ -37,6 +37,10 @@ enum LockScreenPlayerSettings {
 /// due to end (`ContentState.presented(isStale:)`), every update a tap causes
 /// is sent while the tap's intent is still running, and the whole thing is
 /// brought up to date whenever the app comes forward.
+///
+/// **It belongs to a running app.** iOS doesn't end a Live Activity when its
+/// app goes, so this does: when the app is told it's terminating, and — for
+/// the times it isn't told — at the next launch, before anything else.
 @available(iOS 17.0, *)
 @MainActor
 final class LockScreenPlayer {
@@ -67,6 +71,7 @@ final class LockScreenPlayer {
     /// True once the person has swiped the activity away. It isn't put back
     /// until a track is started from the app: removing it is an answer.
     private var dismissedByPerson = false
+    private var terminationObserver: NSObjectProtocol?
 
     private init() {}
 
@@ -76,7 +81,15 @@ final class LockScreenPlayer {
         playback.onLockScreenChange = { [weak self] info in self?.receive(info) }
         playback.onLockScreenStart = { [weak self] in self?.playbackStarted() }
         LockScreenTransport.handler = { [weak self] command in await self?.perform(command) }
-        adoptRunningActivity()
+        endLeftovers()
+        // `queue: nil` runs the block on the posting thread, synchronously —
+        // the main thread, inside `applicationWillTerminate`. A block queued
+        // for later would never run: the process is gone once that returns.
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.willTerminateNotification, object: nil, queue: nil
+        ) { _ in
+            Self.endAllBeforeExit()
+        }
     }
 
     // MARK: - Feed
@@ -183,20 +196,35 @@ final class LockScreenPlayer {
         }
     }
 
-    /// Takes over an activity left running by the last launch — the app may
-    /// have been killed with it up, or woken by one of its buttons — so there
-    /// is never more than one. It's brought up to date by the first snapshot.
-    private func adoptRunningActivity() {
-        let running = Activity<LockScreenPlayerAttributes>.activities
-        var kept = false
-        for activity in running {
-            if !kept, Self.isLive(activity) {
-                adopt(activity)
-                kept = true
-            } else {
-                Task { await activity.end(nil, dismissalPolicy: .immediate) }
-            }
+    /// Takes down whatever an earlier run left up. At launch, any activity
+    /// there is belongs to a process that has gone — one iOS suspended while
+    /// paused and then killed (swiped away from the app switcher, or reclaimed
+    /// for memory), which is never told it's ending and so never took its
+    /// activity with it. The lock screen player is part of a running app, so
+    /// it goes; a new one goes up when something plays with the app open.
+    private func endLeftovers() {
+        for activity in Activity<LockScreenPlayerAttributes>.activities {
+            Task { await activity.end(nil, dismissalPolicy: .immediate) }
         }
+    }
+
+    /// The app is being closed while awake — swiped away from the app switcher
+    /// while playing, or while still in front — and is told so. The activity
+    /// goes with it, as iOS's own Now Playing controls do.
+    ///
+    /// Blocks the main thread until ActivityKit has it, for two seconds at
+    /// most: `applicationWillTerminate` is the last code the app runs, and an
+    /// `end` left to finish afterwards never would. The work runs detached so
+    /// it doesn't need the main thread it's holding.
+    nonisolated private static func endAllBeforeExit() {
+        let done = DispatchSemaphore(value: 0)
+        Task.detached {
+            for activity in Activity<LockScreenPlayerAttributes>.activities {
+                await activity.end(nil, dismissalPolicy: .immediate)
+            }
+            done.signal()
+        }
+        _ = done.wait(timeout: .now() + 2)
     }
 
     private func adopt(_ activity: Activity<LockScreenPlayerAttributes>) {
@@ -269,8 +297,9 @@ final class LockScreenPlayer {
     private func perform(_ command: LockScreenCommand) async {
         guard let playback else { return }
         appLog("Lock screen player: \(command.rawValue).", level: .debug, category: "Player")
-        // Woken from cold by a button on an activity left up by the last run:
-        // nothing is loaded yet, so load what was, and act on that.
+        // Woken from cold by a button on an activity an earlier run left up
+        // (this launch is taking it down): nothing is loaded yet, so load
+        // what was, and act on that.
         if !playback.hasSomethingToPlay {
             playback.restoreLastSession()
         }
